@@ -74,6 +74,14 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(UpdateContextTab);
             }
+            else if (args.PropertyName == nameof(ChatViewModel.ActiveReasoningMessage))
+            {
+                DispatcherQueue.TryEnqueue(RebindReasoningMessage);
+            }
+            else if (args.PropertyName == nameof(ChatViewModel.IsReasoningStreaming))
+            {
+                DispatcherQueue.TryEnqueue(UpdateReasoningBadge);
+            }
         };
 
         AwarenessTrayHost.Content = new Views.AwarenessTray(AwarenessViewModel);
@@ -220,6 +228,47 @@ public sealed partial class MainWindow : Window
             };
             ActivityStepsList.Items.Add(card);
         }
+    }
+
+    private Jarvis.Core.Models.ChatMessage? _boundReasoningMessage;
+
+    /// <summary>Follows ChatViewModel.ActiveReasoningMessage as it switches between the in-flight
+    /// streaming message and the last-completed one, resubscribing to that message's own
+    /// PropertyChanged so the tab updates live token-by-token while reasoning streams -- the panel
+    /// never opens itself for this, only the badge (UpdateReasoningBadge) reacts.</summary>
+    private void RebindReasoningMessage()
+    {
+        if (_boundReasoningMessage is not null)
+        {
+            _boundReasoningMessage.PropertyChanged -= OnReasoningMessagePropertyChanged;
+        }
+
+        _boundReasoningMessage = ChatViewModel.ActiveReasoningMessage;
+        if (_boundReasoningMessage is not null)
+        {
+            _boundReasoningMessage.PropertyChanged += OnReasoningMessagePropertyChanged;
+        }
+
+        UpdateReasoningText();
+    }
+
+    private void OnReasoningMessagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(Jarvis.Core.Models.ChatMessage.ReasoningContent))
+        {
+            DispatcherQueue.TryEnqueue(UpdateReasoningText);
+        }
+    }
+
+    private void UpdateReasoningText()
+    {
+        var text = _boundReasoningMessage?.ReasoningContent;
+        ReasoningText.Text = string.IsNullOrEmpty(text) ? "No reasoning for this turn yet." : text;
+    }
+
+    private void UpdateReasoningBadge()
+    {
+        ReasoningBadge.Visibility = ChatViewModel.IsReasoningStreaming ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateContextTab()

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Extensions.Tables;
@@ -32,14 +32,52 @@ public static class MarkdownRenderer
 
     private static readonly Regex ThinkBlockRegex = new(@"<think>([\s\S]*?)(</think>|$)", RegexOptions.Compiled);
 
-    public static Panel Render(string content, bool isStreaming)
+    /// <summary>
+    /// The cheap counterpart to <see cref="Render"/>, for use while tokens are still arriving.
+    ///
+    /// Render builds one element per markdown construct -- a list item alone costs two
+    /// StackPanels, a TextBlock and a brush, and every Children.Add crosses into WinRT through
+    /// reflection -- then WinUI lays the whole tree out again. Rebuilding that on a partial
+    /// message is what pinned the UI thread until Windows killed the window as hung. A streaming
+    /// answer does not need real formatting; it needs to arrive. So while streaming we produce
+    /// plain text for a single reused TextBlock, and pay for the real tree once, at the end.
+    ///
+    /// The &lt;think&gt; block is stripped rather than shown: it is the model's scratchpad, and
+    /// during streaming it is usually the only thing there is.
+    /// </summary>
+    /// <param name="hasStructuredReasoning">True when this message's reasoning is routed through
+    /// the structured "reasoning" SSE channel (see ChatMessage.HasStructuredReasoning) and rendered
+    /// by the Reasoning tab instead -- in that case Content never contains &lt;think&gt; tags to
+    /// begin with, so the scan is skipped rather than risk showing the same text twice.</param>
+    public static string StreamingText(string content, bool hasStructuredReasoning = false)
+    {
+        if (hasStructuredReasoning) return content;
+
+        var (thinking, complete, remainder) = ExtractThink(content);
+        if (thinking is null) return content;
+        // Before any answer text exists, showing nothing would look like a stall, so surface the
+        // thinking itself until the model starts answering.
+        return remainder.Length > 0 ? remainder
+             : complete ? ""
+             : thinking.TrimStart();
+    }
+
+    /// <param name="hasStructuredReasoning">See <see cref="StreamingText"/> -- when true, the
+    /// inline "Thought Process" Expander is skipped entirely and Content is parsed as-is, since the
+    /// Reasoning tab already owns this message's thinking text.</param>
+    public static Panel Render(string content, bool isStreaming, bool hasStructuredReasoning = false)
     {
         var root = new StackPanel { Spacing = 6 };
+        var remainder = content;
 
-        var (thinking, thinkingComplete, remainder) = ExtractThink(content);
-        if (thinking is not null)
+        if (!hasStructuredReasoning)
         {
-            root.Children.Add(BuildThinkExpander(thinking, thinkingComplete, isStreaming, remainder.Length == 0));
+            var (thinking, thinkingComplete, rest) = ExtractThink(content);
+            if (thinking is not null)
+            {
+                root.Children.Add(BuildThinkExpander(thinking, thinkingComplete, isStreaming, rest.Length == 0));
+            }
+            remainder = rest;
         }
 
         if (remainder.Length > 0)

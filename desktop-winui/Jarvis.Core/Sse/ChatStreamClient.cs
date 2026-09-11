@@ -110,6 +110,9 @@ public sealed class ChatStreamClient
                 case "token":
                     callbacks.OnToken?.Invoke(Deserialize<SseTokenEvent>(frame.Data));
                     break;
+                case "reasoning":
+                    callbacks.OnReasoning?.Invoke(Deserialize<SseReasoningEvent>(frame.Data));
+                    break;
                 case "tool_draft":
                     callbacks.OnToolDraft?.Invoke(Deserialize<SseToolDraftEvent>(frame.Data));
                     break;

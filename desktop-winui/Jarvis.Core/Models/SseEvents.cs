@@ -11,6 +11,13 @@ public sealed class SseTokenEvent
     public string Delta { get; set; } = "";
 }
 
+/// <summary>A chunk of the model's reasoning/thinking output, structurally separate from the
+/// answer text -- see backend/app/agent/llamacpp_provider.py's ThinkTagStreamScanner.</summary>
+public sealed class SseReasoningEvent
+{
+    public string Delta { get; set; } = "";
+}
+
 public sealed class SseToolDraftEvent
 {
     public string Tool { get; set; } = "";
@@ -174,6 +181,10 @@ public sealed class SseRetrievalContextEvent
 public sealed class SseDoneEvent
 {
     public string Response { get; set; } = "";
+
+    /// <summary>The turn's full accumulated reasoning/thinking text, if the model produced any.</summary>
+    public string? Reasoning { get; set; }
+
     public string Model { get; set; } = "";
     public string Provider { get; set; } = "";
     public string Status { get; set; } = "";

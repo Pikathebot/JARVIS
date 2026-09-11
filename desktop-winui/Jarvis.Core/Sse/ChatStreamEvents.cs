@@ -9,6 +9,7 @@ namespace Jarvis.Core.Sse;
 public sealed class ChatStreamCallbacks
 {
     public Action<SseTokenEvent>? OnToken { get; set; }
+    public Action<SseReasoningEvent>? OnReasoning { get; set; }
     public Action<SseToolDraftEvent>? OnToolDraft { get; set; }
     public Action<SseToolStartEvent>? OnToolStart { get; set; }
     public Action<SseToolEndEvent>? OnToolEnd { get; set; }

@@ -334,6 +334,20 @@
                                 </ListView>
                             </Grid>
                         </TabViewItem>
+                        <TabViewItem IsClosable="False">
+                            <TabViewItem.Header>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="Reasoning" />
+                                    <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="#06B6D4"
+                                             VerticalAlignment="Center" Visibility="Collapsed" />
+                                </StackPanel>
+                            </TabViewItem.Header>
+                            <ScrollViewer Padding="12">
+                                <TextBlock x:Name="ReasoningText" Text="No reasoning for this turn yet."
+                                           TextWrapping="Wrap" FontSize="12" Foreground="#94A3B8"
+                                           FontFamily="Cascadia Mono, Consolas, monospace" />
+                            </ScrollViewer>
+                        </TabViewItem>
                         <TabViewItem Header="Context" IsClosable="False">
                             <ScrollViewer Padding="12">
                                 <StackPanel Spacing="10">

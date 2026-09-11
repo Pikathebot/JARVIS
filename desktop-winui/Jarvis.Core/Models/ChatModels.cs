@@ -59,10 +59,27 @@ public partial class ChatMessage : ObservableObject
     [ObservableProperty]
     public partial string Content { get; set; }
 
+    /// <summary>Reasoning/thinking text routed through the structured "reasoning" SSE channel,
+    /// kept separate from <see cref="Content"/> so it can render in its own panel rather than an
+    /// inline block. Empty for legacy messages -- see <see cref="HasStructuredReasoning"/>.</summary>
+    [ObservableProperty]
+    public partial string ReasoningContent { get; set; }
+
+    /// <summary>True for any message populated via the structured reasoning channel (live-streamed
+    /// post-feature, or reloaded with a non-null reasoning_content DB column) -- false for messages
+    /// stored before this feature shipped, whose reasoning (if any) is still baked into
+    /// &lt;think&gt; tags inside <see cref="Content"/> and must render via the legacy inline path.</summary>
+    public bool HasStructuredReasoning { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public List<ToolStep> ToolSteps { get; set; } = new();
     public string? Model { get; set; }
     public string? Provider { get; set; }
+
+    /// <summary>Why the router picked this model/provider for this turn (e.g. "Local execution
+    /// routed to FAST_MODEL (Qwen3.5-4B-UD-Q4_K_XL)."). The only place this is visible today --
+    /// there is no separate "which model will answer" indicator before sending.</summary>
+    public string? RouteReason { get; set; }
     public List<Dictionary<string, object?>> ToolsUsed { get; set; } = new();
     public List<string> ActiveSkills { get; set; } = new();
     public List<PendingConfirmation> PendingConfirmations { get; set; } = new();
@@ -76,6 +93,7 @@ public partial class ChatMessage : ObservableObject
     public ChatMessage()
     {
         Content = "";
+        ReasoningContent = "";
     }
 }
 

@@ -52,6 +52,16 @@ public partial class ChatViewModel : ObservableObject
     /// active session (not cleared between turns, only on NewChat/LoadSession).</summary>
     public ObservableCollection<ActivityStep> ActivitySteps { get; } = new();
 
+    /// <summary>Powers the right panel's Reasoning tab: whichever assistant message is currently
+    /// streaming, or the most recently completed one otherwise. Never auto-opens the panel --
+    /// callers only use this to render content into a tab the user may or may not have open, and
+    /// <see cref="IsReasoningStreaming"/> to drive a passive badge on that tab's header.</summary>
+    [ObservableProperty]
+    public partial ChatMessage? ActiveReasoningMessage { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsReasoningStreaming { get; set; }
+
     public event Action<ChatMessage>? MessageCompleted;
 
     public ChatViewModel(JarvisApiClient api, ChatStreamClient streamClient, DispatcherQueue dispatcher)
@@ -125,6 +135,8 @@ public partial class ChatViewModel : ObservableObject
         PendingConfirmations.Clear();
         ActivitySteps.Clear();
         LatestRetrieval = null;
+        ActiveReasoningMessage = null;
+        IsReasoningStreaming = false;
         ActiveSessionId = JarvisApiClient.CreateNewSessionId();
         Error = null;
     }
@@ -139,6 +151,8 @@ public partial class ChatViewModel : ObservableObject
         PendingConfirmations.Clear();
         ActivitySteps.Clear();
         LatestRetrieval = null;
+        ActiveReasoningMessage = null;
+        IsReasoningStreaming = false;
         Error = null;
         ActiveSessionId = sessionId;
 
@@ -147,7 +161,12 @@ public partial class ChatViewModel : ObservableObject
             var raw = await _api.FetchSessionMessagesAsync(sessionId).ConfigureAwait(false);
             foreach (var entry in raw)
             {
-                Messages.Add(MapRawMessage(entry));
+                var msg = MapRawMessage(entry);
+                Messages.Add(msg);
+                if (msg.Role == MessageRole.Assistant)
+                {
+                    ActiveReasoningMessage = msg;
+                }
             }
         }
         catch (Exception ex)
@@ -165,10 +184,16 @@ public partial class ChatViewModel : ObservableObject
             "tool" => MessageRole.Tool,
             _ => MessageRole.Assistant,
         };
+        var reasoning = ReadString(entry, "reasoning_content");
         return new ChatMessage
         {
             Role = role,
             Content = ReadString(entry, "content") ?? "",
+            ReasoningContent = reasoning ?? "",
+            // A null/absent column means this row predates the structured-reasoning feature --
+            // any reasoning it has is still baked into <think> tags inside Content and must render
+            // through the legacy inline Expander path, not this one.
+            HasStructuredReasoning = !string.IsNullOrEmpty(reasoning),
             Model = ReadString(entry, "model"),
             Provider = ReadString(entry, "provider"),
         };
@@ -194,12 +219,15 @@ public partial class ChatViewModel : ObservableObject
         IsLoading = true;
         Error = null;
 
-        _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true };
+        _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
         Messages.Add(_streamingMessage);
+        ActiveReasoningMessage = _streamingMessage;
+        IsReasoningStreaming = false;
 
         var callbacks = new ChatStreamCallbacks
         {
             OnToken = e => Post(() => AppendToken(e.Delta)),
+            OnReasoning = e => Post(() => AppendReasoning(e.Delta)),
             OnToolStart = e => Post(() => AddToolStep(e.Tool, e.Args, ToolStatus.Running)),
             OnToolEnd = e => Post(() => CompleteToolStep(e.Tool, e.Status, e.Result)),
             OnConfirmationRequired = e => Post(() => HandleConfirmationRequired(e)),
@@ -239,6 +267,13 @@ public partial class ChatViewModel : ObservableObject
     {
         if (_streamingMessage is null) return;
         _streamingMessage.Content += delta;
+    }
+
+    private void AppendReasoning(string delta)
+    {
+        if (_streamingMessage is null) return;
+        _streamingMessage.ReasoningContent += delta;
+        IsReasoningStreaming = true;
     }
 
     private void AddToolStep(string tool, Dictionary<string, object?> args, ToolStatus status)
@@ -288,14 +323,23 @@ public partial class ChatViewModel : ObservableObject
         _streamingMessage.IsStreaming = false;
         _streamingMessage.Model = e.Model;
         _streamingMessage.Provider = e.Provider;
+        _streamingMessage.RouteReason = e.RouteReason;
         _streamingMessage.ActiveSkills = e.ActiveSkills;
         _streamingMessage.ToolsUsed = e.ToolsUsed;
         if (!string.IsNullOrEmpty(e.Response) && string.IsNullOrEmpty(_streamingMessage.Content))
         {
             _streamingMessage.Content = e.Response;
         }
+        // Defensive: the client's own accumulation should already match, but fall back to the
+        // backend's final tally if a delta was ever dropped (mirrors the Content fallback above).
+        if (!string.IsNullOrEmpty(e.Reasoning) && string.IsNullOrEmpty(_streamingMessage.ReasoningContent))
+        {
+            _streamingMessage.ReasoningContent = e.Reasoning;
+        }
         var finished = _streamingMessage;
         _streamingMessage = null;
+        ActiveReasoningMessage = finished;
+        IsReasoningStreaming = false;
         MessageCompleted?.Invoke(finished);
     }
 
@@ -306,6 +350,7 @@ public partial class ChatViewModel : ObservableObject
         {
             _streamingMessage.IsStreaming = false;
         }
+        IsReasoningStreaming = false;
     }
 
     private void Post(Action action)
