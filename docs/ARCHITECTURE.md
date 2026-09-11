@@ -9,9 +9,9 @@ This document provides a comprehensive technical overview of the Jarvis Local AI
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           DESKTOP CLIENT                                    │
-│   • Canonical Next.js / React Desktop UI (desktop-app/)                     │
-│   • Project Workspace Switcher | 4-Tab RightPanel | Attachment Composer     │
-│   • Fallback PyWebView Desktop UI (desktop/ui) via --legacy-ui              │
+│   • Active: native WinUI 3 / C# shell (desktop-winui/, mid-migration)       │
+│   • Deprecated: Next.js/Tauri (desktop-app/), pywebview (desktop/,          │
+│     --legacy-ui) — retained but not the target for new frontend work        │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ SSE Streaming (POST /chat/stream)
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
@@ -83,14 +83,31 @@ This document provides a comprehensive technical overview of the Jarvis Local AI
   - `memory/`: Project-specific notes and preferences.
   - `indexes/`: Vector and search indices.
 
-### 7. Canonical Desktop Frontend (`desktop-app/`)
-- **Technology**: React 14 + Next.js + Tailwind CSS + TypeScript.
-- **Key Features**:
-  - **Sidebar**: Workspace/Project switcher dropdown, session list, and new chat trigger.
-  - **RightPanel**: 4-tab panel (`Artifacts`, `Files`, `Context`, `Activity`).
-  - **Composer**: Attachment upload button with preview chips and action confirmation buttons.
-  - **Streaming**: Server-Sent Events client (`sse-client.ts`) parsing live token streams from `/chat/stream`.
+### 7. Desktop Frontend — WinUI 3 native shell (`desktop-winui/`), active
+- **Technology**: WinUI 3 / C#, solution `Jarvis.slnx`, three projects:
+  - `Jarvis.Core` — DTOs mirroring the backend's JSON contracts, `JarvisApiClient` (HTTP), SSE
+    stream readers (`ChatStreamClient`, `AwarenessStreamClient`).
+  - `Jarvis.Glass` — the liquid-glass rendering system: `GlassPanel`, wallpaper/live-capture
+    backdrop sourcing, the Win2D shader layer (`LiquidGlassCanvas`). See
+    [`GLASS_RENDERING.md`](GLASS_RENDERING.md) for the refraction technique being adopted.
+  - `Jarvis.App` — the shell itself: `MainWindow` (sidebar/chat/composer/right-panel), `HudWindow`
+    (always-on-top overlay, its own voice session), view models, tray/hotkey/backend-process
+    services.
+- **Talks to the backend purely over HTTP + SSE** — same seam as the deprecated frontends, so
+  backend changes are frontend-agnostic.
+- Replacing this section's previous content (Next.js/Tauri, `desktop-app/`): that stack is
+  deprecated but not yet deleted; do not build new frontend features there.
 
 ### 8. Voice & Wake-Word Engine (`backend/app/voice/`)
 - **Wake-Word Detector**: Regex keyword spotter listening for `"Jarvis"`, `"Hey Jarvis"`, and variants.
 - **Chatterbox TTS**: Text-to-speech audio synthesis with real-time playback control and speech sanitization.
+
+### 9. Liquid Glass Rendering (`desktop-winui/Jarvis.Glass/`)
+Panel material has gone through several iterations documented in the `winui_migration_status`
+project memory: Tier B (`SystemBackdrop`/Acrylic), then a Win2D-drawn designed gradient + grain +
+bevel (Tier A) once it was found the machine has no sampleable real backdrop (Wallpaper Engine
+renders behind DWM/the wallpaper file), then a live-capture backdrop via
+`Windows.Graphics.Capture`. Next planned step is true edge refraction via a CPU-generated
+displacement map + Win2D's `DisplacementMapEffect` — see
+[`GLASS_RENDERING.md`](GLASS_RENDERING.md) for the full technique, sources evaluated, and why it
+supersedes an earlier custom-HLSL-shader plan.

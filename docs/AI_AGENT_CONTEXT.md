@@ -21,7 +21,7 @@
 6. **Artifacts & Attachments**:
    - **User Attachments**: Uploaded via `POST /api/upload` into project `files/` directory, tracked in `attachments` table, and automatically injected into LLM turn context.
    - **AI Artifacts**: Durable agent outputs tracked in `artifacts` and `artifact_versions` tables with full version history (`POST /api/artifacts`, `GET /api/artifacts/{id}/versions`).
-7. **Canonical Desktop Frontend**: React 14 + Next.js + Tailwind CSS + TypeScript in [`desktop-app/`](../desktop-app/), built statically to `desktop-app/out/` and served via FastAPI at `/ui`. Legacy pywebview UI in `desktop/` is deprecated and accessible only via `--legacy-ui`.
+7. **Desktop Frontend — mid-migration**: the active client is a native **WinUI 3 / C#** shell in [`desktop-winui/`](../desktop-winui/) (solution `Jarvis.slnx`; projects `Jarvis.App`/`Jarvis.Core`/`Jarvis.Glass`), talking to the backend purely over HTTP + SSE. The previous canonical UI, React 14 + Next.js + Tailwind in [`desktop-app/`](../desktop-app/) (built statically to `desktop-app/out/`, served via FastAPI at `/ui`), and the legacy pywebview UI in `desktop/` (`--legacy-ui`), are both deprecated but not yet deleted — do not build new frontend work there.
 8. **Hardware Resource Governor (V2)**: Real-time telemetry monitoring NVIDIA RTX 4060 GPU utilization, VRAM, CPU, and RAM via `nvidia-ml-py` (PyNVML) and `psutil`. Queues or rejects incoming tasks when safety thresholds are breached.
 9. **Deterministic $O(1)$ Safety Permissions**: Hardcoded zero-hallucination security table classifying actions into `LOW_RISK`, `CONFIRMATION_REQUIRED`, and `HIGH_RISK`. Potentially dangerous actions return cryptographic SHA-256 tokens (`act_<hash>`) requiring user confirmation before execution.
 10. **MCP & Skills Subsystems**: Model Context Protocol JSON-RPC 2.0 stdio bridge and dynamic YAML frontmatter markdown skills (`skills/*.md`).
@@ -42,6 +42,7 @@ JARVIS/
 │   ├── ARCHITECTURE.md             # Subsystem deep dive
 │   ├── API_REFERENCE.md            # REST API endpoints & request/response schemas
 │   ├── USER_GUIDE.md               # User interaction, hotkeys, custom skills
+│   ├── GLASS_RENDERING.md          # Liquid-glass refraction technique (WinUI/Win2D)
 │   └── AI_AGENT_CONTEXT.md         # This AI Agent Onboarding Guide
 │
 ├── backend/                        # FastAPI Backend Application
@@ -83,7 +84,15 @@ JARVIS/
 │   ├── .env.example                # Configuration template
 │   └── tests/                      # Pytest automated test suite (206+ tests)
 │
-├── desktop-app/                    # CANONICAL Desktop UI (Next.js 14 + React + Tailwind + Tauri)
+├── desktop-winui/                  # ACTIVE native desktop client (WinUI 3 / C#)
+│   ├── Jarvis.slnx                 # Solution file
+│   ├── Jarvis.Core/                # DTOs, JarvisApiClient (HTTP), SSE stream readers
+│   ├── Jarvis.Glass/               # Liquid-glass rendering (GlassPanel, LiquidGlassCanvas,
+│   │                                #   wallpaper/live-capture backdrop sourcing)
+│   └── Jarvis.App/                 # Shell: MainWindow, HudWindow, view models, tray/hotkey
+│                                    #   services, BackendHost (spawns the FastAPI backend)
+│
+├── desktop-app/                    # DEPRECATED (Next.js 14 + React + Tailwind + Tauri)
 │   ├── src/
 │   │   ├── app/                    # Next.js app router & main layout
 │   │   ├── components/             # React UI components
@@ -110,8 +119,8 @@ JARVIS/
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           DESKTOP CLIENT                                    │
-│   • Next.js / React / Tailwind Frontend (desktop-app/)                      │
-│   • Workspace Switcher | 4-Tab RightPanel | Attachment Composer             │
+│   • Native WinUI 3 shell (desktop-winui/) — Sidebar | RightPanel | Composer │
+│   • Same SSE seam as the deprecated Next.js/pywebview UIs                   │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ SSE Streaming (POST /chat/stream)
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
@@ -148,12 +157,20 @@ JARVIS/
   cd d:\JARVIS\backend
   ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
   ```
-- **Run Frontend Dev Server**:
+- **Build & Run the WinUI Client** (active frontend):
+  ```powershell
+  cd d:\JARVIS\desktop-winui
+  dotnet build Jarvis.slnx
+  dotnet run -c Debug --no-build --project Jarvis.App
+  ```
+  Kill any running `Jarvis.App` process first — a live instance locks the AppX output and
+  `dotnet run` fails with an unhelpful `MSB3027` rather than a clear "already running" error.
+- **Run Frontend Dev Server** (deprecated Next.js UI):
   ```powershell
   cd d:\JARVIS\desktop-app
   npm run dev
   ```
-- **Build Frontend Static Export**:
+- **Build Frontend Static Export** (deprecated Next.js UI):
   ```powershell
   cd d:\JARVIS\desktop-app
   npm run build
