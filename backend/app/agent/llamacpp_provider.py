@@ -13,6 +13,64 @@ logger = logging.getLogger("jarvis.agent.llamacpp")
 # Regex to strip <think>...</think> reasoning blocks
 THINK_TAG_REGEX = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
 
+_OPEN_TAG = "<think>"
+_CLOSE_TAG = "</think>"
+# Longest tag we might need to detect split across two deltas, minus one -- that's how much of a
+# trailing fragment must be held back rather than emitted, in case the next chunk completes a tag.
+_MAX_HOLDBACK = max(len(_OPEN_TAG), len(_CLOSE_TAG)) - 1
+
+
+class ThinkTagStreamScanner:
+    """
+    Classifies streamed content-delta text as reasoning vs answer, for models (like llama-server's
+    default Qwen3.5 template with no --reasoning-format set) that emit reasoning as literal
+    <think>...</think> tags inline in the content stream rather than a separate API field.
+
+    A tag can straddle two SSE deltas (e.g. one chunk ends "...<thi", the next starts "nk>...").
+    feed() only emits text once it is certain no held-back suffix is a tag fragment; flush() drains
+    whatever remains at stream end (as answer/reasoning text depending on last known state, since an
+    unterminated tag at end-of-stream can't be anything else).
+    """
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        self._buf += chunk
+        out: list[tuple[str, str]] = []
+
+        while True:
+            open_idx = self._buf.find(_OPEN_TAG)
+            close_idx = self._buf.find(_CLOSE_TAG)
+            tag_idx = close_idx if self._in_think else open_idx
+            tag = _CLOSE_TAG if self._in_think else _OPEN_TAG
+
+            if tag_idx != -1:
+                before = self._buf[:tag_idx]
+                if before:
+                    out.append(("reasoning" if self._in_think else "answer", before))
+                self._in_think = not self._in_think
+                self._buf = self._buf[tag_idx + len(tag):]
+                continue
+
+            # No complete tag found. Emit everything except a trailing fragment that could still
+            # turn into the start of a tag once more of the stream arrives.
+            safe_len = max(0, len(self._buf) - _MAX_HOLDBACK)
+            if safe_len > 0:
+                emit, self._buf = self._buf[:safe_len], self._buf[safe_len:]
+                out.append(("reasoning" if self._in_think else "answer", emit))
+            break
+
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        if self._buf:
+            out.append(("reasoning" if self._in_think else "answer", self._buf))
+            self._buf = ""
+        return out
+
 
 def strip_thinking_tags(text: str) -> tuple[str, str]:
     """
@@ -296,6 +354,7 @@ class LlamaCppProvider(ModelProvider):
         Stream chat tokens and tool calls from llama-server.
         Yields:
         - {"event": "text_delta", "content": str}
+        - {"event": "reasoning_delta", "content": str}
         - {"event": "tool_call", "tool_call": dict}
         - {"event": "done", "raw": dict}
         - {"event": "error", "message": str}
@@ -333,7 +392,7 @@ class LlamaCppProvider(ModelProvider):
         accumulated_content: list[str] = []
         accumulated_reasoning: list[str] = []
         tool_calls_map: dict[int, dict[str, Any]] = {}
-        in_think_block = False
+        think_scanner = ThinkTagStreamScanner()
 
         client_timeout = httpx.Timeout(connect=30.0, read=300.0, write=60.0, pool=None)
         if isinstance(req_timeout, (int, float)):
@@ -367,13 +426,18 @@ class LlamaCppProvider(ModelProvider):
 
                             content_delta = delta.get("content")
                             if content_delta:
-                                accumulated_content.append(content_delta)
-                                yield {"event": "text_delta", "content": content_delta}
+                                for kind, text in think_scanner.feed(content_delta):
+                                    if kind == "reasoning":
+                                        accumulated_reasoning.append(text)
+                                        yield {"event": "reasoning_delta", "content": text}
+                                    else:
+                                        accumulated_content.append(text)
+                                        yield {"event": "text_delta", "content": text}
 
                             reasoning_delta = delta.get("reasoning_content")
                             if reasoning_delta:
                                 accumulated_reasoning.append(reasoning_delta)
-                                yield {"event": "text_delta", "content": reasoning_delta}
+                                yield {"event": "reasoning_delta", "content": reasoning_delta}
 
                             tc_deltas = delta.get("tool_calls")
                             if tc_deltas and isinstance(tc_deltas, list):
@@ -402,6 +466,14 @@ class LlamaCppProvider(ModelProvider):
             logger.error("llama-server streaming exception (%s): %s", type(e).__name__, e)
             yield {"event": "error", "message": f"{type(e).__name__}: {e}"}
             return
+
+        for kind, text in think_scanner.flush():
+            if kind == "reasoning":
+                accumulated_reasoning.append(text)
+                yield {"event": "reasoning_delta", "content": text}
+            else:
+                accumulated_content.append(text)
+                yield {"event": "text_delta", "content": text}
 
         # Assemble complete tool calls and emit events
         final_tool_calls = []

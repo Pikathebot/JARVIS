@@ -1365,11 +1365,15 @@ class AgentOrchestrator:
 
             done_event = None
             accumulated_tool_calls = []
+            accumulated_reasoning: list[str] = []
 
             async for ev in stream_gen:
                 event_type = ev.get("event")
                 if event_type == "text_delta":
                     yield {"event": "token", "data": {"delta": ev.get("content", "")}}
+                elif event_type == "reasoning_delta":
+                    accumulated_reasoning.append(ev.get("content", ""))
+                    yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
                 elif event_type == "tool_draft":
                     yield {"event": "tool_draft", "data": {"tool": ev.get("tool", "tool"), "args_delta": ev.get("args_delta", "")}}
                 elif event_type == "tool_call":
@@ -1383,6 +1387,7 @@ class AgentOrchestrator:
             raw_done = done_event.get("raw", {}) if done_event else {}
             content = raw_done.get("content", "") or ""
             tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
+            full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
 
             if not tool_calls:
                 latest_user_prompt = ""
@@ -1401,12 +1406,15 @@ class AgentOrchestrator:
                     content = synth_response.get("message", {}).get("content", "") or ""
                     yield {"event": "token", "data": {"delta": content}}
 
-                self.memory_store.append_message(session_id, role="assistant", content=content)
+                self.memory_store.append_message(
+                    session_id, role="assistant", content=content, reasoning_content=full_reasoning or None
+                )
                 self._synthesize_voice(content)
                 yield {
                     "event": "done",
                     "data": {
                         "response": content,
+                        "reasoning": full_reasoning,
                         "model": model,
                         "provider": provider.name,
                         "status": "completed",

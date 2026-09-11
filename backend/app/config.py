@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # environment by llama-server, so a .env entry alone would never reach it -- pydantic-settings
     # reads .env into Settings, it does not export anything into os.environ.
     llama_chat_template_kwargs: Optional[str] = Field(default=None, alias="LLAMA_CHAT_TEMPLATE_KWARGS")
+    # Per-slot override: the fast (4B) slot rambles more in its thinking block than the main (9B)
+    # one does at the same setting, so it defaults to thinking off while main keeps it on. Falls
+    # back to llama_chat_template_kwargs if unset.
+    llama_chat_template_kwargs_fast: Optional[str] = Field(
+        default='{"enable_thinking":false}', alias="LLAMA_CHAT_TEMPLATE_KWARGS_FAST"
+    )
 
     # Execution Flags (Amendment 1)
     llama_n_gpu_layers: int = Field(default=99, alias="LLAMA_N_GPU_LAYERS")

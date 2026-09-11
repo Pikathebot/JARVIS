@@ -16,6 +16,22 @@ logger = logging.getLogger("jarvis.agent.process_manager")
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _reasoning_flag_from_kwargs(kwargs_json: Optional[str]) -> Optional[str]:
+    """Extracts an `enable_thinking` bool out of a chat-template-kwargs JSON string and maps it to
+    llama-server's `--reasoning on|off` flag. Returns None (leave --reasoning unset, i.e. 'auto')
+    when there's nothing to parse or no such key -- never raises on malformed JSON."""
+    if not kwargs_json:
+        return None
+    try:
+        import json
+        parsed = json.loads(kwargs_json)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict) or "enable_thinking" not in parsed:
+        return None
+    return "on" if parsed["enable_thinking"] else "off"
+
+
 def resolve_repo_path(path_str: str) -> Path:
     """Resolve a path relative to the repo root if it's relative, otherwise return as absolute."""
     p = Path(path_str)
@@ -238,12 +254,28 @@ class RuntimeProcessManager:
             if self.extra_args:
                 cmd.extend(self.extra_args)
 
+            # NOTE: this build's llama-server reads chat-template-kwargs from the environment
+            # variable LLAMA_ARG_CHAT_TEMPLATE_KWARGS, not LLAMA_CHAT_TEMPLATE_KWARGS (confirmed via
+            # `llama-server.exe --help`) -- the latter name is silently ignored, which is why the
+            # enable_thinking toggle never actually took effect via .env alone. Passed as a real CLI
+            # arg here instead of relying on getting an env var name exactly right a second time.
+            kwargs_for_alias = (
+                settings.llama_chat_template_kwargs_fast
+                if alias == "fast"
+                else settings.llama_chat_template_kwargs
+            )
+            if kwargs_for_alias:
+                cmd.extend(["--chat-template-kwargs", kwargs_for_alias])
 
-            # llama-server reads chat-template kwargs from its environment rather than argv, so
-            # this is the only way to hand it e.g. Qwen3.5's {"enable_thinking": true}.
+            # Belt-and-suspenders: --reasoning is llama.cpp's own first-class on/off/auto switch,
+            # independent of whether a given jinja template actually honours enable_thinking inside
+            # --chat-template-kwargs. Derived from the same enable_thinking value so .env stays the
+            # single place this is configured.
+            reasoning_flag = _reasoning_flag_from_kwargs(kwargs_for_alias)
+            if reasoning_flag is not None:
+                cmd.extend(["--reasoning", reasoning_flag])
+
             child_env = os.environ.copy()
-            if settings.llama_chat_template_kwargs:
-                child_env["LLAMA_CHAT_TEMPLATE_KWARGS"] = settings.llama_chat_template_kwargs
 
             with self._output_lock:
                 self._recent_output.clear()

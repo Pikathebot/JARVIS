@@ -147,9 +147,12 @@ async def test_stream_accumulates_tool_calls_and_yields_deltas():
         async for ev in provider.stream_chat(messages=[{"role": "user", "content": "Search"}], model="main", tools=[web_search]):
             events.append(ev)
 
-        # Verify text deltas
+        # Verify text deltas. Exact chunk boundaries are no longer guaranteed to match the SSE
+        # deltas one-to-one: ThinkTagStreamScanner holds back a trailing fragment that could still
+        # turn into a <think>/</think> tag, so the same text can arrive split differently than it
+        # was sent in. The joined text is what matters.
         text_deltas = [e["content"] for e in events if e["event"] == "text_delta"]
-        assert text_deltas == ["Searching", " for data..."]
+        assert "".join(text_deltas) == "Searching for data..."
 
         # Verify accumulated tool call
         tool_call_events = [e["tool_call"] for e in events if e["event"] == "tool_call"]

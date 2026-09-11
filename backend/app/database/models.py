@@ -32,6 +32,7 @@ class Message(SQLModel, table=True):
     session_id: str = Field(foreign_key="sessions.session_id", index=True)
     role: str
     content: Optional[str] = None
+    reasoning_content: Optional[str] = None
     name: Optional[str] = None
     tool_calls_json: Optional[str] = None
     token_estimate: int = Field(default=0)

@@ -216,6 +216,8 @@ class MemoryStore:
                         "role": row.role,
                         "content": row.content or ""
                     }
+                    if row.reasoning_content:
+                        msg["reasoning_content"] = row.reasoning_content
                     if row.name:
                         msg["name"] = row.name
                     if row.tool_calls_json:
@@ -238,7 +240,8 @@ class MemoryStore:
         content: str,
         name: Optional[str] = None,
         tool_calls: Optional[list] = None,
-        is_summary: bool = False
+        is_summary: bool = False,
+        reasoning_content: Optional[str] = None
     ) -> None:
         self.get_or_create_session(session_id)
         now = time.time()
@@ -251,6 +254,7 @@ class MemoryStore:
                     session_id=session_id,
                     role=role,
                     content=content,
+                    reasoning_content=reasoning_content,
                     name=name,
                     tool_calls_json=tool_calls_str,
                     token_estimate=token_estimate,
