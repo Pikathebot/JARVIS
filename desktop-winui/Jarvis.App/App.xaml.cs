@@ -1,6 +1,7 @@
 using Jarvis.Core.Api;
 using Jarvis.Core.Sse;
 using Jarvis_App.Services;
+using Jarvis_Glass;
 using Microsoft.UI.Xaml;
 
 namespace Jarvis_App;
@@ -65,6 +66,10 @@ public partial class App : Application
             _hudWindow = new HudWindow(_api);
             _mainWindow.Hud = _hudWindow;
             _mainWindow.GlassQuality.Register(_hudWindow.GlassRoot);
+            WindowPositionService.Register(_mainWindow);
+            WindowPositionService.Register(_hudWindow);
+            WindowCaptureExclusion.Register(_mainWindow);
+            WindowCaptureExclusion.Register(_hudWindow);
             Window = _mainWindow;
 
             SetupTray();

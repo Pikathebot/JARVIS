@@ -51,6 +51,8 @@ public sealed partial class SettingsDialog : ContentDialog
             _ => 0,
         };
         GlassQualityCombo.SelectionChanged += GlassQuality_SelectionChanged;
+        // Same "set before subscribing" order as the combo above.
+        LiveCaptureToggle.IsOn = _glassQuality.LiveCaptureEnabled;
         ModelText.Text = _governor.ConfiguredModel;
 
         await PersonaViewModel.RefreshAsync();
@@ -83,6 +85,11 @@ public sealed partial class SettingsDialog : ContentDialog
             2 => GlassQualityMode.System,
             _ => GlassQualityMode.Auto,
         });
+    }
+
+    private void LiveCapture_Toggled(object sender, RoutedEventArgs e)
+    {
+        _glassQuality.SetLiveCaptureEnabled(LiveCaptureToggle.IsOn);
     }
 
     /// <summary>
@@ -147,7 +154,10 @@ public sealed partial class SettingsDialog : ContentDialog
     {
         if (sender is FrameworkElement { Tag: ModelInfo model })
         {
-            await ModelsViewModel.SelectAsync(slot, model);
+            // Persist the choice only -- do not restart llama-server here. Loading the weights
+            // happens lazily on the next chat send (LlamaCppProvider.ensure_running), so picking
+            // a model in Settings shouldn't itself trigger a load/unload cycle.
+            await ModelsViewModel.SelectAsync(slot, model, activate: false);
         }
     }
 

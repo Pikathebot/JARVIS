@@ -96,6 +96,50 @@ public sealed partial class LiquidGlassCanvas : UserControl
         set => SetValue(TintColorProperty, value);
     }
 
+    public static readonly DependencyProperty LiveCaptureEnabledProperty = DependencyProperty.Register(
+        nameof(LiveCaptureEnabled), typeof(bool), typeof(LiquidGlassCanvas),
+        new PropertyMetadata(false, OnLiveCaptureEnabledChanged));
+
+    /// <summary>Set externally by GlassPanel.ApplyTier(), which is in turn driven by
+    /// GlassQualityService -- true only when the panel opted in (GlassPanel.LiveCaptureRequested),
+    /// the live-capture Settings toggle is on, and GlassQuality is Full. Starts/stops the shared
+    /// LiveCaptureService reference count; DrawBody prefers its current frame over the wallpaper
+    /// crop whenever one is available.</summary>
+    public bool LiveCaptureEnabled
+    {
+        get => (bool)GetValue(LiveCaptureEnabledProperty);
+        set => SetValue(LiveCaptureEnabledProperty, value);
+    }
+
+    private static void OnLiveCaptureEnabledChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not LiquidGlassCanvas canvas) return;
+        if ((bool)e.NewValue)
+        {
+            LiveCaptureService.Start();
+        }
+        else
+        {
+            LiveCaptureService.Stop();
+        }
+        canvas.Canvas.Invalidate();
+    }
+
+    public static readonly DependencyProperty EdgeRefractionEnabledProperty = DependencyProperty.Register(
+        nameof(EdgeRefractionEnabled), typeof(bool), typeof(LiquidGlassCanvas),
+        new PropertyMetadata(false, (d, _) => ((LiquidGlassCanvas)d).Canvas.Invalidate()));
+
+    /// <summary>Set externally by GlassPanel.ApplyTier() -- when true and a backdrop crop was drawn
+    /// (live capture or a usable wallpaper), DrawBody bends it through a bezel displacement map
+    /// (Checkpoint C) instead of drawing it flat.</summary>
+    public bool EdgeRefractionEnabled
+    {
+        get => (bool)GetValue(EdgeRefractionEnabledProperty);
+        set => SetValue(EdgeRefractionEnabledProperty, value);
+    }
+
+    private static readonly float[] RefractionLookup = BezelDisplacementMap.BuildRefractionLookup();
+
     public static readonly DependencyProperty SheenEnabledProperty = DependencyProperty.Register(
         nameof(SheenEnabled), typeof(bool), typeof(LiquidGlassCanvas),
         new PropertyMetadata(true, (d, _) => ((LiquidGlassCanvas)d).Canvas.Invalidate()));
@@ -137,10 +181,39 @@ public sealed partial class LiquidGlassCanvas : UserControl
         // The wallpaper resolves asynchronously, always after the first paint. Without this the
         // panel keeps its bitmap-less first frame forever.
         Loaded += (_, _) => WallpaperBitmapCache.Loaded += OnWallpaperResolved;
-        Unloaded += (_, _) => WallpaperBitmapCache.Loaded -= OnWallpaperResolved;
+        Unloaded += (_, _) =>
+        {
+            WallpaperBitmapCache.Loaded -= OnWallpaperResolved;
+            LiveCaptureService.FrameUpdated -= OnLiveFrameUpdated;
+            WindowPositionService.Changed -= OnWindowPositionChanged;
+            // A panel can be torn down (e.g. window closing) without LiveCaptureEnabled ever going
+            // back to false first -- release the reference count here too, or the shared capture
+            // session leaks a ref forever and never actually stops.
+            if (LiveCaptureEnabled) LiveCaptureService.Stop();
+        };
+        LiveCaptureService.FrameUpdated += OnLiveFrameUpdated;
+        WindowPositionService.Changed += OnWindowPositionChanged;
     }
 
     private void OnWallpaperResolved() => DispatcherQueue.TryEnqueue(() => Canvas.Invalidate());
+
+    private void OnLiveFrameUpdated()
+    {
+        // LiveCaptureService.FrameUpdated fires from the capture frame pool's free-threaded
+        // callback, not the UI thread -- reading a DependencyProperty (LiveCaptureEnabled) here
+        // before dispatching throws RPC_E_WRONG_THREAD. Defer the read into the dispatched call.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (LiveCaptureEnabled) Canvas.Invalidate();
+        });
+    }
+
+    private void OnWindowPositionChanged()
+    {
+        // Only the live-capture source is cropped by screen position -- the wallpaper-file crop
+        // stays on the simpler window-relative calc, so a window move is a no-op for it.
+        if (LiveCaptureEnabled) DispatcherQueue.TryEnqueue(() => Canvas.Invalidate());
+    }
 
     /// <summary>Advances the sheen toward the pointer and redraws — the owning GlassPanel drives
     /// this on a shared per-panel timer (see GlassPanel.xaml.cs).</summary>
@@ -192,22 +265,88 @@ public sealed partial class LiquidGlassCanvas : UserControl
     private void DrawBody(CanvasControl sender, CanvasDrawingSession ds, float width, float height)
     {
         var drewWallpaper = false;
-        var bitmapTask = WallpaperBitmapCache.GetAsync(sender);
-        var bitmap = bitmapTask.IsCompletedSuccessfully ? bitmapTask.Result : null;
+
+        // Live capture wins over the static wallpaper file when it's actually running and has a
+        // frame -- it can refract an animated live-wallpaper layer no file on disk contains. Falls
+        // back to the wallpaper crop (below) when capture is off, still warming up, or failed to
+        // start.
+        var isLiveCapture = LiveCaptureEnabled;
+        // When this window covers the entire display, WindowCaptureExclusion has excluded it from
+        // capture (see LiveCaptureService) but there is nothing else on that monitor left to
+        // reveal -- the captured frame is genuinely solid black, not a bug, just nothing to show.
+        // Feeding that through would paint every panel black instead of falling back to the
+        // wallpaper crop, so treat "no usable frame" the same as "capture not running yet".
+        if (isLiveCapture && XamlRoot is not null && WindowPositionService.TryGetWindowBounds(XamlRoot, out var fullscreenCheckBounds))
+        {
+            var primaryBounds = Microsoft.UI.Windowing.DisplayArea.Primary.OuterBounds;
+            var coversDisplay = fullscreenCheckBounds.X <= primaryBounds.X
+                && fullscreenCheckBounds.Y <= primaryBounds.Y
+                && fullscreenCheckBounds.X + fullscreenCheckBounds.Width >= primaryBounds.X + primaryBounds.Width
+                && fullscreenCheckBounds.Y + fullscreenCheckBounds.Height >= primaryBounds.Y + primaryBounds.Height;
+            if (coversDisplay)
+            {
+                isLiveCapture = false;
+            }
+        }
+        var bitmap = isLiveCapture ? LiveCaptureService.CurrentFrame : null;
+        if (bitmap is null)
+        {
+            isLiveCapture = false;
+            bitmap = WallpaperBitmapCache.GetAsync(sender) is { IsCompletedSuccessfully: true } bitmapTask
+                ? bitmapTask.Result
+                : null;
+        }
 
         if (bitmap is not null && XamlRoot is not null)
         {
-            var offset = TransformToVisual(XamlRoot.Content).TransformPoint(new Point(0, 0));
             var rootWidth = (float)XamlRoot.Size.Width;
             var rootHeight = (float)XamlRoot.Size.Height;
+            float srcX, srcY, srcW, srcH;
 
-            if (rootWidth > 0 && rootHeight > 0)
+            // The live-capture bitmap spans a whole display in raw pixels, the same coordinate
+            // space WindowPositionService reports window bounds in -- so once the window's screen
+            // position is known, crop by *actual* screen position (Checkpoint B parallax) instead
+            // of only where the panel sits within its own window. Falls back to the window-relative
+            // calc below (same one the wallpaper-file source always uses) until a position is known
+            // -- e.g. before WindowPositionService.Register has run for this window.
+            if (isLiveCapture && WindowPositionService.TryGetWindowBounds(XamlRoot, out var windowBoundsPx))
             {
-                var srcX = (float)(offset.X / rootWidth) * bitmap.SizeInPixels.Width;
-                var srcY = (float)(offset.Y / rootHeight) * bitmap.SizeInPixels.Height;
-                var srcW = Math.Max(1, Math.Min(bitmap.SizeInPixels.Width - srcX, width / rootWidth * bitmap.SizeInPixels.Width));
-                var srcH = Math.Max(1, Math.Min(bitmap.SizeInPixels.Height - srcY, height / rootHeight * bitmap.SizeInPixels.Height));
+                var scale = (float)XamlRoot.RasterizationScale;
+                var panelOffsetDips = TransformToVisual(XamlRoot.Content).TransformPoint(new Point(0, 0));
+                var displayBounds = Microsoft.UI.Windowing.DisplayArea.Primary.OuterBounds;
 
+                srcX = windowBoundsPx.X + (float)panelOffsetDips.X * scale - displayBounds.X;
+                srcY = windowBoundsPx.Y + (float)panelOffsetDips.Y * scale - displayBounds.Y;
+                srcW = width * scale;
+                srcH = height * scale;
+
+                // This crop reads as exactly what's behind the panel, at its true screen position,
+                // only because LiveCaptureService excludes our own windows from capture while
+                // running (see WindowCaptureExclusion) -- otherwise Windows.Graphics.Capture would
+                // see the panel's own opaque pixels here (there is no "display minus this window"
+                // capture mode), which is what an earlier version of this code sidestepped with an
+                // approximate margin-offset sample. That's no longer needed now that the window is
+                // genuinely absent from the captured frame at this exact spot.
+                srcX = Math.Clamp(srcX, 0, Math.Max(0, bitmap.SizeInPixels.Width - 1));
+                srcY = Math.Clamp(srcY, 0, Math.Max(0, bitmap.SizeInPixels.Height - 1));
+                srcW = Math.Max(1, Math.Min(bitmap.SizeInPixels.Width - srcX, srcW));
+                srcH = Math.Max(1, Math.Min(bitmap.SizeInPixels.Height - srcY, srcH));
+            }
+            else if (rootWidth > 0 && rootHeight > 0)
+            {
+                var offset = TransformToVisual(XamlRoot.Content).TransformPoint(new Point(0, 0));
+                srcX = (float)(offset.X / rootWidth) * bitmap.SizeInPixels.Width;
+                srcY = (float)(offset.Y / rootHeight) * bitmap.SizeInPixels.Height;
+                srcW = Math.Max(1, Math.Min(bitmap.SizeInPixels.Width - srcX, width / rootWidth * bitmap.SizeInPixels.Width));
+                srcH = Math.Max(1, Math.Min(bitmap.SizeInPixels.Height - srcY, height / rootHeight * bitmap.SizeInPixels.Height));
+            }
+            else
+            {
+                srcX = srcY = 0;
+                srcW = srcH = 1;
+            }
+
+            {
                 // The blur runs in the *source* bitmap's pixel space, but the result is then scaled
                 // into a panel-sized rect. A fixed BlurAmount therefore produces a different
                 // apparent blur per panel size; scaling by the src->dest ratio keeps the blur
@@ -224,9 +363,52 @@ public sealed partial class LiquidGlassCanvas : UserControl
                 // reads as grey mud once the body gradient is composited over it.
                 using var saturated = new SaturationEffect { Source = blur, Saturation = 1.4f };
 
-                ds.DrawImage(saturated,
-                    new Rect(0, 0, width, height),
-                    new Rect(srcX, srcY, srcW, srcH));
+                // Checkpoint C: bend the crop near the panel's rounded edge through a bezel
+                // displacement map instead of drawing it flat. The map is generated in the panel's
+                // own DIP-sized coordinate space (see BezelDisplacementMap.Get below), so the
+                // source needs to be resampled into that same space first -- DisplacementMapEffect
+                // reads Source and Displacement pixel-for-pixel against each other, it does not
+                // reconcile two different coordinate frames the way ds.DrawImage's own dest/src
+                // rects do.
+                CanvasBitmap? displacementMap = null;
+                float bezelWidthPx = 0f;
+                if (EdgeRefractionEnabled)
+                {
+                    bezelWidthPx = Math.Max(8f, (float)GlassCornerRadius * 0.6f);
+                    displacementMap = BezelDisplacementMap.Get(
+                        sender, (int)MathF.Round(width), (int)MathF.Round(height),
+                        (float)GlassCornerRadius, bezelWidthPx, RefractionLookup);
+                }
+
+                if (displacementMap is not null)
+                {
+                    using var resampled = new Transform2DEffect
+                    {
+                        Source = saturated,
+                        // Maps the crop rect (in bitmap pixel space) onto the panel's own
+                        // width x height (in DIPs) -- the same space the displacement map was
+                        // rasterized in.
+                        TransformMatrix = System.Numerics.Matrix3x2.CreateTranslation(-srcX, -srcY) *
+                            System.Numerics.Matrix3x2.CreateScale(width / srcW, height / srcH),
+                    };
+                    using var displaced = new DisplacementMapEffect
+                    {
+                        Source = resampled,
+                        Displacement = displacementMap,
+                        Amount = Math.Max(8f, bezelWidthPx * 0.9f),
+                        XChannelSelect = EffectChannelSelect.Red,
+                        YChannelSelect = EffectChannelSelect.Green,
+                    };
+
+                    ds.DrawImage(displaced, new Rect(0, 0, width, height), new Rect(0, 0, width, height));
+                }
+                else
+                {
+                    ds.DrawImage(saturated,
+                        new Rect(0, 0, width, height),
+                        new Rect(srcX, srcY, srcW, srcH));
+                }
+
                 drewWallpaper = true;
             }
         }

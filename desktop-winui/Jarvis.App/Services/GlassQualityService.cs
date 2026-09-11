@@ -39,12 +39,21 @@ public sealed class GlassQualityService : IDisposable
     private double _gpuUtilPercent;
     private bool _modelLoaded;
 
+    private const string LiveCaptureSettingKey = "LiveCaptureEnabled";
+
     public GlassQualityController Controller => _controller;
+
+    /// <summary>The user's Settings toggle, persisted locally (client-only preference, no backend
+    /// relevance). Live capture is continuous whole-screen capture -- a real privacy/perf concern
+    /// -- so this defaults to off and stays off until the user explicitly opts in.</summary>
+    public bool LiveCaptureEnabled { get; private set; }
 
     public GlassQualityService(AwarenessViewModel awareness, GovernorViewModel governor)
     {
         _awareness = awareness;
         _governor = governor;
+
+        LiveCaptureEnabled = Windows.Storage.ApplicationData.Current.LocalSettings.Values[LiveCaptureSettingKey] is bool stored && stored;
 
         _awareness.PropertyChanged += OnAwarenessChanged;
         _governor.PropertyChanged += OnGovernorChanged;
@@ -63,6 +72,16 @@ public sealed class GlassQualityService : IDisposable
     {
         _controller.Mode = mode;
         Evaluate();
+    }
+
+    /// <summary>Settings' live-capture toggle writes here. Re-applies immediately so panels that
+    /// are already at Full tier pick up (or drop) capture without waiting for the next quality
+    /// re-evaluation.</summary>
+    public void SetLiveCaptureEnabled(bool enabled)
+    {
+        LiveCaptureEnabled = enabled;
+        Windows.Storage.ApplicationData.Current.LocalSettings.Values[LiveCaptureSettingKey] = enabled;
+        ApplyToAllRoots(_controller.Current);
     }
 
     private void OnAwarenessChanged(object? sender, PropertyChangedEventArgs e)
@@ -93,11 +112,15 @@ public sealed class GlassQualityService : IDisposable
         }
     }
 
-    private static void Apply(DependencyObject root, GlassQuality quality)
+    private void Apply(DependencyObject root, GlassQuality quality)
     {
         foreach (var panel in FindGlassPanels(root))
         {
             panel.Quality = quality;
+            panel.LiveCaptureAvailable = LiveCaptureEnabled && quality == GlassQuality.Full;
+            // Reuses the same live-capture setting rather than a second toggle -- refraction only
+            // has a real backdrop to bend once that's on (or a usable wallpaper file).
+            panel.EdgeRefractionAvailable = LiveCaptureEnabled && quality == GlassQuality.Full;
         }
     }
 

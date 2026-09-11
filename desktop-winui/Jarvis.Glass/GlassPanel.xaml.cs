@@ -60,6 +60,75 @@ public sealed partial class GlassPanel : UserControl
         }
     }
 
+    public static readonly DependencyProperty LiveCaptureRequestedProperty = DependencyProperty.Register(
+        nameof(LiveCaptureRequested), typeof(bool), typeof(GlassPanel),
+        new PropertyMetadata(false, OnLiveCaptureChanged));
+
+    /// <summary>Per-panel opt-in to live-capture refraction, set by panel authors in XAML --
+    /// separate from <see cref="ShaderEnabled"/> so existing designed-material Tier A panels are
+    /// unaffected by default; live capture only actually runs once this AND
+    /// <see cref="LiveCaptureAvailable"/> (pushed in externally, see GlassQualityService) are both
+    /// true.</summary>
+    public bool LiveCaptureRequested
+    {
+        get => (bool)GetValue(LiveCaptureRequestedProperty);
+        set => SetValue(LiveCaptureRequestedProperty, value);
+    }
+
+    public static readonly DependencyProperty LiveCaptureAvailableProperty = DependencyProperty.Register(
+        nameof(LiveCaptureAvailable), typeof(bool), typeof(GlassPanel),
+        new PropertyMetadata(false, OnLiveCaptureChanged));
+
+    /// <summary>Set externally by GlassQualityService: true only when the user's Settings toggle is
+    /// on AND Quality == Full. GlassPanel itself never reads the setting or the quality tier
+    /// directly -- it stays a passive DP surface, same as how Quality itself is pushed in today.</summary>
+    public bool LiveCaptureAvailable
+    {
+        get => (bool)GetValue(LiveCaptureAvailableProperty);
+        set => SetValue(LiveCaptureAvailableProperty, value);
+    }
+
+    private static void OnLiveCaptureChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is GlassPanel panel)
+        {
+            panel.ApplyTier();
+        }
+    }
+
+    public static readonly DependencyProperty EdgeRefractionRequestedProperty = DependencyProperty.Register(
+        nameof(EdgeRefractionRequested), typeof(bool), typeof(GlassPanel),
+        new PropertyMetadata(false, OnEdgeRefractionChanged));
+
+    /// <summary>Per-panel opt-in to the bezel edge-refraction displacement effect (Checkpoint C),
+    /// same shape as <see cref="LiveCaptureRequested"/>. Set by panel authors in XAML.</summary>
+    public bool EdgeRefractionRequested
+    {
+        get => (bool)GetValue(EdgeRefractionRequestedProperty);
+        set => SetValue(EdgeRefractionRequestedProperty, value);
+    }
+
+    public static readonly DependencyProperty EdgeRefractionAvailableProperty = DependencyProperty.Register(
+        nameof(EdgeRefractionAvailable), typeof(bool), typeof(GlassPanel),
+        new PropertyMetadata(false, OnEdgeRefractionChanged));
+
+    /// <summary>Set externally by GlassQualityService, mirroring <see cref="LiveCaptureAvailable"/> --
+    /// reuses the same "Live-capture glass (experimental)" setting rather than a separate toggle,
+    /// since refraction only has a real backdrop to bend once that's on (or a usable wallpaper).</summary>
+    public bool EdgeRefractionAvailable
+    {
+        get => (bool)GetValue(EdgeRefractionAvailableProperty);
+        set => SetValue(EdgeRefractionAvailableProperty, value);
+    }
+
+    private static void OnEdgeRefractionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is GlassPanel panel)
+        {
+            panel.ApplyTier();
+        }
+    }
+
     public static readonly DependencyProperty GlassContentProperty = DependencyProperty.Register(
         nameof(GlassContent), typeof(object), typeof(GlassPanel), new PropertyMetadata(null));
 
@@ -124,6 +193,11 @@ public sealed partial class GlassPanel : UserControl
 
         ShaderCanvas.Visibility = shader ? Visibility.Visible : Visibility.Collapsed;
         ShaderCanvas.SheenEnabled = Quality == GlassQuality.Full;
+        // Capture is the expensive part of this material; gate it on the same Full-tier cutover
+        // that governs the sheen's per-frame work, not a separate pressure threshold.
+        ShaderCanvas.LiveCaptureEnabled = shader && LiveCaptureRequested && LiveCaptureAvailable && Quality == GlassQuality.Full;
+        // Same Full-tier gate as live capture -- the displacement effect is real per-draw GPU cost.
+        ShaderCanvas.EdgeRefractionEnabled = shader && EdgeRefractionRequested && EdgeRefractionAvailable && Quality == GlassQuality.Full;
 
         // Tier A owns the tint and the rim; leaving Tier B's versions on top would double-dim the
         // material and draw a second, flatter edge over the bevel.

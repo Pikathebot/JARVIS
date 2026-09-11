@@ -2,4 +2,5 @@
   <Project Path="Jarvis.App/Jarvis.App.csproj" />
   <Project Path="Jarvis.Core/Jarvis.Core.csproj" />
   <Project Path="Jarvis.Glass/Jarvis.Glass.csproj" />
+  <Project Path="Jarvis.GlassLab/Jarvis.GlassLab.csproj" />
 </Solution>

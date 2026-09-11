@@ -71,7 +71,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- Sidebar: floating glass slab. ShaderEnabled opts this hero surface into Tier A. -->
-            <glass:GlassPanel Grid.Column="0" Margin="0,0,8,0" GlassCornerRadius="18" ShaderEnabled="True">
+            <glass:GlassPanel Grid.Column="0" Margin="0,0,8,0" GlassCornerRadius="18" ShaderEnabled="True" LiveCaptureRequested="True" EdgeRefractionRequested="True">
                 <glass:GlassPanel.GlassContent>
                     <StackPanel Padding="16" Spacing="12">
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
