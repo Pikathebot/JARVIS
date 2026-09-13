@@ -1,4 +1,5 @@
 using System.Numerics;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace Jarvis_GlassLab;
@@ -20,6 +21,8 @@ public partial class App : Application
     private Vector4 _uvRect = new(0, 0, 1, 1);
     private string _logPath = "";
     private bool _captureReady;
+    private DispatcherQueueTimer? _snapshotTimer;
+    private bool _snapshotRefreshInFlight;
 
     public App()
     {
@@ -44,7 +47,7 @@ public partial class App : Application
             var shaderDir = Path.Combine(AppContext.BaseDirectory, "Shaders");
             _renderer = new GlassRenderer(_d3d.Device, _d3d.ImmediateContext, shaderDir);
 
-            _overlay = new ControlOverlayWindow(_window.HandleValue);
+            _overlay = new ControlOverlayWindow(_window.HandleValue, _renderer);
             SyncOverlayBounds();
             _overlay.Activate();
 
@@ -65,6 +68,7 @@ public partial class App : Application
         }
         finally
         {
+            _snapshotTimer?.Stop();
             _window?.StopRenderTimer();
             _overlay?.Close();
             _capture?.Dispose();
@@ -100,6 +104,72 @@ public partial class App : Application
 
         // Matches Jarvis.Glass's LiveCaptureService throttle - revisited properly in Phase 8.
         _window.StartRenderTimer(1000 / 12);
+
+        // First snapshot immediately (rather than waiting the full timer interval) so the window
+        // doesn't sit black/empty for several seconds after launch; then refresh periodically.
+        _ = RefreshSnapshotAsync();
+        _snapshotTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _snapshotTimer.Interval = TimeSpan.FromSeconds(4);
+        _snapshotTimer.Tick += (_, _) => _ = RefreshSnapshotAsync();
+        _snapshotTimer.Start();
+    }
+
+    /// <summary>
+    /// Hide-then-snapshot: the replacement for the old always-on WDA_EXCLUDEFROMCAPTURE, which
+    /// painted this window's own screen region solid black in every capture (confirmed via a
+    /// same-frame pixel readback -- see LiveCaptureSource.StartAsync's remark). Briefly hides both
+    /// windows (the glass HWND and its WinUI control overlay, which sits at the same screen rect),
+    /// waits long enough for DWM to composite a frame without them and for that frame to actually
+    /// reach the capture pipeline, freezes it as the new snapshot, then shows both windows again.
+    /// Trades true per-frame live animation for a periodic refresh with a brief visible flicker --
+    /// the option chosen over dropping self-exclusion outright (real feedback-loop risk) or a
+    /// deeper rework of the capture approach.
+    /// </summary>
+    private async Task RefreshSnapshotAsync()
+    {
+        if (_window is null || _overlay is null || _capture is null || !_captureReady)
+        {
+            return;
+        }
+
+        // Reentrancy guard: the initial immediate call and the timer's first tick could otherwise
+        // overlap if a refresh is still in flight (e.g. capture is slow to deliver a fresh frame).
+        if (_snapshotRefreshInFlight)
+        {
+            return;
+        }
+        _snapshotRefreshInFlight = true;
+
+        try
+        {
+            var framesBeforeHide = _capture.FrameCount;
+            _window.SetVisible(false);
+            _overlay.SetVisible(false);
+
+            // At ~12fps a frame arrives roughly every 83ms; 250ms gives DWM + the capture pipeline
+            // a comfortable couple of frames' margin to actually deliver one composited without
+            // our windows, rather than racing a single interval.
+            await Task.Delay(250);
+
+            var framesWhileHidden = _capture.FrameCount - framesBeforeHide;
+            _capture.RefreshFrozenSnapshot();
+            File.AppendAllText(_logPath, $"[{DateTimeOffset.Now:O}] [diag] snapshot refreshed: capture frames arrived while hidden={framesWhileHidden}\n");
+
+            // The verification the live-texture diagnostic below can't give: with the window no
+            // longer capture-excluded, the live texture under our rect now shows the window itself,
+            // so only the frozen copy (taken while hidden) says whether hide-then-snapshot works.
+            var itemSize = _capture.ItemSize;
+            var ownPxX = (int)(_uvRect.X * itemSize.Width) + _d3d!.Width / 2;
+            var ownPxY = (int)(_uvRect.Y * itemSize.Height) + _d3d.Height / 2;
+            _capture.LogRegionPixel(ownPxX, ownPxY, "under-window-center", frozen: true);
+            _capture.LogRegionPixel(ownPxX + _d3d.Width + 40, ownPxY, "just-outside-window", frozen: true);
+        }
+        finally
+        {
+            _window.SetVisible(true);
+            _overlay.SetVisible(true);
+            _snapshotRefreshInFlight = false;
+        }
     }
 
     /// <summary>
@@ -198,6 +268,7 @@ public partial class App : Application
         }
 
         _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height);
+
         _d3d.Present();
 
         var frameCount = _capture!.FrameCount;

@@ -29,6 +29,8 @@ internal sealed class LiveCaptureSource : IDisposable
     private GraphicsCaptureSession? _session;
     private ID3D11Texture2D? _sharedTexture;
     private ID3D11ShaderResourceView? _sharedSrv;
+    private ID3D11Texture2D? _frozenTexture;
+    private ID3D11ShaderResourceView? _frozenSrv;
     private int _frameCount;
     private ulong? _currentDisplayIdValue;
 
@@ -48,16 +50,131 @@ internal sealed class LiveCaptureSource : IDisposable
 
     public int FrameCount => Volatile.Read(ref _frameCount);
 
-    /// <summary>Snapshot of the current frame's SRV, or null before the first frame arrives. Safe
-    /// to call every render frame; swaps under a lock shared with the capture callback.</summary>
+    /// <summary>The frozen periodic snapshot's SRV, or null before the first one is captured. This
+    /// is what the renderer actually draws -- not the continuously-updating <see cref="_sharedSrv"/>
+    /// -- since <see cref="_sharedSrv"/> keeps flowing even while our own windows are visible (and
+    /// therefore potentially in the captured scene themselves), while the frozen copy is only ever
+    /// refreshed during the brief window in <see cref="RefreshFrozenSnapshot"/> where they're
+    /// hidden. Safe to call every render frame; swaps under a lock shared with the capture
+    /// callback.</summary>
     public ID3D11ShaderResourceView? TryGetCurrentFrameSrv()
     {
         lock (_gate)
         {
-            return _sharedSrv;
+            return _frozenSrv;
         }
     }
 
+    /// <summary>Copies the live capture texture into the frozen snapshot the renderer actually
+    /// reads. Callers (App.RefreshSnapshotAsync) are responsible for hiding our own windows and
+    /// waiting for at least one fresh frame to arrive first -- this method just does the copy, it
+    /// has no idea whether the frame it's copying was captured while hidden or not.</summary>
+    public void RefreshFrozenSnapshot()
+    {
+        lock (_gate)
+        {
+            if (_sharedTexture is null) return;
+
+            var desc = _sharedTexture.Description;
+            if (_frozenTexture is null || _frozenTexture.Description.Width != desc.Width || _frozenTexture.Description.Height != desc.Height)
+            {
+                _frozenSrv?.Dispose();
+                _frozenTexture?.Dispose();
+                _frozenTexture = _d3d.Device.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = desc.Width,
+                    Height = desc.Height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = desc.Format,
+                    SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.ShaderResource,
+                });
+                _frozenSrv = _d3d.Device.CreateShaderResourceView(_frozenTexture);
+            }
+
+            _d3d.ImmediateContext.CopyResource(_frozenTexture, _sharedTexture);
+        }
+    }
+
+    /// <summary>Diagnostic: reads back a small region of the shared capture texture at an
+    /// arbitrary point (capture-pixel coordinates, i.e. already in the whole-display's own space)
+    /// and logs its average color. Callers pass the glass window's own screen rect (converted to
+    /// capture-pixel space) to answer "is THIS specific region black in the capture, independent
+    /// of what's actually on screen there" -- the direct test for whether self-exclusion
+    /// (WDA_EXCLUDEFROMCAPTURE on this same window) is painting its own region black.</summary>
+    public void LogRegionPixel(int x, int y, string label, bool frozen = false)
+    {
+        ID3D11Texture2D? snapshot;
+        lock (_gate)
+        {
+            snapshot = frozen ? _frozenTexture : _sharedTexture;
+        }
+        if (snapshot is null) return;
+
+        try
+        {
+            const uint size = 8;
+            var cx = (uint)Math.Clamp(x, 0, Math.Max(0, (int)snapshot.Description.Width - (int)size));
+            var cy = (uint)Math.Clamp(y, 0, Math.Max(0, (int)snapshot.Description.Height - (int)size));
+
+            using var staging = _d3d.Device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = size,
+                Height = size,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = snapshot.Description.Format,
+                SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+                Usage = ResourceUsage.Staging,
+                CPUAccessFlags = CpuAccessFlags.Read,
+            });
+
+            Vortice.Mathematics.Box srcBox;
+            lock (_gate)
+            {
+                var source = frozen ? _frozenTexture : _sharedTexture;
+                if (source is null) return;
+                srcBox = new Vortice.Mathematics.Box((int)cx, (int)cy, 0, (int)(cx + size), (int)(cy + size), 1);
+                _d3d.ImmediateContext.CopySubresourceRegion(staging, 0, 0, 0, 0, source, 0, srcBox);
+            }
+
+            var mapped = _d3d.ImmediateContext.Map(staging, 0, MapMode.Read);
+            try
+            {
+                unsafe
+                {
+                    var row = (byte*)mapped.DataPointer;
+                    var b = row[0];
+                    var g = row[1];
+                    var r = row[2];
+                    var a = row[3];
+                    Diag($"LogRegionPixel[{label}]{(frozen ? " (frozen)" : " (live)")}: at capture-px ({cx},{cy}) (B,G,R,A)=({b},{g},{r},{a})");
+                }
+            }
+            finally
+            {
+                _d3d.ImmediateContext.Unmap(staging, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag($"LogRegionPixel[{label}] threw: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Was WDA_EXCLUDEFROMCAPTURE on our own window here. Measured and confirmed (2026-09-11,
+    /// see App.RefreshSnapshotAsync's diagnostic): that flag paints the excluded window's own
+    /// screen region solid black in *any* capture, unconditionally -- a same-frame pixel readback
+    /// under this window's own rect read (0,0,0) while a region 40px outside it, in the same
+    /// frame, read a real non-black color. Since this window needs to read exactly the region it
+    /// occupies (to refract what's behind it), permanent self-exclusion and self-capture are
+    /// mutually exclusive. Replaced by hide-then-snapshot (App.RefreshSnapshotAsync): briefly hide
+    /// the window instead of excluding it, so DWM's composited scene for that one instant has
+    /// nothing to paint black over.
+    /// </summary>
     public async Task<bool> StartAsync(HWND ownHwnd)
     {
         try
@@ -67,14 +184,6 @@ internal sealed class LiveCaptureSource : IDisposable
             {
                 return false;
             }
-
-            // Must happen before StartCapture, not after - otherwise the first frames could
-            // capture our own window before DWM has actually excluded it. Note for future
-            // debugging: this also makes the window invisible to GDI CopyFromScreen screenshots,
-            // not just our own Direct3D11CaptureFramePool - a real person looking at their actual
-            // monitor is unaffected (WDA_EXCLUDEFROMCAPTURE only blocks programmatic capture
-            // APIs), but any screenshot-based verification tooling needs this disabled first.
-            WindowCaptureExclusion.SetExcluded(ownHwnd, true);
 
             _direct3DDevice = Direct3D11Interop.CreateDirect3DDeviceFromDXGIDevice(_d3d.DxgiDevice);
 
@@ -86,7 +195,6 @@ internal sealed class LiveCaptureSource : IDisposable
         catch
         {
             Dispose();
-            WindowCaptureExclusion.SetExcluded(ownHwnd, false);
             return false;
         }
     }
@@ -212,14 +320,75 @@ internal sealed class LiveCaptureSource : IDisposable
                 _d3d.ImmediateContext.CopyResource(_sharedTexture!, capturedTexture);
             }
 
-            if (Interlocked.Increment(ref _frameCount) == 1)
+            var count = Interlocked.Increment(ref _frameCount);
+            if (count == 1)
             {
                 FirstFrameReceived?.Invoke();
+            }
+
+            // Diagnostic only: is the SOURCE capture actually black, or is that introduced
+            // downstream in the shader pipeline? Logged on the first frame and then every ~5s
+            // (60 frames at the pool's ~12fps) rather than every frame, since the Map/Unmap
+            // stalls the GPU pipeline for a CPU readback.
+            if (count == 1 || count % 60 == 0)
+            {
+                LogCenterPixel(capturedTexture, desc);
             }
         }
         catch (Exception ex)
         {
             Diag($"OnFrameArrived threw: {ex}");
+        }
+    }
+
+    /// <summary>One-off staging-texture readback of a small region at the captured display's
+    /// center, logged as its average color. Cheap relative to the alternative (reading the whole
+    /// frame) since it copies only a tiny sub-rectangle before mapping.</summary>
+    private void LogCenterPixel(ID3D11Texture2D capturedTexture, Texture2DDescription desc)
+    {
+        try
+        {
+            const uint size = 8;
+            var cx = desc.Width / 2;
+            var cy = desc.Height / 2;
+
+            using var staging = _d3d.Device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = size,
+                Height = size,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = desc.Format,
+                SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+                Usage = ResourceUsage.Staging,
+                CPUAccessFlags = CpuAccessFlags.Read,
+            });
+
+            var srcBox = new Vortice.Mathematics.Box((int)cx, (int)cy, 0, (int)(cx + size), (int)(cy + size), 1);
+            _d3d.ImmediateContext.CopySubresourceRegion(staging, 0, 0, 0, 0, capturedTexture, 0, srcBox);
+
+            var mapped = _d3d.ImmediateContext.Map(staging, 0, MapMode.Read);
+            try
+            {
+                unsafe
+                {
+                    var row = (byte*)mapped.DataPointer;
+                    // desc.Format is B8G8R8A8UIntNormalized (the pool's requested format) -- BGRA byte order.
+                    var b = row[0];
+                    var g = row[1];
+                    var r = row[2];
+                    var a = row[3];
+                    Diag($"LogCenterPixel: capture desc={desc.Width}x{desc.Height} fmt={desc.Format} centerPixel(B,G,R,A)=({b},{g},{r},{a})");
+                }
+            }
+            finally
+            {
+                _d3d.ImmediateContext.Unmap(staging, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag($"LogCenterPixel threw: {ex}");
         }
     }
 
@@ -272,6 +441,10 @@ internal sealed class LiveCaptureSource : IDisposable
             _sharedSrv = null;
             _sharedTexture?.Dispose();
             _sharedTexture = null;
+            _frozenSrv?.Dispose();
+            _frozenSrv = null;
+            _frozenTexture?.Dispose();
+            _frozenTexture = null;
         }
     }
 }

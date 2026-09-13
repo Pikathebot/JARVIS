@@ -6,7 +6,7 @@ using Vortice.DXGI;
 namespace Jarvis_GlassLab;
 
 /// <summary>
-/// Phase 5: three-pass squircle-bezel glass. Pass 1 (DisplacementField.hlsl) builds a per-pixel
+/// Phase 5: three-pass bezel glass (squircle or lip profile, see <see cref="Profile"/>). Pass 1 (DisplacementField.hlsl) builds a per-pixel
 /// displacement field into an intermediate R16G16_FLOAT target sized to the window; pass 2
 /// (Refraction.hlsl) samples the live-capture texture offset by that field, cropped to this
 /// window's screen rect, into the swapchain back buffer; pass 3 (SpecularRim.hlsl) adds a
@@ -33,7 +33,14 @@ internal sealed class GlassRenderer : IDisposable
 
     private readonly ID3D11BlendState _screenBlendState;
 
-    private readonly float _maxRefractionMagnitude;
+    /// <summary>Both profiles' normalization constants are precomputed at construction -- only two
+    /// exist, so there is no need to recompute on every <see cref="Profile"/> flip.</summary>
+    private readonly float _maxRefractionMagnitudeSquircle;
+    private readonly float _maxRefractionMagnitudeLip;
+
+    /// <summary>Which bezel profile the displacement pass evaluates -- Squircle for panels, Lip
+    /// for kube.io's switch/slider recipe. Tunable live from ControlOverlayWindow.</summary>
+    public GlassBezelProfile Profile { get; set; } = GlassBezelProfile.Squircle;
 
     private ID3D11Texture2D? _displacementTexture;
     private ID3D11RenderTargetView? _displacementRtv;
@@ -108,7 +115,8 @@ internal sealed class GlassRenderer : IDisposable
         // float2 WindowSize + float CornerRadius + float BezelWidth (16) + float3 LightDir + float Intensity (16) = 32 bytes.
         _specularRimConstants = ShaderPipeline.CreateConstantBuffer(_device, 32);
 
-        _maxRefractionMagnitude = SquircleProfile.ComputeMaxRefractionMagnitude();
+        _maxRefractionMagnitudeSquircle = BezelProfileMath.ComputeMaxRefractionMagnitude(GlassBezelProfile.Squircle);
+        _maxRefractionMagnitudeLip = BezelProfileMath.ComputeMaxRefractionMagnitude(GlassBezelProfile.Lip);
     }
 
     private void EnsureDisplacementTarget(int width, int height)
@@ -185,7 +193,8 @@ internal sealed class GlassRenderer : IDisposable
         data[1] = height;
         data[2] = CornerRadius;
         data[3] = BezelWidth;
-        data[4] = _maxRefractionMagnitude;
+        data[4] = Profile == GlassBezelProfile.Lip ? _maxRefractionMagnitudeLip : _maxRefractionMagnitudeSquircle;
+        data[5] = (float)Profile;
         WriteConstantBuffer(_displacementConstants, data);
     }
 

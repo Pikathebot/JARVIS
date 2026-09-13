@@ -1,13 +1,15 @@
-// Phase 4, pass 1: builds a per-pixel horizontal/vertical displacement field for a squircle-
-// profile bezel around this window's rounded-rect edge. Ported from
-// desktop-winui/Jarvis.Glass/BezelDisplacementMap.cs's CPU math (rounded-rect SDF, central-
-// difference normal, Snell's-law refraction), but computed live per-pixel in-shader instead of
-// via a precomputed 1D lookup + CPU-rasterized bitmap, and with the profile swapped from
-// BezelDisplacementMap's convex circle to the squircle from the reference article:
-//   h(t) = (1 - (1-t)^4)^(1/4)
+// Phase 4, pass 1: builds a per-pixel horizontal/vertical displacement field for the window's
+// rounded-rect bezel edge. Ported from desktop-winui/Jarvis.Glass/BezelDisplacementMap.cs's CPU
+// math (rounded-rect SDF, central-difference normal, Snell's-law refraction), but computed live
+// per-pixel in-shader instead of via a precomputed 1D lookup + CPU-rasterized bitmap.
 // Output is written to an R16G16_FLOAT target (not B8G8R8A8) specifically to avoid the
 // byte-order trap BezelDisplacementMap.cs hit (BGRA channel order silently swapping X/Y) - here
 // R=dx, G=dy, unambiguously.
+//
+// Two profiles, selected by Profile (0 = squircle, 1 = lip), matching GlassBezelProfile /
+// BezelProfileMath.cs and docs/GLASS_RENDERING.md section 1:
+//   squircle: h(t) = (1 - (1-t)^4)^(1/4)              -- panels
+//   lip:      smootherstep blend of convex + concave  -- kube.io's switch/slider controls
 
 cbuffer DisplacementConstants : register(b0)
 {
@@ -15,7 +17,8 @@ cbuffer DisplacementConstants : register(b0)
     float CornerRadius;     // pixels
     float BezelWidth;       // pixels
     float MaxRefractionMagnitude; // normalization constant computed on the CPU once at startup
-    float3 _Pad0;
+    float Profile;          // 0 = squircle, 1 = lip -- see GlassBezelProfile
+    float2 _Pad0;
 };
 
 struct VSOutput
@@ -33,12 +36,44 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     return o;
 }
 
-// Squircle surface height, t=0 at the outer edge, t=1 in the flat interior.
-float ProfileHeight(float t)
+// t=0 at the outer edge, t=1 in the flat interior.
+float SquircleHeight(float t)
 {
     float u = 1.0 - t;
     float v = max(0.0, 1.0 - u * u * u * u);
     return pow(v, 0.25);
+}
+
+float ConvexCircleHeight(float t)
+{
+    float u = 1.0 - t;
+    return sqrt(max(0.0, 1.0 - u * u));
+}
+
+float ConcaveHeight(float t)
+{
+    return 1.0 - sqrt(max(0.0, 1.0 - t * t));
+}
+
+float Smootherstep(float t)
+{
+    t = saturate(t);
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+// kube.io's switch/toggle profile: convex outer half blended into a concave inner half so the
+// surface reads as "convex on the outside and concave in the middle" -- see BezelProfileMath.cs.
+float LipHeight(float t)
+{
+    float convex = ConvexCircleHeight(t);
+    float concave = ConcaveHeight(t);
+    float w = Smootherstep(t);
+    return convex * (1.0 - w) + concave * w;
+}
+
+float ProfileHeight(float t)
+{
+    return Profile >= 0.5 ? LipHeight(t) : SquircleHeight(t);
 }
 
 float RoundRectSdf(float2 p, float2 halfSize, float r)

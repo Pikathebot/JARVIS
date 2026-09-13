@@ -14,12 +14,15 @@ namespace Jarvis_GlassLab;
 /// Phase 7: a normal WinUI3 window hosting real controls, stacked above the glass HWND rather
 /// than merged into its composition tree (see the GlassLab plan doc for why - merging a raw
 /// DirectComposition visual into WinUI3's own XAML compositor is undocumented/fragile territory,
-/// while two owner-linked, DWM-stacked windows is a well-understood pattern). Transparent
-/// background (not WS_EX_LAYERED - CLAUDE.md's own known-gotchas note that WS_EX_LAYERED
-/// color-keying on a WinUI3 XAML island is unsupported; a borderless window with a transparent
-/// XAML background composites correctly on its own since modern WinUI3 windows already render via
-/// their own DirectComposition-backed surface). Click-through everywhere except the test button's
-/// actual screen bounds, via a subclassed WndProc intercepting WM_NCHITTEST.
+/// while two owner-linked, DWM-stacked windows is a well-understood pattern). Made see-through
+/// with a <see cref="TransparentBackdrop"/> (a CompositionBrushBackdrop whose brush is a fully
+/// transparent color) rather than WS_EX_LAYERED color-keying, which is unsupported on a WinUI3
+/// XAML island. Found the hard way (2026-09-13): a Transparent XAML root Grid alone is NOT
+/// enough -- the window's own surface then paints opaque black, which is exactly the "glass body
+/// is solid black" symptom that was chased through the whole D3D pipeline before an A/B with
+/// this overlay hidden showed the glass underneath rendering the backdrop perfectly. Click-through
+/// everywhere except the controls' actual screen bounds, via a subclassed WndProc intercepting
+/// WM_NCHITTEST.
 /// </summary>
 public sealed partial class ControlOverlayWindow : Window
 {
@@ -27,10 +30,22 @@ public sealed partial class ControlOverlayWindow : Window
     private WNDPROC _originalWndProc = null!;
     private HWND _hwnd;
     private AppWindow _appWindow = null!;
+    private readonly GlassRenderer _renderer;
 
-    public ControlOverlayWindow(nint ownerHwndValue)
+    /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
+    /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
+    /// Phase 7 plan called for once more than one control existed.</summary>
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider };
+
+    internal ControlOverlayWindow(nint ownerHwndValue, GlassRenderer renderer)
     {
+        _renderer = renderer;
         InitializeComponent();
+        SystemBackdrop = new TransparentBackdrop();
+
+        BezelWidthSlider.Value = _renderer.BezelWidth;
+        CornerRadiusSlider.Value = _renderer.CornerRadius;
+        LipProfileToggle.IsOn = _renderer.Profile == GlassBezelProfile.Lip;
 
         var hwndValue = WinRT.Interop.WindowNative.GetWindowHandle(this);
         _hwnd = (HWND)hwndValue;
@@ -55,6 +70,19 @@ public sealed partial class ControlOverlayWindow : Window
         // without making this a child window (which would clip it to the parent's bounds).
         PInvoke.SetWindowLongPtr(_hwnd, WINDOW_LONG_PTR_INDEX.GWLP_HWNDPARENT, ownerHwndValue);
 
+        // Same DWM trick GlassWindow uses for its raw HWND: enabling blur-behind with no region
+        // makes DWM honour the window's per-pixel alpha, so the areas the XAML tree leaves
+        // transparent (see TransparentBackdrop) actually show the glass window beneath instead of
+        // being filled opaque black. Without this the transparent backdrop brush alone does
+        // nothing visible.
+        var blurBehind = new Windows.Win32.Graphics.Dwm.DWM_BLURBEHIND
+        {
+            dwFlags = PInvoke.DWM_BB_ENABLE,
+            fEnable = true,
+            hRgnBlur = Windows.Win32.Graphics.Gdi.HRGN.Null,
+        };
+        PInvoke.DwmEnableBlurBehindWindow(_hwnd, in blurBehind);
+
         SubclassWndProc();
     }
 
@@ -65,6 +93,16 @@ public sealed partial class ControlOverlayWindow : Window
         _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
     }
 
+    /// <summary>Hidden alongside GlassWindow during each periodic snapshot capture (see
+    /// App.RefreshSnapshotAsync) -- this overlay's own control panel sits at the same screen
+    /// position and would otherwise contaminate the "clean" snapshot with its own dark
+    /// background.</summary>
+    public void SetVisible(bool visible)
+    {
+        if (visible) _appWindow.Show(false);
+        else _appWindow.Hide();
+    }
+
     private void TestButton_Click(object sender, RoutedEventArgs e)
     {
         TestButton.Content = TestButton.Content is "Clicked!" ? "GlassLab test button" : "Clicked!";
@@ -73,6 +111,43 @@ public sealed partial class ControlOverlayWindow : Window
         {
             try { File.AppendAllText(logPath, $"[{DateTimeOffset.Now:O}] ControlOverlayWindow: test button clicked\n"); } catch { }
         }
+    }
+
+    /// <summary>kube.io's own switch/slider pills read at roughly a 32px-tall track: corner
+    /// radius = half the track height (a true pill), bezel band a bit over a third of that radius
+    /// so the concave inner lobe has room to read as concave rather than degenerating into a
+    /// point. The panel/squircle numbers (48/36) were tuned for this window's own ~900x600 body
+    /// and are proportionally far too heavy for a control-scale bezel.</summary>
+    private const float LipCornerRadius = 16f;
+    private const float LipBezelWidth = 7f;
+    private const float SquircleCornerRadius = 48f;
+    private const float SquircleBezelWidth = 36f;
+
+    /// <summary>Flips GlassRenderer.Profile live and swaps in the profile-appropriate bezel
+    /// defaults -- no explicit redraw call needed, since the window's own render timer
+    /// (App.StartCaptureAsync, ~12fps once live capture is flowing) picks up the new values on
+    /// its next tick.</summary>
+    private void LipProfileToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        _renderer.Profile = LipProfileToggle.IsOn ? GlassBezelProfile.Lip : GlassBezelProfile.Squircle;
+        _renderer.CornerRadius = LipProfileToggle.IsOn ? LipCornerRadius : SquircleCornerRadius;
+        _renderer.BezelWidth = LipProfileToggle.IsOn ? LipBezelWidth : SquircleBezelWidth;
+
+        // Reflects the auto-picked defaults back into the sliders rather than leaving them stale
+        // -- without this the sliders would silently disagree with what the renderer is actually
+        // using until the user drags one themselves.
+        CornerRadiusSlider.Value = _renderer.CornerRadius;
+        BezelWidthSlider.Value = _renderer.BezelWidth;
+    }
+
+    private void BezelWidthSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        _renderer.BezelWidth = (float)e.NewValue;
+    }
+
+    private void CornerRadiusSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        _renderer.CornerRadius = (float)e.NewValue;
     }
 
     private void SubclassWndProc()
@@ -96,34 +171,105 @@ public sealed partial class ControlOverlayWindow : Window
     }
 
     /// <summary>
-    /// Translates the button's XAML-space bounds to screen pixels and tests against them. Only
-    /// one control exists in Phase 7 - a real implementation with multiple interactive regions
-    /// would maintain a list here instead, per the plan's "maintained hit-region list" note.
+    /// Translates each region in <see cref="HitRegions"/> from XAML-space bounds to screen
+    /// pixels and tests the point against all of them -- the "maintained hit-region list" the
+    /// Phase 7 plan called for once more than one control existed (the profile toggle and two
+    /// sliders, added alongside the original test button).
     /// </summary>
     private bool IsPointOverControl(int screenX, int screenY)
     {
-        try
+        foreach (var region in HitRegions)
         {
-            var scale = TestButton.XamlRoot?.RasterizationScale ?? 1.0;
-            var transform = TestButton.TransformToVisual(RootGrid);
-            var bounds = transform.TransformBounds(new Windows.Foundation.Rect(0, 0, TestButton.ActualWidth, TestButton.ActualHeight));
+            try
+            {
+                var scale = region.XamlRoot?.RasterizationScale ?? 1.0;
+                var transform = region.TransformToVisual(RootGrid);
+                var bounds = transform.TransformBounds(new Windows.Foundation.Rect(0, 0, region.ActualWidth, region.ActualHeight));
 
-            var pos = _appWindow.Position;
-            var left = pos.X + (int)(bounds.X * scale);
-            var top = pos.Y + (int)(bounds.Y * scale);
-            var right = left + (int)(bounds.Width * scale);
-            var bottom = top + (int)(bounds.Height * scale);
+                var pos = _appWindow.Position;
+                var left = pos.X + (int)(bounds.X * scale);
+                var top = pos.Y + (int)(bounds.Y * scale);
+                var right = left + (int)(bounds.Width * scale);
+                var bottom = top + (int)(bounds.Height * scale);
 
-            return screenX >= left && screenX < right && screenY >= top && screenY < bottom;
+                if (screenX >= left && screenX < right && screenY >= top && screenY < bottom)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // XamlRoot not ready yet (e.g. very first hit-test before layout has run) - skip
+                // this region rather than accidentally swallowing a click meant for the desktop.
+            }
         }
-        catch
-        {
-            // XamlRoot not ready yet (e.g. very first hit-test before layout has run) - default
-            // to click-through rather than accidentally swallowing a click meant for the desktop.
-            return false;
-        }
+
+        return false;
     }
 
     private const int HTCLIENT = 1;
     private const int HTTRANSPARENT = -1;
+}
+
+/// <summary>The one way a WinUI3 top-level window's unpainted area actually becomes transparent
+/// to DWM: hand the XAML compositor a backdrop brush with zero alpha. Same mechanism as WinUIEx's
+/// TransparentTintBackdrop, inlined to avoid the dependency.</summary>
+internal sealed partial class TransparentBackdrop : SystemBackdrop
+{
+    private Windows.UI.Composition.Compositor? _systemCompositor;
+    private static object? _dispatcherQueueController;
+
+    /// <summary>A system Compositor needs a Windows.System.DispatcherQueue on its thread; the
+    /// WinUI thread only has the Microsoft.UI.Dispatching one, so create the system one here
+    /// (DQTYPE_THREAD_CURRENT, DQTAT_COM_NONE) -- the same one-liner every WinUI3 sample that
+    /// touches the system compositor carries.</summary>
+    private static void EnsureSystemDispatcherQueue()
+    {
+        if (_dispatcherQueueController is not null || Windows.System.DispatcherQueue.GetForCurrentThread() is not null)
+        {
+            return;
+        }
+
+        var options = new DispatcherQueueOptions
+        {
+            dwSize = Marshal.SizeOf<DispatcherQueueOptions>(),
+            threadType = 2,   // DQTYPE_THREAD_CURRENT
+            apartmentType = 0 // DQTAT_COM_NONE
+        };
+        var hr = CreateDispatcherQueueController(options, out var controller);
+        Marshal.ThrowExceptionForHR(hr);
+        _dispatcherQueueController = controller;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DispatcherQueueOptions
+    {
+        public int dwSize;
+        public int threadType;
+        public int apartmentType;
+    }
+
+    [DllImport("CoreMessaging.dll")]
+    private static extern int CreateDispatcherQueueController(DispatcherQueueOptions options, [MarshalAs(UnmanagedType.IUnknown)] out object dispatcherQueueController);
+
+    protected override void OnTargetConnected(Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop connectedTarget, XamlRoot xamlRoot)
+    {
+        base.OnTargetConnected(connectedTarget, xamlRoot);
+        // This WinAppSDK (2.4) types the target's SystemBackdrop slot as a *system*
+        // (Windows.UI.Composition) brush, not a Microsoft.UI.Composition one -- the XAML
+        // compositor's brushes are a different runtime class and a WinRT cast throws. So the brush
+        // comes from a system Compositor created on this (DispatcherQueue-owning) XAML thread.
+        if (_systemCompositor is null)
+        {
+            EnsureSystemDispatcherQueue();
+            _systemCompositor = new Windows.UI.Composition.Compositor();
+        }
+        connectedTarget.SystemBackdrop = _systemCompositor.CreateColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+    }
+
+    protected override void OnTargetDisconnected(Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop disconnectedTarget)
+    {
+        disconnectedTarget.SystemBackdrop = null;
+        base.OnTargetDisconnected(disconnectedTarget);
+    }
 }

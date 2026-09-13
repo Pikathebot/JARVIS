@@ -4,11 +4,46 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid x:Name="RootGrid" Background="Transparent">
-        <Button x:Name="TestButton"
-                Content="GlassLab test button"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Margin="24,24,0,0"
-                Click="TestButton_Click" />
+        <StackPanel
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Margin="24,24,0,0"
+            Spacing="12"
+            Padding="12"
+            Background="#CC141821"
+            CornerRadius="8"
+            Width="260">
+            <Button x:Name="TestButton"
+                    Content="GlassLab test button"
+                    Click="TestButton_Click" />
+
+            <!--
+                Toggles GlassRenderer.Profile between Squircle (panels) and Lip (kube.io's
+                switch/slider bezel: convex outside, concave middle). See BezelProfileMath.cs.
+            -->
+            <ToggleSwitch x:Name="LipProfileToggle"
+                          Header="Lip bezel profile (kube.io switch)"
+                          OffContent="Squircle"
+                          OnContent="Lip"
+                          Toggled="LipProfileToggle_Toggled" />
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Bezel width" Foreground="White" FontSize="12" />
+                <Slider x:Name="BezelWidthSlider"
+                        Minimum="4"
+                        Maximum="120"
+                        StepFrequency="1"
+                        ValueChanged="BezelWidthSlider_ValueChanged" />
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Corner radius" Foreground="White" FontSize="12" />
+                <Slider x:Name="CornerRadiusSlider"
+                        Minimum="0"
+                        Maximum="300"
+                        StepFrequency="1"
+                        ValueChanged="CornerRadiusSlider_ValueChanged" />
+            </StackPanel>
+        </StackPanel>
     </Grid>
 </Window>

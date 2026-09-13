@@ -72,6 +72,17 @@ internal sealed unsafe class GlassWindow
             SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
     }
 
+    /// <summary>Briefly hidden around each periodic snapshot capture (see App.RefreshSnapshotAsync)
+    /// instead of the old always-on WDA_EXCLUDEFROMCAPTURE -- excluding a window from capture
+    /// paints that window's own screen region solid black in the capture, which is exactly the
+    /// region this window needs to read to refract what's behind it. Actually hiding it removes it
+    /// from DWM's composited scene entirely for that one instant, so the capture sees the real
+    /// desktop there instead.</summary>
+    public void SetVisible(bool visible)
+    {
+        PInvoke.ShowWindow(_hwnd, visible ? SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE : SHOW_WINDOW_CMD.SW_HIDE);
+    }
+
     public GlassWindow()
     {
         _wndProc = WndProc;
