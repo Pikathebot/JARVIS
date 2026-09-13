@@ -32,6 +32,8 @@ public sealed partial class ControlOverlayWindow : Window
     private AppWindow _appWindow = null!;
     private readonly GlassRenderer _renderer;
 
+    internal HWND Handle => _hwnd;
+
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>

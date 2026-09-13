@@ -24,6 +24,14 @@ public partial class App : Application
     private DispatcherQueueTimer? _snapshotTimer;
     private bool _snapshotRefreshInFlight;
 
+    /// <summary>Both windows are excluded from capture with WDA_EXCLUDEFROMCAPTURE and the glass
+    /// renders from the *live* frame -- verified 2026-09-13 by a pixel readback of the capture
+    /// under the window (real backdrop content, not black). The earlier belief (2026-09-11) that
+    /// this flag paints the window's region black was wrong: what was black was the opaque,
+    /// not-yet-excluded WinUI overlay window on top of the glass. The hide-then-snapshot path
+    /// (RefreshSnapshotAsync) is kept behind this switch as a fallback only.</summary>
+    private const bool ExcludeFromCaptureMode = true;
+
     public App()
     {
         InitializeComponent();
@@ -92,6 +100,18 @@ public partial class App : Application
 
     private async Task StartCaptureAsync()
     {
+        try
+        {
+            await StartCaptureCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(_logPath, $"[{DateTimeOffset.Now:O}] StartCaptureAsync FAILED\n{ex}\n");
+        }
+    }
+
+    private async Task StartCaptureCoreAsync()
+    {
         var ok = await _capture!.StartAsync(_window!.Handle);
         if (!ok)
         {
@@ -102,8 +122,33 @@ public partial class App : Application
         _captureReady = true;
         RecomputeUvRect();
 
-        // Matches Jarvis.Glass's LiveCaptureService throttle - revisited properly in Phase 8.
-        _window.StartRenderTimer(1000 / 12);
+        // WM_TIMER's floor is ~15.6ms, so this is effectively display rate; capture frames arrive
+        // at display rate too, so anything slower here is what reads as a laggy backdrop (the
+        // previous 1000/12 did -- it was inherited from Jarvis.Glass's throttle, not chosen).
+        _window.StartRenderTimer(16);
+
+        if (ExcludeFromCaptureMode)
+        {
+            WindowCaptureExclusion.SetExcluded(_window.Handle, true);
+            WindowCaptureExclusion.SetExcluded(_overlay!.Handle, true);
+
+            // One-off proof that exclusion shows the real backdrop under our own rect (not black):
+            // logged once, ~1s in, rather than periodically -- every readback is a GPU->CPU Map
+            // that stalls the pipeline, which is visible as hitching at display-rate rendering.
+            var proof = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            proof.Interval = TimeSpan.FromSeconds(1);
+            proof.IsRepeating = false;
+            proof.Tick += (_, _) =>
+            {
+                var itemSize = _capture.ItemSize;
+                var ownPxX = (int)(_uvRect.X * itemSize.Width) + _d3d!.Width / 2;
+                var ownPxY = (int)(_uvRect.Y * itemSize.Height) + _d3d.Height / 2;
+                _capture.LogRegionPixel(ownPxX, ownPxY, "under-window-center");
+                _capture.LogRegionPixel(ownPxX + _d3d.Width + 40, ownPxY, "just-outside-window");
+            };
+            proof.Start();
+            return;
+        }
 
         // First snapshot immediately (rather than waiting the full timer interval) so the window
         // doesn't sit black/empty for several seconds after launch; then refresh periodically.
@@ -115,9 +160,8 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Hide-then-snapshot: the replacement for the old always-on WDA_EXCLUDEFROMCAPTURE, which
-    /// painted this window's own screen region solid black in every capture (confirmed via a
-    /// same-frame pixel readback -- see LiveCaptureSource.StartAsync's remark). Briefly hides both
+    /// Hide-then-snapshot, FALLBACK ONLY (see ExcludeFromCaptureMode): built when exclusion was
+    /// thought to paint the window's region black in the capture. Briefly hides both
     /// windows (the glass HWND and its WinUI control overlay, which sits at the same screen rect),
     /// waits long enough for DWM to composite a frame without them and for that frame to actually
     /// reach the capture pipeline, freezes it as the new snapshot, then shows both windows again.
@@ -261,7 +305,7 @@ public partial class App : Application
 
     private void RenderTick()
     {
-        var srv = _capture?.TryGetCurrentFrameSrv();
+        var srv = ExcludeFromCaptureMode ? _capture?.TryGetLiveFrameSrv() : _capture?.TryGetCurrentFrameSrv();
         if (srv is null || _renderer is null || _d3d is null)
         {
             return;

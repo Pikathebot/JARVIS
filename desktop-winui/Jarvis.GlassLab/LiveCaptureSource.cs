@@ -65,6 +65,17 @@ internal sealed class LiveCaptureSource : IDisposable
         }
     }
 
+    /// <summary>The continuously-updating live frame's SRV -- only safe to render from when our
+    /// own windows are excluded from the capture (see App.ExcludeFromCaptureMode), otherwise the
+    /// glass would refract its own previous frame.</summary>
+    public ID3D11ShaderResourceView? TryGetLiveFrameSrv()
+    {
+        lock (_gate)
+        {
+            return _sharedSrv;
+        }
+    }
+
     /// <summary>Copies the live capture texture into the frozen snapshot the renderer actually
     /// reads. Callers (App.RefreshSnapshotAsync) are responsible for hiding our own windows and
     /// waiting for at least one fresh frame to arrive first -- this method just does the copy, it
@@ -164,17 +175,10 @@ internal sealed class LiveCaptureSource : IDisposable
         }
     }
 
-    /// <summary>
-    /// Was WDA_EXCLUDEFROMCAPTURE on our own window here. Measured and confirmed (2026-09-11,
-    /// see App.RefreshSnapshotAsync's diagnostic): that flag paints the excluded window's own
-    /// screen region solid black in *any* capture, unconditionally -- a same-frame pixel readback
-    /// under this window's own rect read (0,0,0) while a region 40px outside it, in the same
-    /// frame, read a real non-black color. Since this window needs to read exactly the region it
-    /// occupies (to refract what's behind it), permanent self-exclusion and self-capture are
-    /// mutually exclusive. Replaced by hide-then-snapshot (App.RefreshSnapshotAsync): briefly hide
-    /// the window instead of excluding it, so DWM's composited scene for that one instant has
-    /// nothing to paint black over.
-    /// </summary>
+    /// <summary>Capture exclusion (WDA_EXCLUDEFROMCAPTURE) for our own windows is applied by App
+    /// once the overlay exists too, not here -- excluding only the glass HWND while the opaque
+    /// overlay stayed capturable is what produced the "region under the window is black" reading
+    /// on 2026-09-11 that was misattributed to the flag itself.</summary>
     public async Task<bool> StartAsync(HWND ownHwnd)
     {
         try
@@ -326,11 +330,9 @@ internal sealed class LiveCaptureSource : IDisposable
                 FirstFrameReceived?.Invoke();
             }
 
-            // Diagnostic only: is the SOURCE capture actually black, or is that introduced
-            // downstream in the shader pipeline? Logged on the first frame and then every ~5s
-            // (60 frames at the pool's ~12fps) rather than every frame, since the Map/Unmap
-            // stalls the GPU pipeline for a CPU readback.
-            if (count == 1 || count % 60 == 0)
+            // Diagnostic: logged on the first frame only -- the Map/Unmap readback stalls the
+            // GPU pipeline, so it must stay out of the steady-state path.
+            if (count == 1)
             {
                 LogCenterPixel(capturedTexture, desc);
             }
