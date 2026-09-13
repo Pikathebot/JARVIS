@@ -1,24 +1,36 @@
-// Phase 4, pass 1: builds a per-pixel horizontal/vertical displacement field for the window's
-// rounded-rect bezel edge. Ported from desktop-winui/Jarvis.Glass/BezelDisplacementMap.cs's CPU
-// math (rounded-rect SDF, central-difference normal, Snell's-law refraction), but computed live
-// per-pixel in-shader instead of via a precomputed 1D lookup + CPU-rasterized bitmap.
-// Output is written to an R16G16_FLOAT target (not B8G8R8A8) specifically to avoid the
-// byte-order trap BezelDisplacementMap.cs hit (BGRA channel order silently swapping X/Y) - here
-// R=dx, G=dy, unambiguously.
+// Pass 1 (per layer): builds a per-pixel displacement field for every glass shape on the active
+// layer. Ported from desktop-winui/Jarvis.Glass/BezelDisplacementMap.cs's CPU math (rounded-rect
+// SDF, central-difference normal, Snell's-law refraction), computed live per pixel.
 //
-// Two profiles, selected by Profile (0 = squircle, 1 = lip), matching GlassBezelProfile /
-// BezelProfileMath.cs and docs/GLASS_RENDERING.md section 1:
-//   squircle: h(t) = (1 - (1-t)^4)^(1/4)              -- panels
-//   lip:      smootherstep blend of convex + concave  -- kube.io's switch/slider controls
+// Output (R16G16B16A16_FLOAT): xy = displacement in *pixels* (each shape's refraction scale is
+// already folded in), z = coverage (1 inside any shape on this layer, else 0), w = unused.
+// Deliberately not B8G8R8A8 so there is no byte-order trap.
+//
+// Shapes come from ShapeConstants (b1) -- the same block SpecularRim.hlsl reads. Two bezel
+// profiles per shape, matching GlassBezelProfile / BezelProfileMath.cs:
+//   0 squircle: h(t) = (1 - (1-t)^4)^(1/4)              -- panels, thumbs
+//   1 lip:      smootherstep blend of convex + concave  -- kube.io's switch/slider tracks
 
 cbuffer DisplacementConstants : register(b0)
 {
     float2 WindowSize;      // pixels
-    float CornerRadius;     // pixels
-    float BezelWidth;       // pixels
-    float MaxRefractionMagnitude; // normalization constant computed on the CPU once at startup
-    float Profile;          // 0 = squircle, 1 = lip -- see GlassBezelProfile
     float2 _Pad0;
+};
+
+#define MAX_SHAPES 16
+
+struct GlassShape
+{
+    float4 CenterHalfSize; // xy center px, zw half size px
+    float4 Params;         // x corner radius, y bezel width, z profile, w refraction scale (px)
+    float4 Params2;        // x specular intensity, y layer, z max refraction magnitude, w unused
+    float4 Tint;           // rgb tint color, a tint amount
+};
+
+cbuffer ShapeConstants : register(b1)
+{
+    float4 Header; // x = shape count, y = active layer
+    GlassShape Shapes[MAX_SHAPES];
 };
 
 struct VSOutput
@@ -31,8 +43,8 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
 {
     VSOutput o;
     float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+    o.Position = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
     o.Uv = uv;
-    o.Position = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
     return o;
 }
 
@@ -61,8 +73,6 @@ float Smootherstep(float t)
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
 }
 
-// kube.io's switch/toggle profile: convex outer half blended into a concave inner half so the
-// surface reads as "convex on the outside and concave in the middle" -- see BezelProfileMath.cs.
 float LipHeight(float t)
 {
     float convex = ConvexCircleHeight(t);
@@ -71,9 +81,9 @@ float LipHeight(float t)
     return convex * (1.0 - w) + concave * w;
 }
 
-float ProfileHeight(float t)
+float ProfileHeight(float t, float profile)
 {
-    return Profile >= 0.5 ? LipHeight(t) : SquircleHeight(t);
+    return profile >= 0.5 ? LipHeight(t) : SquircleHeight(t);
 }
 
 float RoundRectSdf(float2 p, float2 halfSize, float r)
@@ -95,16 +105,15 @@ float2 SdfGradient(float2 p, float2 halfSize, float r)
     return len > 1e-6 ? g / len : float2(0.0, -1.0);
 }
 
-// Vector Snell's law through the squircle profile's slope at depth t, projected through the
-// remaining glass thickness - same derivation as BezelDisplacementMap.BuildRefractionLookup,
-// just evaluated inline instead of via a precomputed table.
-float RefractionMagnitude(float t)
+// Vector Snell's law through the profile's slope at depth t, projected through the remaining
+// glass thickness - same derivation as BezelDisplacementMap.BuildRefractionLookup.
+float RefractionMagnitude(float t, float profile)
 {
     const float eps = 0.001;
     float t0 = clamp(t - eps, 0.0, 1.0);
     float t1 = clamp(t + eps, 0.0, 1.0);
-    float h0 = ProfileHeight(t0);
-    float h1 = ProfileHeight(t1);
+    float h0 = ProfileHeight(t0, profile);
+    float h1 = ProfileHeight(t1, profile);
     float dhdt = (h1 - h0) / max(1e-4, t1 - t0);
 
     float2 normal = normalize(float2(-dhdt, -1.0));
@@ -115,7 +124,6 @@ float RefractionMagnitude(float t)
     float k = 1.0 - eta * eta * (1.0 - dotv * dotv);
     if (k < 0.0)
     {
-        // Total internal reflection - not physically meaningful here, guarded to avoid NaN.
         return 0.0;
     }
 
@@ -125,25 +133,52 @@ float RefractionMagnitude(float t)
     return refracted.y > 1e-4 ? (refracted.x / refracted.y) * thickness : 0.0;
 }
 
-float2 PSMain(VSOutput i) : SV_TARGET
+// The shape on the active layer this pixel belongs to: the one it is deepest inside of (smallest
+// signed distance), so overlapping shapes on one layer resolve to the innermost. -1 if none.
+int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR)
+{
+    int count = (int)Header.x;
+    int layer = (int)Header.y;
+    int best = -1;
+    float bestSdf = 1e9;
+    outSdf = 0.0; outP = 0.0; outR = 0.0;
+    for (int s = 0; s < MAX_SHAPES; s++)
+    {
+        if (s >= count) break;
+        if ((int)Shapes[s].Params2.y != layer) continue;
+
+        float2 halfSize = Shapes[s].CenterHalfSize.zw;
+        float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
+        float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
+        float sdf = RoundRectSdf(p, halfSize, r);
+        if (sdf <= 0.0 && sdf < bestSdf)
+        {
+            bestSdf = sdf; best = s; outSdf = sdf; outP = p; outR = r;
+        }
+    }
+    return best;
+}
+
+float4 PSMain(VSOutput i) : SV_TARGET
 {
     float2 pixelPos = i.Uv * WindowSize;
-    float2 halfSize = WindowSize * 0.5;
-    float2 p = pixelPos - halfSize;
 
-    float r = min(CornerRadius, min(halfSize.x, halfSize.y));
-    float bezel = max(1.0, min(BezelWidth, r));
-
-    float sdf = RoundRectSdf(p, halfSize, r);
-    if (sdf > 0.0 || sdf < -bezel)
+    float sdf; float2 p; float r;
+    int s = FindShape(pixelPos, sdf, p, r);
+    if (s < 0)
     {
-        // Outside the window, or past the bezel band into the flat interior: no displacement.
-        return float2(0.0, 0.0);
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    float bezel = max(1.0, min(Shapes[s].Params.y, r));
+    if (sdf < -bezel)
+    {
+        // Past the bezel band into the flat interior: covered, undisplaced.
+        return float4(0.0, 0.0, 1.0, 0.0);
     }
 
     float t = saturate(1.0 - (-sdf) / bezel); // 1 at outer edge, 0 at the bezel's inner boundary
-    float mag = RefractionMagnitude(t) / MaxRefractionMagnitude;
-
-    float2 normal = SdfGradient(p, halfSize, r);
-    return -normal * mag;
+    float mag = RefractionMagnitude(t, Shapes[s].Params.z) / Shapes[s].Params2.z;
+    float2 normal = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
+    return float4(-normal * mag * Shapes[s].Params.w, 1.0, 0.0);
 }

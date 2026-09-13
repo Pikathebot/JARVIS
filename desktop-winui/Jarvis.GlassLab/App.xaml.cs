@@ -41,6 +41,8 @@ public partial class App : Application
     {
         _logPath = Path.Combine(AppContext.BaseDirectory, "glasslab-phase7.log");
         LiveCaptureSource.DiagnosticLogPath = _logPath;
+        LabLog.Path = _logPath;
+        File.WriteAllText(_logPath, "");
         try
         {
             _window = new GlassWindow();
@@ -67,7 +69,7 @@ public partial class App : Application
             // DispatcherQueue once RunMessageLoop below starts pumping.
             _ = StartCaptureAsync();
 
-            File.WriteAllText(_logPath, $"[{DateTimeOffset.Now:O}] Phase 7 window+swapchain+renderer+overlay ready, hwnd={_window.HandleValue:X}\n");
+            File.AppendAllText(_logPath, $"[{DateTimeOffset.Now:O}] Phase 7 window+swapchain+renderer+overlay ready, hwnd={_window.HandleValue:X}\n");
             _window.RunMessageLoop();
         }
         catch (Exception ex)
@@ -302,6 +304,7 @@ public partial class App : Application
     }
 
     private int _loggedFrameCount = -1;
+    private int _dumpPollCounter;
 
     private void RenderTick()
     {
@@ -311,7 +314,23 @@ public partial class App : Application
             return;
         }
 
-        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height);
+        var controlShapes = GlassShapeRegistry.Snapshot();
+        var shapes = new GlassShape[1 + controlShapes.Length];
+        shapes[0] = _renderer.PanelShape(_d3d.Width, _d3d.Height);
+        controlShapes.CopyTo(shapes, 1);
+        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes);
+
+        // Debug hook: a "dump.txt" next to the exe requests one raw frame dump (see
+        // D3D11Context.DumpBackBuffer); checked every ~half second, not every tick.
+        if (++_dumpPollCounter % 30 == 0)
+        {
+            var trigger = Path.Combine(AppContext.BaseDirectory, "dump.txt");
+            if (File.Exists(trigger))
+            {
+                File.Delete(trigger);
+                _d3d.DumpBackBuffer(Path.Combine(AppContext.BaseDirectory, $"frame-{_d3d.Width}x{_d3d.Height}.bgra"));
+            }
+        }
 
         _d3d.Present();
 

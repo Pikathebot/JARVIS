@@ -24,6 +24,44 @@ internal sealed class D3D11Context : IDisposable
     public int Width { get; private set; }
     public int Height { get; private set; }
 
+    /// <summary>Debug: copies the back buffer to a staging texture and writes it as raw
+    /// top-down BGRA (width*height*4 bytes) -- the only way to see what this window renders once
+    /// it is excluded from capture, since screenshots then can't see it. Call after Draw, before
+    /// Present.</summary>
+    public void DumpBackBuffer(string path)
+    {
+        using var staging = Device.CreateTexture2D(new Texture2DDescription
+        {
+            Width = (uint)Width,
+            Height = (uint)Height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.B8G8R8A8_UNorm,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = ResourceUsage.Staging,
+            CPUAccessFlags = CpuAccessFlags.Read,
+        });
+        ImmediateContext.CopyResource(staging, _backBuffer!);
+        var mapped = ImmediateContext.Map(staging, 0, MapMode.Read);
+        try
+        {
+            var bytes = new byte[Width * Height * 4];
+            unsafe
+            {
+                for (var y = 0; y < Height; y++)
+                {
+                    new ReadOnlySpan<byte>((byte*)mapped.DataPointer + y * mapped.RowPitch, Width * 4)
+                        .CopyTo(bytes.AsSpan(y * Width * 4));
+                }
+            }
+            File.WriteAllBytes(path, bytes);
+        }
+        finally
+        {
+            ImmediateContext.Unmap(staging, 0);
+        }
+    }
+
     public D3D11Context(int width, int height)
     {
         Width = width;

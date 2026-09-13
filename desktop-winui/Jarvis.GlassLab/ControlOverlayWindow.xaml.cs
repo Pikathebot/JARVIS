@@ -37,7 +37,7 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>
-    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider };
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle };
 
     internal ControlOverlayWindow(nint ownerHwndValue, GlassRenderer renderer)
     {
@@ -142,6 +142,11 @@ public sealed partial class ControlOverlayWindow : Window
         BezelWidthSlider.Value = _renderer.BezelWidth;
     }
 
+    private void DemoToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        DemoToggleLabel.Text = DemoToggle.IsOn ? "Glass toggle: on" : "Glass toggle: off";
+    }
+
     private void BezelWidthSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         _renderer.BezelWidth = (float)e.NewValue;
@@ -166,7 +171,8 @@ public sealed partial class ControlOverlayWindow : Window
         {
             var screenX = unchecked((short)(lParam.Value & 0xFFFF));
             var screenY = unchecked((short)((lParam.Value >> 16) & 0xFFFF));
-            return new LRESULT(IsPointOverControl(screenX, screenY) ? HTCLIENT : HTTRANSPARENT);
+            var over = IsPointOverControl(screenX, screenY);
+            return new LRESULT(over ? HTCLIENT : HTTRANSPARENT);
         }
 
         return PInvoke.CallWindowProc(_originalWndProc, hwnd, msg, wParam, lParam);

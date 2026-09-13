@@ -21,6 +21,16 @@ internal enum GlassBezelProfile
 /// </summary>
 internal static class BezelProfileMath
 {
+    private static readonly float[] Cached =
+    {
+        ComputeMaxRefractionMagnitude(GlassBezelProfile.Squircle),
+        ComputeMaxRefractionMagnitude(GlassBezelProfile.Lip),
+    };
+
+    /// <summary>Precomputed per profile -- shapes are built every animation frame, so this must
+    /// not re-run the 128-sample scan each time.</summary>
+    public static float MaxRefractionMagnitude(GlassBezelProfile profile) => Cached[(int)profile];
+
     public static float ComputeMaxRefractionMagnitude(GlassBezelProfile profile, float refractiveIndex = 1.5f, int samples = 128)
     {
         var maxAbs = 1e-4f;
