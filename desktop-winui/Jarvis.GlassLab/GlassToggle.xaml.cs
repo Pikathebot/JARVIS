@@ -22,33 +22,66 @@ public sealed partial class GlassToggle : UserControl
     // Geometry in DIPs (kube.io's ~32px-tall switch); pixel values come from RasterizationScale.
     private const float TrackWidth = 56f;
     private const float TrackHeight = 32f;
-    private const float ThumbRadius = 13f;
-    private const float ThumbInset = 3f;
+    private const float ThumbRadius = 13.5f;
+    private const float ThumbInset = 2.5f;
 
-    // Material. Track: lip profile, bezel a bit over a third of the radius so the concave inner
-    // lobe has room to read as concave. Thumb: a full lens (bezel = radius), squircle profile,
-    // stronger displacement and highlight so it visibly magnifies whatever passes under it.
-    private const float TrackBezel = 7f;
-    private const float TrackRefraction = 10f;
-    private const float ThumbRefraction = 18f;
-    private const float TrackSpecular = 0.9f;
-    private const float ThumbSpecular = 1.6f;
-    private static readonly Vector3 OnTint = new(0.30f, 0.78f, 0.45f);
-    private static readonly Vector3 OffTint = Vector3.One;
-    private const float OnTintAmount = 0.35f;
-    private const float OffTintAmount = 0.06f;
-    private const float ThumbTintAmount = 0.12f;
+    /// <summary>The toggle's material, shared by every instance and live-tunable from the
+    /// overlay's tuning sliders (call <see cref="MaterialChanged"/> after editing). Modeled on
+    /// the iOS 26 switch: at rest nothing is glass -- an opaque capsule track (system green
+    /// #34C759 on, light grey off) and an opaque white thumb with a soft shadow; while pressed
+    /// the thumb lifts into a glass lens: grows past the track, turns transparent, elongates
+    /// along its travel and refracts the track with a chromatic fringe at the rim.</summary>
+    public static class Material
+    {
+        // Track (always opaque).
+        public static Vector3 OnColor = new(0.204f, 0.780f, 0.349f);
+        public static Vector3 OffColor = new(0.914f, 0.914f, 0.922f);
+        public static float TrackBezel = 4f;
+        public static float TrackRefraction = 2f;
+        public static float TrackSpecular = 0.25f;
+
+        // Thumb at rest.
+        public static float RestScale = 1.0f;
+        public static float RestTint = 1.0f;       // opaque white
+        public static float RestSpecular = 0.2f;
+        public static float RestShadow = 0.28f;
+        public static float RestShadowRadius = 6f;
+
+        // Thumb lifted (pressed).
+        public static float LiftScale = 1.35f;
+        public static float LiftTint = 0.10f;      // near-clear glass
+        public static float LiftSpecular = 0.9f;
+        public static float LiftShadow = 0.35f;
+        public static float LiftShadowRadius = 12f;
+        public static float LiftBezelFraction = 0.36f;
+        public static float LiftRefraction = 16f;
+        public static float LiftChromatic = 2.0f;
+        public static float LiftBlur = 1.5f;
+
+        public static float ShadowOffsetY = 1.5f;
+        /// <summary>How much the thumb elongates along its travel per unit of velocity.</summary>
+        public static float ThumbStretch = 0.06f;
+    }
+
+    private static readonly List<WeakReference<GlassToggle>> Instances = new();
+
+    /// <summary>Re-publish every live toggle after a tuning change.</summary>
+    public static void MaterialChanged()
+    {
+        foreach (var weak in Instances)
+        {
+            if (weak.TryGetTarget(out var toggle)) toggle.PublishShapes();
+        }
+    }
 
     // Spring for the thumb's travel (0 = off, 1 = on) and its press scale.
     private const float Stiffness = 520f;
     private const float Damping = 24f;
-    private const float PressScale = 1.12f;
 
     private float _travel;        // current position 0..1
     private float _travelVelocity;
-    private float _scale = 1f;    // current thumb scale
-    private float _scaleVelocity;
-    private float _tintMix;       // 0 = off tint, 1 = on tint (springs with travel)
+    private float _lift;          // 0 = resting opaque puck, 1 = lifted glass lens
+    private float _liftVelocity;
     private bool _pressed;
     private bool _rendering;
     private long _lastTick;
@@ -68,6 +101,7 @@ public sealed partial class GlassToggle : UserControl
     {
         InitializeComponent();
         _travel = IsOn ? 1f : 0f;
+        Instances.Add(new WeakReference<GlassToggle>(this));
 
         Loaded += (_, _) => { PublishShapes(); StartAnimating(); };
         Unloaded += (_, _) => { StopAnimating(); GlassShapeRegistry.Remove(this); };
@@ -129,20 +163,19 @@ public sealed partial class GlassToggle : UserControl
         dt = Math.Clamp(dt, 0.001f, 0.05f);
 
         var travelTarget = IsOn ? 1f : 0f;
-        var scaleTarget = _pressed ? PressScale : 1f;
+        var liftTarget = _pressed ? 1f : 0f;
 
         Spring(ref _travel, ref _travelVelocity, travelTarget, dt);
-        Spring(ref _scale, ref _scaleVelocity, scaleTarget, dt);
-        _tintMix = _travel;
+        Spring(ref _lift, ref _liftVelocity, liftTarget, dt);
 
         PublishShapes();
 
         var settled = Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
-                   && Math.Abs(_scale - scaleTarget) < 0.0005f && Math.Abs(_scaleVelocity) < 0.01f;
+                   && Math.Abs(_lift - liftTarget) < 0.0005f && Math.Abs(_liftVelocity) < 0.01f;
         if (settled)
         {
             _travel = travelTarget; _travelVelocity = 0f;
-            _scale = scaleTarget; _scaleVelocity = 0f;
+            _lift = liftTarget; _liftVelocity = 0f;
             PublishShapes();
             StopAnimating();
         }
@@ -178,16 +211,31 @@ public sealed partial class GlassToggle : UserControl
 
         var travelPx = (TrackWidth - 2f * (ThumbInset + ThumbRadius)) * scale;
         var thumbX = trackCenter.X - travelPx * 0.5f + _travel * travelPx;
-        var thumbRadius = ThumbRadius * _scale * scale;
         var thumbCenter = new Vector2(thumbX, trackCenter.Y);
 
-        var tint = Vector3.Lerp(OffTint, OnTint, _tintMix);
-        var tintAmount = OffTintAmount + (OnTintAmount - OffTintAmount) * _tintMix;
+        var m = _lift; // rest -> lift blend
+        var thumbRadius = ThumbRadius * (Material.RestScale + (Material.LiftScale - Material.RestScale) * m) * scale;
+
+        // Apple's lifted thumb elongates along its direction of travel while moving and relaxes
+        // back to a circle as it settles -- driven straight off the spring's velocity.
+        var stretch = Math.Min(0.45f, Math.Abs(_travelVelocity) * Material.ThumbStretch) * m;
+        var thumbHalf = new Vector2(thumbRadius * (1f + stretch), thumbRadius);
+
+        var trackColor = Vector3.Lerp(Material.OffColor, Material.OnColor, _travel);
 
         GlassShapeRegistry.Publish(this,
-            GlassShape.Create(trackCenter, trackHalf, trackRadius, TrackBezel * scale, GlassBezelProfile.Lip,
-                TrackRefraction * scale, TrackSpecular, layer: 1, tint, tintAmount),
-            GlassShape.Create(thumbCenter, new Vector2(thumbRadius), thumbRadius, thumbRadius, GlassBezelProfile.Squircle,
-                ThumbRefraction * scale, ThumbSpecular, layer: 2, Vector3.One, ThumbTintAmount));
+            GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
+                Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, trackColor, 1f),
+            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.LiftBezelFraction, GlassBezelProfile.Squircle,
+                refractionScale: Material.LiftRefraction * m * scale,
+                specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
+                layer: 3,
+                tintColor: Vector3.One,
+                tintAmount: Material.RestTint + (Material.LiftTint - Material.RestTint) * m,
+                blurRadius: Material.LiftBlur * m * scale,
+                chromatic: Material.LiftChromatic * m * scale,
+                shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
+                shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
+                shadowOffsetY: Material.ShadowOffsetY * scale));
     }
 }

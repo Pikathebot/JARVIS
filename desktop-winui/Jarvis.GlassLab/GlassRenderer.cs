@@ -232,6 +232,7 @@ internal sealed class GlassRenderer : IDisposable
             _context.OMSetRenderTargets(target);
             _context.PSSetShader(_refractionPs);
             _context.PSSetConstantBuffer(0, _refractionConstants);
+            _context.PSSetConstantBuffer(1, _shapeConstants);
             _context.PSSetShaderResource(0, _displacementSrv!);
             _context.PSSetShaderResource(1, source);
             _context.Draw(3, 0);

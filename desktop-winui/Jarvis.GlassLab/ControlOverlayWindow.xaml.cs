@@ -37,7 +37,54 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>
-    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle };
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle }
+        .Concat(_tuningSliders).ToArray();
+
+    private readonly List<FrameworkElement> _tuningSliders = new();
+
+    /// <summary>One row per tunable of GlassToggle.Material: label, min, max, getter, setter.</summary>
+    private static readonly (string Label, float Min, float Max, Func<float> Get, Action<float> Set)[] ToggleTunables =
+    {
+        ("Lift scale", 1f, 1.8f, () => GlassToggle.Material.LiftScale, v => GlassToggle.Material.LiftScale = v),
+        ("Lift tint", 0f, 1f, () => GlassToggle.Material.LiftTint, v => GlassToggle.Material.LiftTint = v),
+        ("Lift refraction", 0f, 40f, () => GlassToggle.Material.LiftRefraction, v => GlassToggle.Material.LiftRefraction = v),
+        ("Lift bezel frac", 0.1f, 1f, () => GlassToggle.Material.LiftBezelFraction, v => GlassToggle.Material.LiftBezelFraction = v),
+        ("Lift chromatic", 0f, 6f, () => GlassToggle.Material.LiftChromatic, v => GlassToggle.Material.LiftChromatic = v),
+        ("Lift specular", 0f, 2.5f, () => GlassToggle.Material.LiftSpecular, v => GlassToggle.Material.LiftSpecular = v),
+        ("Lift blur px", 0f, 8f, () => GlassToggle.Material.LiftBlur, v => GlassToggle.Material.LiftBlur = v),
+        ("Stretch", 0f, 0.2f, () => GlassToggle.Material.ThumbStretch, v => GlassToggle.Material.ThumbStretch = v),
+        ("Rest tint", 0f, 1f, () => GlassToggle.Material.RestTint, v => GlassToggle.Material.RestTint = v),
+        ("Rest shadow", 0f, 0.8f, () => GlassToggle.Material.RestShadow, v => GlassToggle.Material.RestShadow = v),
+        ("Shadow radius", 0f, 20f, () => GlassToggle.Material.RestShadowRadius, v => GlassToggle.Material.RestShadowRadius = v),
+        ("Track specular", 0f, 2f, () => GlassToggle.Material.TrackSpecular, v => GlassToggle.Material.TrackSpecular = v),
+    };
+
+    private void BuildTuningPanel()
+    {
+        foreach (var (label, min, max, get, set) in ToggleTunables)
+        {
+            var row = new Microsoft.UI.Xaml.Controls.Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new GridLength(110) });
+            row.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var text = new Microsoft.UI.Xaml.Controls.TextBlock
+            {
+                Text = label, FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+            };
+            var slider = new Microsoft.UI.Xaml.Controls.Slider
+            {
+                Minimum = min, Maximum = max, StepFrequency = (max - min) / 100.0, Value = get(),
+                MinWidth = 120, Margin = new Thickness(0, -6, 0, -6),
+            };
+            var setter = set;
+            slider.ValueChanged += (_, e) => { setter((float)e.NewValue); GlassToggle.MaterialChanged(); };
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(slider, 1);
+            row.Children.Add(text);
+            row.Children.Add(slider);
+            TuningPanel.Children.Add(row);
+            _tuningSliders.Add(slider);
+        }
+    }
 
     internal ControlOverlayWindow(nint ownerHwndValue, GlassRenderer renderer)
     {
@@ -45,6 +92,9 @@ public sealed partial class ControlOverlayWindow : Window
         InitializeComponent();
         SystemBackdrop = new TransparentBackdrop();
 
+        BuildTuningPanel();
+        Card.LayoutUpdated += (_, _) => PublishCardShape();
+        Card.Loaded += (_, _) => PublishCardShape();
         BezelWidthSlider.Value = _renderer.BezelWidth;
         CornerRadiusSlider.Value = _renderer.CornerRadius;
         LipProfileToggle.IsOn = _renderer.Profile == GlassBezelProfile.Lip;
@@ -139,7 +189,25 @@ public sealed partial class ControlOverlayWindow : Window
         // -- without this the sliders would silently disagree with what the renderer is actually
         // using until the user drags one themselves.
         CornerRadiusSlider.Value = _renderer.CornerRadius;
+        BuildTuningPanel();
+        Card.LayoutUpdated += (_, _) => PublishCardShape();
+        Card.Loaded += (_, _) => PublishCardShape();
         BezelWidthSlider.Value = _renderer.BezelWidth;
+    }
+
+    /// <summary>The control card as a glass slab: frosted, dark-tinted, on layer 1 so the
+    /// controls (layers 2+) refract it rather than being covered by it.</summary>
+    private void PublishCardShape()
+    {
+        if (Card.XamlRoot is null || Card.ActualWidth <= 0) return;
+        var scale = (float)Card.XamlRoot.RasterizationScale;
+        var b = Card.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, Card.ActualWidth, Card.ActualHeight));
+        var center = new System.Numerics.Vector2((float)(b.X + b.Width / 2), (float)(b.Y + b.Height / 2)) * scale;
+        var half = new System.Numerics.Vector2((float)b.Width / 2, (float)b.Height / 2) * scale;
+        GlassShapeRegistry.Publish(Card, GlassShape.Create(
+            center, half, cornerRadius: 14f * scale, bezelWidth: 10f * scale, GlassBezelProfile.Squircle,
+            refractionScale: 6f * scale, specularIntensity: 0.5f, layer: 1,
+            tintColor: new System.Numerics.Vector3(0.08f, 0.09f, 0.13f), tintAmount: 0.45f, blurRadius: 10f * scale));
     }
 
     private void DemoToggle_Toggled(object sender, RoutedEventArgs e)

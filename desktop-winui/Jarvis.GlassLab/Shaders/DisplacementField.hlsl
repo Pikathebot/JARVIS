@@ -3,7 +3,7 @@
 // SDF, central-difference normal, Snell's-law refraction), computed live per pixel.
 //
 // Output (R16G16B16A16_FLOAT): xy = displacement in *pixels* (each shape's refraction scale is
-// already folded in), z = coverage (1 inside any shape on this layer, else 0), w = unused.
+// already folded in), z = coverage (1 inside any shape on this layer, else 0), w = blur radius (px).
 // Deliberately not B8G8R8A8 so there is no byte-order trap.
 //
 // Shapes come from ShapeConstants (b1) -- the same block SpecularRim.hlsl reads. Two bezel
@@ -23,8 +23,9 @@ struct GlassShape
 {
     float4 CenterHalfSize; // xy center px, zw half size px
     float4 Params;         // x corner radius, y bezel width, z profile, w refraction scale (px)
-    float4 Params2;        // x specular intensity, y layer, z max refraction magnitude, w unused
-    float4 Tint;           // rgb tint color, a tint amount
+    float4 Params2;        // x specular intensity, y layer, z max refraction magnitude, w blur radius px
+    float4 Tint;           // rgb tint color, a tint amount (alpha blend)
+    float4 Extra;          // x chromatic px, y shadow strength, z shadow radius px, w shadow y-offset px
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -142,6 +143,7 @@ int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR
     int best = -1;
     float bestSdf = 1e9;
     outSdf = 0.0; outP = 0.0; outR = 0.0;
+    [loop]
     for (int s = 0; s < MAX_SHAPES; s++)
     {
         if (s >= count) break;
@@ -170,15 +172,16 @@ float4 PSMain(VSOutput i) : SV_TARGET
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
+    float blur = Shapes[s].Params2.w;
     float bezel = max(1.0, min(Shapes[s].Params.y, r));
     if (sdf < -bezel)
     {
         // Past the bezel band into the flat interior: covered, undisplaced.
-        return float4(0.0, 0.0, 1.0, 0.0);
+        return float4(0.0, 0.0, 1.0, blur);
     }
 
     float t = saturate(1.0 - (-sdf) / bezel); // 1 at outer edge, 0 at the bezel's inner boundary
     float mag = RefractionMagnitude(t, Shapes[s].Params.z) / Shapes[s].Params2.z;
     float2 normal = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
-    return float4(-normal * mag * Shapes[s].Params.w, 1.0, 0.0);
+    return float4(-normal * mag * Shapes[s].Params.w, 1.0, blur);
 }

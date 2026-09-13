@@ -1,10 +1,10 @@
-// Pass 3 (per layer): specular Fresnel-style rim highlight plus per-shape tint, screen-blended
-// on top of pass 2's output via the pipeline's blend state (SrcBlend=One, DestBlend=InvSrcColor:
-// result = src + dst - src*dst = lerp(dst, 1, src) per channel -- so emitting tintColor*amount
-// here IS "lerp toward the tint color by amount", which is why tint lives in this pass and not
-// in the refraction pass). Alpha is left untouched by the blend state so uncovered (transparent)
-// pixels stay transparent. Same rounded-rect SDF/bezel geometry as DisplacementField.hlsl,
-// recomputed rather than threaded through the intermediate texture.
+// Pass 3 (per layer): specular Fresnel-style rim highlight, screen-blended on top of pass 2's
+// output via the pipeline's blend state (SrcBlend=One, DestBlend=InvSrcColor:
+// result = src + dst - src*dst). Alpha is left untouched by the blend state so uncovered
+// (transparent) pixels stay transparent. Same rounded-rect SDF/bezel geometry as
+// DisplacementField.hlsl, recomputed rather than threaded through the intermediate texture.
+// (Tint is an alpha blend in Refraction.hlsl -- a screen blend can only brighten, which cannot
+// produce Apple's opaque green/grey track over a bright backdrop.)
 
 cbuffer SpecularRimConstants : register(b0)
 {
@@ -22,6 +22,7 @@ struct GlassShape
     float4 Params;
     float4 Params2;
     float4 Tint;
+    float4 Extra;
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -99,6 +100,7 @@ int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR
     int best = -1;
     float bestSdf = 1e9;
     outSdf = 0.0; outP = 0.0; outR = 0.0;
+    [loop]
     for (int s = 0; s < MAX_SHAPES; s++)
     {
         if (s >= count) break;
@@ -128,13 +130,11 @@ float4 PSMain(VSOutput i) : SV_TARGET
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    float3 tint = Shapes[s].Tint.rgb * Shapes[s].Tint.a;
-
     float bezel = max(1.0, min(Shapes[s].Params.y, r));
     if (sdf < -bezel)
     {
-        // Flat interior: tint only, no rim.
-        return float4(tint, 0.0);
+        // Flat interior: no rim.
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
 
     float t = saturate(1.0 - (-sdf) / bezel); // 1 at outer edge, 0 at the bezel's inner boundary
@@ -158,5 +158,5 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float edgeFalloff = sqrt(saturate(1.0 - (1.0 - t) * (1.0 - t)));
 
     float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x;
-    return float4(saturate(rimColor + tint), 0.0);
+    return float4(saturate(rimColor), 0.0);
 }

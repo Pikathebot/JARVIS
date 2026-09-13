@@ -3,6 +3,19 @@
 // every higher layer's source is the previous layer's finished output (window-space, identity
 // UVs), so a control refracts the already-refracted panel beneath it rather than the raw desktop.
 //
+// Also owns everything that needs the shape table per pixel and is not a brighten-only effect:
+//   - tint: an ordinary alpha blend of the shape's color over the refracted view (1 = opaque
+//     fill, which is what Apple's resting track and thumb are; the rim pass's screen blend
+//     could only ever brighten);
+//   - chromatic aberration: red and blue sampled with slightly different displacement scales at
+//     the rim, the rainbow fringe on Apple's pressed thumb;
+//   - shadow: for pixels NOT covered on this layer, darken the passthrough source near a shape
+//     that carries a shadow, offset downward -- what lifts the thumb off the track.
+//
+// All texture reads are SampleLevel (mip 0): plain Sample needs screen-space derivatives, which
+// forces fxc to fully unroll every loop the call sits under -- with the 16-shape loops that
+// explodes into a compile that never finishes (it hung the app at startup once).
+//
 // Pixels not covered by any shape on this layer pass the source straight through -- for layer 0
 // that means fully transparent (premultiplied alpha 0), so the window is see-through outside the
 // panel's rounded rect instead of showing an unbent copy of the desktop there.
@@ -13,6 +26,23 @@ cbuffer RefractionConstants : register(b0)
     float2 WindowSize;     // pixels
     float SourceIsCapture; // 1 = sample the capture via UvRect, 0 = sample the previous layer 1:1
     float _Pad0;
+};
+
+#define MAX_SHAPES 16
+
+struct GlassShape
+{
+    float4 CenterHalfSize;
+    float4 Params;
+    float4 Params2;
+    float4 Tint;
+    float4 Extra;
+};
+
+cbuffer ShapeConstants : register(b1)
+{
+    float4 Header;
+    GlassShape Shapes[MAX_SHAPES];
 };
 
 Texture2D DisplacementTexture : register(t0);
@@ -26,14 +56,100 @@ struct VSOutput
     float2 Uv : TEXCOORD0;
 };
 
+float RoundRectSdf(float2 p, float2 halfSize, float r)
+{
+    float2 q = abs(p) - (halfSize - r);
+    float outsideLen = length(max(q, float2(0.0, 0.0)));
+    return outsideLen + min(max(q.x, q.y), 0.0) - r;
+}
+
+int FindShape(float2 pixelPos, out float outSdf)
+{
+    int count = (int)Header.x;
+    int layer = (int)Header.y;
+    int best = -1;
+    float bestSdf = 1e9;
+    outSdf = 0.0;
+    [loop]
+    for (int s = 0; s < MAX_SHAPES; s++)
+    {
+        if (s >= count) break;
+        if ((int)Shapes[s].Params2.y != layer) continue;
+
+        float2 halfSize = Shapes[s].CenterHalfSize.zw;
+        float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
+        float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
+        float sdf = RoundRectSdf(p, halfSize, r);
+        if (sdf <= 0.0 && sdf < bestSdf)
+        {
+            bestSdf = sdf; best = s; outSdf = sdf;
+        }
+    }
+    return best;
+}
+
+// Total darkening at an uncovered pixel from every shadow-casting shape on this layer.
+float ShadowAt(float2 pixelPos)
+{
+    int count = (int)Header.x;
+    int layer = (int)Header.y;
+    float shade = 0.0;
+    [loop]
+    for (int s = 0; s < MAX_SHAPES; s++)
+    {
+        if (s >= count) break;
+        if ((int)Shapes[s].Params2.y != layer) continue;
+        float strength = Shapes[s].Extra.y;
+        float radius = Shapes[s].Extra.z;
+        if (strength <= 0.0 || radius <= 0.0) continue;
+
+        float2 halfSize = Shapes[s].CenterHalfSize.zw;
+        float2 p = pixelPos - Shapes[s].CenterHalfSize.xy - float2(0.0, Shapes[s].Extra.w);
+        float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
+        float sdf = RoundRectSdf(p, halfSize, r);
+        // Soft falloff from the (offset) outline outward; smootherstep so it has no hard ring.
+        float t = saturate(1.0 - max(sdf, 0.0) / radius);
+        float fall = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+        shade = max(shade, strength * fall);
+    }
+    return shade;
+}
+
 float2 ToSourceUv(float2 windowUv)
 {
     return SourceIsCapture > 0.5 ? UvRect.xy + windowUv * UvRect.zw : windowUv;
 }
 
+float3 SampleSource(float2 windowUv, float blur)
+{
+    if (blur < 0.5)
+    {
+        return SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv), 0).rgb;
+    }
+
+    // Frost: a 12-tap Poisson disc of the given pixel radius around the displaced sample.
+    // Cheap, and soft enough at the radii glass controls use (a few px).
+    static const float2 Taps[12] =
+    {
+        float2(-0.326, -0.406), float2(-0.840, -0.074), float2(-0.696,  0.457),
+        float2(-0.203,  0.621), float2( 0.962, -0.195), float2( 0.473, -0.480),
+        float2( 0.519,  0.767), float2( 0.185, -0.893), float2( 0.507,  0.064),
+        float2( 0.896,  0.412), float2(-0.322, -0.933), float2(-0.792, -0.598)
+    };
+    float2 pxToWindowUv = 1.0 / WindowSize;
+    float3 sum = SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv), 0).rgb;
+    [unroll]
+    for (int k = 0; k < 12; k++)
+    {
+        sum += SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv + Taps[k] * blur * pxToWindowUv), 0).rgb;
+    }
+    return sum / 13.0;
+}
+
 float4 PSMain(VSOutput i) : SV_TARGET
 {
-    float4 field = DisplacementTexture.Sample(PointSampler, i.Uv);
+    float4 field = DisplacementTexture.SampleLevel(PointSampler, i.Uv, 0);
+    float2 pixelPos = i.Uv * WindowSize;
 
     if (field.z < 0.5)
     {
@@ -42,15 +158,39 @@ float4 PSMain(VSOutput i) : SV_TARGET
         {
             return float4(0.0, 0.0, 0.0, 0.0);
         }
-        return SourceTexture.Sample(LinearSampler, i.Uv);
+        float4 through = SourceTexture.SampleLevel(LinearSampler, i.Uv, 0);
+        float shade = ShadowAt(pixelPos);
+        through.rgb *= 1.0 - shade;
+        return through;
     }
 
-    float2 windowUv = i.Uv + field.xy / WindowSize;
-    float3 color = SourceTexture.Sample(LinearSampler, ToSourceUv(windowUv)).rgb;
+    float sdf;
+    int s = FindShape(pixelPos, sdf);
+    float blur = field.w;
+    float chromatic = s >= 0 ? Shapes[s].Extra.x : 0.0;
 
-    // Force alpha=1: a covered pixel fully replaces what's behind it with the refracted view --
-    // and capture textures typically carry alpha=0, which under this swapchain's premultiplied
-    // mode would otherwise composite as invisible. Tint/frost is applied by the rim pass, whose
-    // screen blend is exactly "lerp toward a color".
+    float2 dispUv = field.xy / WindowSize;
+    float3 color;
+    if (chromatic > 0.01 && dot(field.xy, field.xy) > 0.0)
+    {
+        // Spread the channels along the displacement direction: red bends least, blue most.
+        float2 dir = normalize(field.xy) * chromatic / WindowSize;
+        color.r = SampleSource(i.Uv + dispUv - dir, blur).r;
+        color.g = SampleSource(i.Uv + dispUv, blur).g;
+        color.b = SampleSource(i.Uv + dispUv + dir, blur).b;
+    }
+    else
+    {
+        color = SampleSource(i.Uv + dispUv, blur);
+    }
+
+    if (s >= 0)
+    {
+        color = lerp(color, Shapes[s].Tint.rgb, Shapes[s].Tint.a);
+    }
+
+    // Force alpha=1: a covered pixel fully replaces what's behind it -- and capture textures
+    // typically carry alpha=0, which under this swapchain's premultiplied mode would otherwise
+    // composite as invisible.
     return float4(color, 1.0);
 }

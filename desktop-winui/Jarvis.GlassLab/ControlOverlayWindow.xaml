@@ -5,15 +5,20 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Jarvis_GlassLab">
     <Grid x:Name="RootGrid" Background="Transparent">
+        <!--
+            No XAML background: the card is a frosted glass shape published to the renderer from
+            code-behind (see PublishCardShape). Anything painted here would sit ON TOP of the glass
+            controls inside it (the old #CC141821 fill was dimming the toggle underneath).
+        -->
         <StackPanel
+            x:Name="Card"
             HorizontalAlignment="Left"
             VerticalAlignment="Top"
             Margin="24,24,0,0"
-            Spacing="12"
+            Spacing="8"
             Padding="12"
-            Background="#CC141821"
-            CornerRadius="8"
-            Width="260">
+            Background="Transparent"
+            Width="300">
             <Button x:Name="TestButton"
                     Content="GlassLab test button"
                     Click="TestButton_Click" />
@@ -42,6 +47,10 @@
                 <local:GlassToggle x:Name="DemoToggle" Toggled="DemoToggle_Toggled" />
                 <TextBlock x:Name="DemoToggleLabel" Text="Glass toggle: off" Foreground="White" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
+
+            <!-- Toggle material tuning: rows are generated in code-behind from a table. -->
+            <TextBlock Text="Toggle material" Foreground="#AAFFFFFF" FontSize="11" Margin="0,6,0,0" />
+            <StackPanel x:Name="TuningPanel" Spacing="2" />
 
             <StackPanel Spacing="4">
                 <TextBlock Text="Corner radius" Foreground="White" FontSize="12" />

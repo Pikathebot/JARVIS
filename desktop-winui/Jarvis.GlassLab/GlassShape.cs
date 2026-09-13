@@ -17,7 +17,7 @@ namespace Jarvis_GlassLab;
 [StructLayout(LayoutKind.Sequential, Size = Size)]
 internal struct GlassShape
 {
-    public const int Size = 64;
+    public const int Size = 80;
 
     /// <summary>xy = center (window px), zw = half size (window px).</summary>
     public Vector4 CenterHalfSize;
@@ -27,23 +27,33 @@ internal struct GlassShape
     public Vector4 Params;
 
     /// <summary>x = specular intensity, y = layer index, z = max refraction magnitude (the CPU-
-    /// side normalization constant for this shape's profile), w = unused.</summary>
+    /// side normalization constant for this shape's profile), w = blur radius in pixels (the
+    /// "frost" -- 0 for clear glass).</summary>
     public Vector4 Params2;
 
-    /// <summary>rgb = tint color, a = tint amount (0 = untinted glass).</summary>
+    /// <summary>rgb = tint color, a = tint amount: an ordinary alpha blend over the refracted
+    /// view, so 1 = a fully opaque fill (Apple's resting track/thumb) and ~0.1 = a hint of tint
+    /// on clear glass.</summary>
     public Vector4 Tint;
+
+    /// <summary>x = chromatic aberration (extra px of displacement spread between the red and
+    /// blue channels at the rim), y = shadow strength (0..1), z = shadow radius px, w = shadow
+    /// y-offset px. The shadow darkens the layer beneath around the shape's outline.</summary>
+    public Vector4 Extra;
 
     public static GlassShape Create(
         Vector2 center, Vector2 halfSize, float cornerRadius, float bezelWidth,
         GlassBezelProfile profile, float refractionScale, float specularIntensity, int layer,
-        Vector3 tintColor, float tintAmount)
+        Vector3 tintColor, float tintAmount, float blurRadius = 0f,
+        float chromatic = 0f, float shadowStrength = 0f, float shadowRadius = 0f, float shadowOffsetY = 0f)
     {
         return new GlassShape
         {
             CenterHalfSize = new Vector4(center, halfSize.X, halfSize.Y),
             Params = new Vector4(cornerRadius, bezelWidth, (float)profile, refractionScale),
-            Params2 = new Vector4(specularIntensity, layer, BezelProfileMath.MaxRefractionMagnitude(profile), 0f),
+            Params2 = new Vector4(specularIntensity, layer, BezelProfileMath.MaxRefractionMagnitude(profile), blurRadius),
             Tint = new Vector4(tintColor, tintAmount),
+            Extra = new Vector4(chromatic, shadowStrength, shadowRadius, shadowOffsetY),
         };
     }
 }
