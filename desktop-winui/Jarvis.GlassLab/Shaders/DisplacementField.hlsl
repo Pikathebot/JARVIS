@@ -10,6 +10,7 @@
 // profiles per shape, matching GlassBezelProfile / BezelProfileMath.cs:
 //   0 squircle: h(t) = (1 - (1-t)^4)^(1/4)              -- panels, thumbs
 //   1 lip:      smootherstep blend of convex + concave  -- kube.io's switch/slider tracks
+//   2 lens:     empirical ramp, see RefractionMagnitude     -- kube.io's lifted slider thumb
 
 cbuffer DisplacementConstants : register(b0)
 {
@@ -18,6 +19,7 @@ cbuffer DisplacementConstants : register(b0)
 };
 
 #define MAX_SHAPES 16
+#define LENS_FALLOFF 1.2 // Lens ramp exponent; 1 = linear (BezelProfileMath.LensFalloff)
 
 struct GlassShape
 {
@@ -84,6 +86,7 @@ float LipHeight(float t)
 
 float ProfileHeight(float t, float profile)
 {
+    if (profile >= 1.5) return ConvexCircleHeight(t);
     return profile >= 0.5 ? LipHeight(t) : SquircleHeight(t);
 }
 
@@ -110,6 +113,18 @@ float2 SdfGradient(float2 p, float2 halfSize, float r)
 // glass thickness - same derivation as BezelDisplacementMap.BuildRefractionLookup.
 float RefractionMagnitude(float t, float profile)
 {
+    if (profile >= 1.5)
+    {
+        // Lens: kube.io's lifted slider thumb. Measured off their render rather than derived:
+        // the bend is ~1.6 radii at the very edge and falls off almost linearly to zero at the
+        // inner boundary (slightly steeper right at the edge). Read along a radius that gives:
+        // a dark sliver at the edge (samples overshoot past the rail), a rail-thick strip where
+        // the ramp sweeps back across the rail (mirrored, ~1x magnification), a dark gap, then
+        // the undisplaced rail through the middle. Snell through any dome concentrates the bend
+        // far too close to the edge for that -- the strip collapses to a 2px line.
+        return pow(1.0 - t, LENS_FALLOFF);
+    }
+
     const float eps = 0.001;
     float t0 = clamp(t - eps, 0.0, 1.0);
     float t1 = clamp(t + eps, 0.0, 1.0);
@@ -180,8 +195,12 @@ float4 PSMain(VSOutput i) : SV_TARGET
         return float4(0.0, 0.0, 1.0, blur);
     }
 
-    float t = saturate(1.0 - (-sdf) / bezel); // 1 at outer edge, 0 at the bezel's inner boundary
-    float mag = RefractionMagnitude(t, Shapes[s].Params.z) / Shapes[s].Params2.z;
+    // Depth into the bezel band: 0 at the outer edge, 1 at the inner boundary -- the convention
+    // the profile functions use (h(0) = 0 at the edge, flat at 1). Feeding them the inverted
+    // value put the maximum bend at the INNER boundary and none at the edge, which drew a
+    // sharp ring one bezel-width inside every lens.
+    float u = saturate((-sdf) / bezel);
+    float mag = RefractionMagnitude(u, Shapes[s].Params.z) / Shapes[s].Params2.z;
     float2 normal = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
     return float4(-normal * mag * Shapes[s].Params.w, 1.0, blur);
 }

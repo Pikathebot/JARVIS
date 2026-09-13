@@ -48,6 +48,11 @@
                 <TextBlock x:Name="DemoToggleLabel" Text="Glass toggle: off" Foreground="White" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
 
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <local:GlassSlider x:Name="DemoSlider" ValueChanged="DemoSlider_ValueChanged" />
+                <TextBlock x:Name="DemoSliderLabel" Text="35%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+            </StackPanel>
+
             <!-- Toggle material tuning: rows are generated in code-behind from a table. -->
             <TextBlock Text="Toggle material" Foreground="#AAFFFFFF" FontSize="11" Margin="0,6,0,0" />
             <StackPanel x:Name="TuningPanel" Spacing="2" />

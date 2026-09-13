@@ -124,6 +124,13 @@ public partial class App : Application
         _captureReady = true;
         RecomputeUvRect();
 
+        // Debug: "forcelift.txt" next to the exe presets the lens into its lifted state at launch.
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, "forcelift.txt")))
+        {
+            GlassToggle.Material.ForceLift = 1f;
+            GlassToggle.MaterialChanged();
+        }
+
         // WM_TIMER's floor is ~15.6ms, so this is effectively display rate; capture frames arrive
         // at display rate too, so anything slower here is what reads as a laggy backdrop (the
         // previous 1000/12 did -- it was inherited from Jarvis.Glass's throttle, not chosen).

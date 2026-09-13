@@ -71,6 +71,7 @@ float LipHeight(float t)
 
 float ProfileHeight(float t, float profile)
 {
+    if (profile >= 1.5) return ConvexCircleHeight(t);
     return profile >= 0.5 ? LipHeight(t) : SquircleHeight(t);
 }
 
@@ -137,25 +138,35 @@ float4 PSMain(VSOutput i) : SV_TARGET
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    float t = saturate(1.0 - (-sdf) / bezel); // 1 at outer edge, 0 at the bezel's inner boundary
+    float u = saturate((-sdf) / bezel); // 0 at outer edge, 1 at the bezel's inner boundary (profile convention)
+    float t = 1.0 - u;                   // 1 at outer edge, for the edge falloff below
     float profile = Shapes[s].Params.z;
 
     const float eps = 0.001;
-    float t0 = clamp(t - eps, 0.0, 1.0);
-    float t1 = clamp(t + eps, 0.0, 1.0);
-    float dhdt = (ProfileHeight(t1, profile) - ProfileHeight(t0, profile)) / max(1e-4, t1 - t0);
+    float u0 = clamp(u - eps, 0.0, 1.0);
+    float u1 = clamp(u + eps, 0.0, 1.0);
+    float dhdt = (ProfileHeight(u1, profile) - ProfileHeight(u0, profile)) / max(1e-4, u1 - u0);
 
     float2 outward2D = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
     // A bump-like normal: tilts toward the outward direction proportional to the profile's
     // slope, mostly "up" (toward the viewer) where the profile flattens out.
     float3 normal = normalize(float3(-dhdt * outward2D.x, -dhdt * outward2D.y, 1.0));
 
-    float rim = saturate(dot(normal, LightDir));
-    rim = pow(rim, 3.0);
-
-    // Sharp edge falloff per the kube.io reference: concentrated right at the outer edge (t=1),
-    // near-zero toward the bezel's inner boundary (t=0).
-    float edgeFalloff = sqrt(saturate(1.0 - (1.0 - t) * (1.0 - t)));
+    // Directional: only the bezel's tilt toward the light counts. Using dot(normal, LightDir)
+    // directly lit the whole band ~uniformly (LightDir's z alone gives every near-flat pixel
+    // ~0.7), which read as a grey translucent border around a lifted thumb. A faint counter-
+    // highlight on the far side keeps the lens from looking lit from one edge only.
+    float tilt = length(normal.xy);
+    float2 n2 = tilt > 1e-4 ? normal.xy / tilt : float2(0.0, 0.0);
+    float2 l2 = normalize(LightDir.xy);
+    float facing = dot(n2, l2);
+    // kube.io's lens has a thin, near-uniform bright outline all the way round, brighter on the
+    // side facing the light: a base term plus a directional boost, both confined to the outer
+    // sliver of the band by a steep falloff (the old sqrt falloff spread it across the whole
+    // band, which read as a wide translucent border).
+    float rim = 0.55 + 0.45 * saturate(facing) + 0.15 * saturate(-facing);
+    rim *= saturate(tilt * 3.0);
+    float edgeFalloff = pow(t, 8.0);
 
     float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x;
     return float4(saturate(rimColor), 0.0);

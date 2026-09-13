@@ -9,6 +9,11 @@ internal enum GlassBezelProfile
 {
     Squircle = 0,
     Lip = 1,
+    /// <summary>kube.io's lifted slider thumb. Not a physical surface: an empirical
+    /// displacement ramp (see DisplacementField.hlsl RefractionMagnitude) fitted to their
+    /// render -- strongest at the edge, near-linear to zero at the inner boundary -- which is
+    /// what smears the rail into a thick strip inside the lens edge. Lit like a convex dome.</summary>
+    Lens = 2,
 }
 
 /// <summary>
@@ -21,10 +26,15 @@ internal enum GlassBezelProfile
 /// </summary>
 internal static class BezelProfileMath
 {
+    /// <summary>Lens ramp exponent (1 = linear) -- must match LENS_FALLOFF in
+    /// Shaders/DisplacementField.hlsl.</summary>
+    public const float LensFalloff = 1.2f;
+
     private static readonly float[] Cached =
     {
         ComputeMaxRefractionMagnitude(GlassBezelProfile.Squircle),
         ComputeMaxRefractionMagnitude(GlassBezelProfile.Lip),
+        1f, // Lens: the shader's ramp peaks at exactly 1 at the edge
     };
 
     /// <summary>Precomputed per profile -- shapes are built every animation frame, so this must

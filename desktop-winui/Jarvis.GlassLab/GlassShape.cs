@@ -36,8 +36,8 @@ internal struct GlassShape
     /// on clear glass.</summary>
     public Vector4 Tint;
 
-    /// <summary>x = chromatic aberration (extra px of displacement spread between the red and
-    /// blue channels at the rim), y = shadow strength (0..1), z = shadow radius px, w = shadow
+    /// <summary>x = chromatic aberration as a fraction of the displacement (spread between the
+    /// red and blue channels, ~0.1), y = shadow strength (0..1), z = shadow radius px, w = shadow
     /// y-offset px. The shadow darkens the layer beneath around the shape's outline.</summary>
     public Vector4 Extra;
 

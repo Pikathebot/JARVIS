@@ -184,9 +184,24 @@ internal sealed class LiveCaptureSource : IDisposable
         try
         {
             var status = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
+            LabLog.Write($"programmatic capture access: {status}");
             if (status != AppCapabilityAccessStatus.Allowed)
             {
                 return false;
+            }
+
+            // Setting IsBorderRequired = false below is silently ignored unless the app has also
+            // been granted borderless capture (manifest capability graphicsCaptureWithoutBorder
+            // + this request) -- without it Windows keeps drawing its yellow "this display is
+            // being captured" frame around the whole screen for as long as the lab is running.
+            try
+            {
+                var borderless = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless);
+                LabLog.Write($"borderless capture access: {borderless}");
+            }
+            catch (Exception ex)
+            {
+                LabLog.Write($"borderless capture access request threw: {ex.Message}");
             }
 
             _direct3DDevice = Direct3D11Interop.CreateDirect3DDeviceFromDXGIDevice(_d3d.DxgiDevice);
@@ -196,8 +211,9 @@ internal sealed class LiveCaptureSource : IDisposable
             CreateSessionForDisplay(displayArea.DisplayId.Value);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            LabLog.Write($"capture start threw: {ex}");
             Dispose();
             return false;
         }

@@ -171,10 +171,13 @@ float4 PSMain(VSOutput i) : SV_TARGET
 
     float2 dispUv = field.xy / WindowSize;
     float3 color;
-    if (chromatic > 0.01 && dot(field.xy, field.xy) > 0.0)
+    if (chromatic > 0.001 && dot(field.xy, field.xy) > 0.0)
     {
-        // Spread the channels along the displacement direction: red bends least, blue most.
-        float2 dir = normalize(field.xy) * chromatic / WindowSize;
+        // Spread the channels along the displacement, proportional to it (chromatic is a
+        // fraction of the displacement): red bends least, blue most. A constant-width spread
+        // switched on wherever displacement is non-zero drew a fringe ring at the bezel's inner
+        // boundary, where displacement is ~0 but the spread suddenly was not.
+        float2 dir = field.xy * chromatic / WindowSize;
         color.r = SampleSource(i.Uv + dispUv - dir, blur).r;
         color.g = SampleSource(i.Uv + dispUv, blur).g;
         color.b = SampleSource(i.Uv + dispUv + dir, blur).b;

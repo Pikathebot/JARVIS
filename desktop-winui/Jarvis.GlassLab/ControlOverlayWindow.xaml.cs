@@ -37,7 +37,7 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>
-    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle }
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle, DemoSlider }
         .Concat(_tuningSliders).ToArray();
 
     private readonly List<FrameworkElement> _tuningSliders = new();
@@ -45,11 +45,12 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>One row per tunable of GlassToggle.Material: label, min, max, getter, setter.</summary>
     private static readonly (string Label, float Min, float Max, Func<float> Get, Action<float> Set)[] ToggleTunables =
     {
+        ("Force lift (debug)", 0f, 1f, () => GlassToggle.Material.ForceLift, v => GlassToggle.Material.ForceLift = v),
         ("Lift scale", 1f, 1.8f, () => GlassToggle.Material.LiftScale, v => GlassToggle.Material.LiftScale = v),
         ("Lift tint", 0f, 1f, () => GlassToggle.Material.LiftTint, v => GlassToggle.Material.LiftTint = v),
         ("Lift refraction", 0f, 40f, () => GlassToggle.Material.LiftRefraction, v => GlassToggle.Material.LiftRefraction = v),
         ("Lift bezel frac", 0.1f, 1f, () => GlassToggle.Material.LiftBezelFraction, v => GlassToggle.Material.LiftBezelFraction = v),
-        ("Lift chromatic", 0f, 6f, () => GlassToggle.Material.LiftChromatic, v => GlassToggle.Material.LiftChromatic = v),
+        ("Lift chromatic", 0f, 0.5f, () => GlassToggle.Material.LiftChromatic, v => GlassToggle.Material.LiftChromatic = v),
         ("Lift specular", 0f, 2.5f, () => GlassToggle.Material.LiftSpecular, v => GlassToggle.Material.LiftSpecular = v),
         ("Lift blur px", 0f, 8f, () => GlassToggle.Material.LiftBlur, v => GlassToggle.Material.LiftBlur = v),
         ("Stretch", 0f, 0.2f, () => GlassToggle.Material.ThumbStretch, v => GlassToggle.Material.ThumbStretch = v),
@@ -57,6 +58,7 @@ public sealed partial class ControlOverlayWindow : Window
         ("Rest shadow", 0f, 0.8f, () => GlassToggle.Material.RestShadow, v => GlassToggle.Material.RestShadow = v),
         ("Shadow radius", 0f, 20f, () => GlassToggle.Material.RestShadowRadius, v => GlassToggle.Material.RestShadowRadius = v),
         ("Track specular", 0f, 2f, () => GlassToggle.Material.TrackSpecular, v => GlassToggle.Material.TrackSpecular = v),
+        ("Slider thumb aspect", 0.6f, 2.2f, () => GlassSlider.Material.ThumbAspect, v => GlassSlider.Material.ThumbAspect = v),
     };
 
     private void BuildTuningPanel()
@@ -93,6 +95,7 @@ public sealed partial class ControlOverlayWindow : Window
         SystemBackdrop = new TransparentBackdrop();
 
         BuildTuningPanel();
+        DemoSlider.Value = 0.35;
         Card.LayoutUpdated += (_, _) => PublishCardShape();
         Card.Loaded += (_, _) => PublishCardShape();
         BezelWidthSlider.Value = _renderer.BezelWidth;
@@ -190,6 +193,7 @@ public sealed partial class ControlOverlayWindow : Window
         // using until the user drags one themselves.
         CornerRadiusSlider.Value = _renderer.CornerRadius;
         BuildTuningPanel();
+        DemoSlider.Value = 0.35;
         Card.LayoutUpdated += (_, _) => PublishCardShape();
         Card.Loaded += (_, _) => PublishCardShape();
         BezelWidthSlider.Value = _renderer.BezelWidth;
@@ -208,6 +212,11 @@ public sealed partial class ControlOverlayWindow : Window
             center, half, cornerRadius: 14f * scale, bezelWidth: 10f * scale, GlassBezelProfile.Squircle,
             refractionScale: 6f * scale, specularIntensity: 0.5f, layer: 1,
             tintColor: new System.Numerics.Vector3(0.08f, 0.09f, 0.13f), tintAmount: 0.45f, blurRadius: 10f * scale));
+    }
+
+    private void DemoSlider_ValueChanged(object sender, RoutedEventArgs e)
+    {
+        DemoSliderLabel.Text = $"{DemoSlider.Value * 100:0}%";
     }
 
     private void DemoToggle_Toggled(object sender, RoutedEventArgs e)

@@ -48,17 +48,26 @@ public sealed partial class GlassToggle : UserControl
         public static float RestShadowRadius = 6f;
 
         // Thumb lifted (pressed).
+        // Matched against kube.io's slider in its forced-active state: a wide bezel that pulls
+        // the rail right up into the lens's edge, a crisp (unblurred) lightly-whitened interior,
+        // a thin bright outline and a blue-ish chromatic fringe.
         public static float LiftScale = 1.35f;
-        public static float LiftTint = 0.10f;      // near-clear glass
-        public static float LiftSpecular = 0.9f;
-        public static float LiftShadow = 0.35f;
+        public static float LiftTint = 0.16f;
+        public static float LiftSpecular = 1.1f;
+        public static float LiftShadow = 0.30f;
         public static float LiftShadowRadius = 12f;
-        public static float LiftBezelFraction = 0.36f;
+        // Refraction is sized so the outer edge pulls the rail's edge just to the lens edge
+        // (half-height minus rail half-thickness); more than that wraps the rail into a loop
+        // inside the lens that reads as a second outline.
+        public static float LiftBezelFraction = 0.7f;
         public static float LiftRefraction = 16f;
-        public static float LiftChromatic = 2.0f;
-        public static float LiftBlur = 1.5f;
+        public static float LiftChromatic = 0.04f;
+        public static float LiftBlur = 0f;
 
         public static float ShadowOffsetY = 1.5f;
+        /// <summary>Debug: holds every thumb at least this far into its lifted state (kube.io's
+        /// "Force active"), so the lens can be inspected without holding the pointer down.</summary>
+        public static float ForceLift = 0f;
         /// <summary>How much the thumb elongates along its travel per unit of velocity.</summary>
         public static float ThumbStretch = 0.06f;
     }
@@ -72,11 +81,14 @@ public sealed partial class GlassToggle : UserControl
         {
             if (weak.TryGetTarget(out var toggle)) toggle.PublishShapes();
         }
+        GlassSlider.RepublishAll();
     }
 
     // Spring for the thumb's travel (0 = off, 1 = on) and its press scale.
-    private const float Stiffness = 520f;
-    private const float Damping = 24f;
+    public const float SpringStiffness = 520f;
+    public const float SpringDamping = 24f;
+    private const float Stiffness = SpringStiffness;
+    private const float Damping = SpringDamping;
 
     private float _travel;        // current position 0..1
     private float _travelVelocity;
@@ -108,9 +120,10 @@ public sealed partial class GlassToggle : UserControl
         LayoutUpdated += (_, _) => PublishShapes();
 
         PointerPressed += OnPointerPressed;
+        PointerMoved += OnPointerMoved;
         PointerReleased += OnPointerReleased;
-        PointerCanceled += (_, _) => { _pressed = false; StartAnimating(); };
-        PointerCaptureLost += (_, _) => { _pressed = false; StartAnimating(); };
+        PointerCanceled += (_, _) => { _pressed = false; _dragging = false; StartAnimating(); };
+        PointerCaptureLost += (_, _) => { _pressed = false; _dragging = false; StartAnimating(); };
     }
 
     private void OnIsOnChanged()
@@ -119,11 +132,36 @@ public sealed partial class GlassToggle : UserControl
         StartAnimating();
     }
 
+    // Drag, as on iOS: while pressed the thumb follows the pointer along the track (springing
+    // after it, so it still feels like the same object), and release snaps it to whichever side
+    // it is on. A tap that never moved far enough to count as a drag just flips the state.
+    private const float DragThresholdDip = 4f;
+    private float _dragStartX;
+    private bool _dragging;
+    private float _dragTarget;
+
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressed = true;
+        _dragging = false;
+        _dragStartX = (float)e.GetCurrentPoint(this).Position.X;
+        _dragTarget = IsOn ? 1f : 0f;
         CapturePointer(e.Pointer);
         StartAnimating();
+        e.Handled = true;
+    }
+
+    private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_pressed) return;
+        var x = (float)e.GetCurrentPoint(this).Position.X;
+        if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
+        _dragging = true;
+
+        // Map the pointer to the thumb-center travel range (same geometry as PublishShapes).
+        var halfTravel = (TrackWidth - 2f * (ThumbInset + ThumbRadius)) * 0.5f;
+        var centerX = (float)ActualWidth * 0.5f;
+        _dragTarget = Math.Clamp((x - (centerX - halfTravel)) / (2f * halfTravel), 0f, 1f);
         e.Handled = true;
     }
 
@@ -133,7 +171,18 @@ public sealed partial class GlassToggle : UserControl
         {
             _pressed = false;
             ReleasePointerCapture(e.Pointer);
-            IsOn = !IsOn;
+            var wasDragging = _dragging;
+            _dragging = false;
+            if (wasDragging)
+            {
+                var on = _dragTarget >= 0.5f;
+                if (on == IsOn) StartAnimating(); // no state change; still need to settle the thumb
+                IsOn = on;
+            }
+            else
+            {
+                IsOn = !IsOn;
+            }
         }
         e.Handled = true;
     }
@@ -162,7 +211,7 @@ public sealed partial class GlassToggle : UserControl
         _lastTick = now;
         dt = Math.Clamp(dt, 0.001f, 0.05f);
 
-        var travelTarget = IsOn ? 1f : 0f;
+        var travelTarget = _dragging ? _dragTarget : (IsOn ? 1f : 0f);
         var liftTarget = _pressed ? 1f : 0f;
 
         Spring(ref _travel, ref _travelVelocity, travelTarget, dt);
@@ -170,7 +219,8 @@ public sealed partial class GlassToggle : UserControl
 
         PublishShapes();
 
-        var settled = Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
+        var settled = !_pressed
+                   && Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
                    && Math.Abs(_lift - liftTarget) < 0.0005f && Math.Abs(_liftVelocity) < 0.01f;
         if (settled)
         {
@@ -213,7 +263,7 @@ public sealed partial class GlassToggle : UserControl
         var thumbX = trackCenter.X - travelPx * 0.5f + _travel * travelPx;
         var thumbCenter = new Vector2(thumbX, trackCenter.Y);
 
-        var m = _lift; // rest -> lift blend
+        var m = Math.Max(_lift, Material.ForceLift); // rest -> lift blend
         var thumbRadius = ThumbRadius * (Material.RestScale + (Material.LiftScale - Material.RestScale) * m) * scale;
 
         // Apple's lifted thumb elongates along its direction of travel while moving and relaxes
@@ -226,14 +276,14 @@ public sealed partial class GlassToggle : UserControl
         GlassShapeRegistry.Publish(this,
             GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
                 Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, trackColor, 1f),
-            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.LiftBezelFraction, GlassBezelProfile.Squircle,
+            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.LiftRefraction * m * scale,
                 specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
                 layer: 3,
                 tintColor: Vector3.One,
                 tintAmount: Material.RestTint + (Material.LiftTint - Material.RestTint) * m,
                 blurRadius: Material.LiftBlur * m * scale,
-                chromatic: Material.LiftChromatic * m * scale,
+                chromatic: Material.LiftChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale));
