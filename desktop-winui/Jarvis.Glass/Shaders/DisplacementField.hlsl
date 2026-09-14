@@ -29,6 +29,7 @@ struct GlassShape
     float4 Tint;           // rgb tint color, a tint amount (alpha blend)
     float4 Extra;          // x chromatic px, y shadow strength, z shadow radius px, w shadow y-offset px
     float4 Params3;        // x magnify (fraction of the centre offset the sample moves inward)
+    float4 Clip;           // x, y, w, h px; w <= 0 = unclipped
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -96,6 +97,16 @@ float RoundRectSdf(float2 p, float2 halfSize, float r)
     float2 q = abs(p) - (halfSize - r);
     float outsideLen = length(max(q, float2(0.0, 0.0)));
     return outsideLen + min(max(q.x, q.y), 0.0) - r;
+}
+
+// Intersects a shape's SDF with its clip rect (Clip = x, y, w, h in px; w <= 0 = none): the
+// max of two SDFs is their intersection, so coverage, bezel and rim all stop at the clip edge.
+float ClipSdf(float2 pixelPos, float4 clip)
+{
+    if (clip.z <= 0.0) return -1e9;
+    float2 c = clip.xy + clip.zw * 0.5;
+    float2 q = abs(pixelPos - c) - clip.zw * 0.5;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
 }
 
 float2 SdfGradient(float2 p, float2 halfSize, float r)
@@ -177,7 +188,7 @@ int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR
         float2 halfSize = Shapes[s].CenterHalfSize.zw;
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
-        float sdf = RoundRectSdf(p, halfSize, r);
+        float sdf = max(RoundRectSdf(p, halfSize, r), ClipSdf(pixelPos, Shapes[s].Clip));
         if (sdf <= 0.5 && sdf < bestSdf) // half a pixel outside too: see Coverage()
         {
             bestSdf = sdf; best = s; outSdf = sdf; outP = p; outR = r;

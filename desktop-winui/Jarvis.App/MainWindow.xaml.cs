@@ -370,13 +370,17 @@ public sealed partial class MainWindow : Window
         try { await _api.UnloadModelsAsync(); } catch { /* surfaced via governor poll */ }
     }
 
-    private async void Settings_Click(object sender, RoutedEventArgs e)
+    private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel)
+        if (SettingsHost.Children.Count > 0) return;
+        var pane = new SettingsPane(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel);
+        pane.CloseRequested += () =>
         {
-            XamlRoot = Content.XamlRoot,
+            SettingsHost.Children.Clear();
+            SettingsHost.Visibility = Visibility.Collapsed;
         };
-        await dialog.ShowAsync();
+        SettingsHost.Children.Add(pane);
+        SettingsHost.Visibility = Visibility.Visible;
     }
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();

@@ -117,7 +117,10 @@ internal sealed class GlassContentSurface : IDisposable
         const float boxW = 4096f, boxH = 512f;
         var y = t.Center.Y + t.FontSize * TightNudgeEm;
         var rect = new Rect(t.Center.X - boxW * 0.5f, y - boxH * 0.5f, boxW, boxH);
+        var clipped = t.Clip.Z > 0f;
+        if (clipped) s.Target.PushAxisAlignedClip(new Rect(t.Clip.X, t.Clip.Y, t.Clip.Z, t.Clip.W), Vortice.Direct2D1.AntialiasMode.PerPrimitive);
         s.Target.DrawText(t.Text, format, rect, s.Brush, DrawTextOptions.None, MeasuringMode.Natural);
+        if (clipped) s.Target.PopAxisAlignedClip();
     }
 
     private IDWriteTextFormat GetFormat(float size, int weight)

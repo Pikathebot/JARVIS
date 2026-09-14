@@ -15,7 +15,8 @@ public readonly record struct GlassText(
     float FontSize,
     int FontWeight,
     Vector4 Color,
-    int Layer)
+    int Layer,
+    Vector4 Clip = default)
 {
     public const int Regular = 400;
     public const int SemiBold = 600;

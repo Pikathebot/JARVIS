@@ -292,6 +292,7 @@ public sealed partial class GlassToggle : UserControl
         if (XamlRoot is null || !IsLoaded) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
+        var baseLayer = GlassSlab.BaseLayerFor(this);
 
         float scale;
         Windows.Foundation.Rect bounds;
@@ -305,6 +306,7 @@ public sealed partial class GlassToggle : UserControl
             return; // not in the tree yet
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        var clip = GlassSlab.ClipFor(this, scale);
 
         var trackCenter = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
         var trackHalf = new Vector2(TrackWidth * 0.5f, TrackHeight * 0.5f) * scale;
@@ -327,11 +329,11 @@ public sealed partial class GlassToggle : UserControl
 
         _scene.Publish(this,
             GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
-                Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, trackColor, 1f),
+                Material.TrackRefraction * scale, Material.TrackSpecular, layer: baseLayer, trackColor, 1f, clip: clip),
             GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.ToggleLiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.ToggleLiftRefraction * m * scale,
                 specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
-                layer: 3,
+                layer: baseLayer + 1,
                 tintColor: Vector3.One,
                 tintAmount: Material.RestTint + (Material.ToggleLiftTint - Material.RestTint) * m,
                 blurRadius: (Material.LiftBlur * m + Material.ToggleLiftFrost * 4f * m * (1f - m)) * scale,
@@ -340,6 +342,6 @@ public sealed partial class GlassToggle : UserControl
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale,
                 magnify: Material.ToggleLiftMagnify * m,
-                edgeRing: Material.LiftEdgeRing * m, secondLight: Material.SecondLight));
+                edgeRing: Material.LiftEdgeRing * m, clip: clip, secondLight: Material.SecondLight));
     }
 }

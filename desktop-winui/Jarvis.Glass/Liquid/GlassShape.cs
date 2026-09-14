@@ -11,13 +11,13 @@ namespace Jarvis_Glass;
 /// it sits on rather than the raw desktop -- the layering is the whole point of the kube.io
 /// material, not a detail.
 ///
-/// Layout mirrors GlassShape in the HLSL cbuffer exactly (six float4s, 96 bytes) -- a mismatch
+/// Layout mirrors GlassShape in the HLSL cbuffer exactly (seven float4s, 112 bytes) -- a mismatch
 /// here is a silent wrong-output bug, so the struct is explicit-layout and its size asserted.
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Size = Size)]
 public struct GlassShape
 {
-    public const int Size = 96;
+    public const int Size = 112;
 
     /// <summary>xy = center (window px), zw = half size (window px).</summary>
     public Vector4 CenterHalfSize;
@@ -49,12 +49,17 @@ public struct GlassShape
     /// catches an exit highlight (0 = lit from one edge only, 1 = symmetric). w reserved.</summary>
     public Vector4 Params3;
 
+    /// <summary>Clip rect in window px (x, y, w, h); w &lt;= 0 = unclipped. Intersected with the
+    /// shape's SDF in the shaders, so a control scrolled half out of a ScrollViewer is cut at the
+    /// viewport edge exactly like its XAML is.</summary>
+    public Vector4 Clip;
+
     public static GlassShape Create(
         Vector2 center, Vector2 halfSize, float cornerRadius, float bezelWidth,
         GlassBezelProfile profile, float refractionScale, float specularIntensity, int layer,
         Vector3 tintColor, float tintAmount, float blurRadius = 0f,
         float chromatic = 0f, float shadowStrength = 0f, float shadowRadius = 0f, float shadowOffsetY = 0f,
-        float magnify = 0f, float edgeRing = 0f, float secondLight = 0.6f)
+        float magnify = 0f, float edgeRing = 0f, float secondLight = 0.6f, Vector4 clip = default)
     {
         return new GlassShape
         {
@@ -64,6 +69,7 @@ public struct GlassShape
             Tint = new Vector4(tintColor, tintAmount),
             Extra = new Vector4(chromatic, shadowStrength, shadowRadius, shadowOffsetY),
             Params3 = new Vector4(magnify, edgeRing, secondLight, 0f),
+            Clip = clip,
         };
     }
 }

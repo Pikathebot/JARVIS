@@ -1,17 +1,34 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<ContentDialog
-    x:Class="Jarvis_App.Views.SettingsDialog"
+<UserControl
+    x:Class="Jarvis_App.Views.SettingsPane"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:models="using:Jarvis.Core.Models"
+    xmlns:glass="using:Jarvis_Glass"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="Settings"
-    PrimaryButtonText="Close"
-    DefaultButton="Primary"
     mc:Ignorable="d">
 
-    <ScrollViewer MaxHeight="480">
+    <!--
+        Settings is an in-window sheet, not a ContentDialog: dialogs and flyouts are popups painted
+        above the window, where the glass renderer behind it can't reach, so nothing inside them
+        could be glass. Here the sheet is a layer-2 slab over the panels and its switches are real
+        GlassToggles. The scrim is XAML above the glass (it dims the panels beneath).
+    -->
+    <Grid Background="#66000000" Tapped="Scrim_Tapped">
+        <glass:GlassSlab x:Name="Sheet" Layer="2" SlabCornerRadius="20" TintAmount="0.35" Frost="14"
+                         Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Background="Transparent" Tapped="Sheet_Tapped">
+            <Grid Padding="20,16,20,16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid Margin="0,0,0,12">
+                    <TextBlock Text="Settings" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <glass:GlassButton Text="✕" Width="34" Height="34" MinWidth="34" MinHeight="34" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
+                </Grid>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="16" MinWidth="380">
 
             <StackPanel Spacing="4">
@@ -145,7 +162,8 @@
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="12">
-                <ToggleSwitch x:Name="ProactiveActionsToggle" Header="Proactive actions" Toggled="ProactiveActionsToggle_Toggled" />
+                <TextBlock Text="Proactive actions" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <glass:GlassToggle x:Name="ProactiveActionsToggle" VerticalAlignment="Center" Toggled="ProactiveActionsToggle_Toggled" />
             </StackPanel>
 
             <StackPanel Spacing="8">
@@ -203,4 +221,7 @@
 
         </StackPanel>
     </ScrollViewer>
-</ContentDialog>
+            </Grid>
+        </glass:GlassSlab>
+    </Grid>
+</UserControl>

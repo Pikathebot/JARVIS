@@ -38,6 +38,7 @@ struct GlassShape
     float4 Tint;
     float4 Extra;
     float4 Params3;
+    float4 Clip;           // x, y, w, h px; w <= 0 = unclipped
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -67,6 +68,16 @@ float RoundRectSdf(float2 p, float2 halfSize, float r)
     return outsideLen + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Intersects a shape's SDF with its clip rect (Clip = x, y, w, h in px; w <= 0 = none): the
+// max of two SDFs is their intersection, so coverage, bezel and rim all stop at the clip edge.
+float ClipSdf(float2 pixelPos, float4 clip)
+{
+    if (clip.z <= 0.0) return -1e9;
+    float2 c = clip.xy + clip.zw * 0.5;
+    float2 q = abs(pixelPos - c) - clip.zw * 0.5;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+}
+
 int FindShape(float2 pixelPos, out float outSdf)
 {
     int count = (int)Header.x;
@@ -83,7 +94,7 @@ int FindShape(float2 pixelPos, out float outSdf)
         float2 halfSize = Shapes[s].CenterHalfSize.zw;
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
-        float sdf = RoundRectSdf(p, halfSize, r);
+        float sdf = max(RoundRectSdf(p, halfSize, r), ClipSdf(pixelPos, Shapes[s].Clip));
         if (sdf <= 0.5 && sdf < bestSdf) // half a pixel outside too: see Coverage()
         {
             bestSdf = sdf; best = s; outSdf = sdf;
@@ -110,7 +121,7 @@ float ShadowAt(float2 pixelPos)
         float2 halfSize = Shapes[s].CenterHalfSize.zw;
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy - float2(0.0, Shapes[s].Extra.w);
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
-        float sdf = RoundRectSdf(p, halfSize, r);
+        float sdf = max(RoundRectSdf(p, halfSize, r), ClipSdf(pixelPos - float2(0.0, Shapes[s].Extra.w), Shapes[s].Clip));
         // Soft falloff from the (offset) outline outward; smootherstep so it has no hard ring.
         float t = saturate(1.0 - max(sdf, 0.0) / radius);
         float fall = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);

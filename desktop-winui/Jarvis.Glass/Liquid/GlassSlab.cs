@@ -93,6 +93,46 @@ public sealed class GlassSlab : Grid
         set => SetValue(LayerProperty, value);
     }
 
+    /// <summary>The layer a control inside <paramref name="element"/>'s slab should publish its
+    /// lowest shape on: one above the nearest ancestor GlassSlab (so a control in a layer-2
+    /// settings sheet refracts the sheet, not the panel beneath it), or 2 when there is none.</summary>
+    public static int BaseLayerFor(UIElement element)
+    {
+        DependencyObject? node = element;
+        while (node is not null)
+        {
+            node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+            if (node is GlassSlab slab) return slab.Layer + 1;
+        }
+        return 2;
+    }
+
+    /// <summary>The window-px rect a control inside <paramref name="element"/> is visually clipped
+    /// to: the viewport of the nearest ancestor ScrollViewer, else the nearest GlassSlab's bounds,
+    /// else none (w = 0). Passed to GlassShape/GlassText so the renderer clips where XAML does.</summary>
+    public static Vector4 ClipFor(UIElement element, float scale)
+    {
+        DependencyObject? node = element;
+        while (node is not null)
+        {
+            node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+            if (node is ScrollViewer or GlassSlab)
+            {
+                var fe = (FrameworkElement)node;
+                try
+                {
+                    var b = fe.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, fe.ActualWidth, fe.ActualHeight));
+                    return new Vector4((float)b.X, (float)b.Y, (float)b.Width, (float)b.Height) * scale;
+                }
+                catch
+                {
+                    return default;
+                }
+            }
+        }
+        return default;
+    }
+
     private static void OnMaterialChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((GlassSlab)d).Publish();
 
     private GlassScene? _scene;

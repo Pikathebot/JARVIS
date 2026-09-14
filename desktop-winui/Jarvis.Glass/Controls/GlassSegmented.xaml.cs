@@ -21,6 +21,8 @@ public sealed partial class GlassSegmented : UserControl
 {
     private const float TrackHeight = 36f;
     private const float PillInset = 3f;
+    /// <summary>Horizontal padding of the pill around its label, in DIPs.</summary>
+    private const float PillPadX = 14f;
 
     public static class Material
     {
@@ -54,6 +56,7 @@ public sealed partial class GlassSegmented : UserControl
     private const float Damping = 30f;
 
     private string[] _labels = Array.Empty<string>();
+    private float[] _labelWidths = Array.Empty<float>(); // DIPs, measured with a XAML TextBlock
     private float _travel;        // continuous selected index
     private float _travelVelocity;
     private float _lift, _liftVelocity;
@@ -109,6 +112,21 @@ public sealed partial class GlassSegmented : UserControl
     private void RebuildLabels()
     {
         _labels = (Items ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToArray();
+        // The pill fits its label rather than the whole segment, so measure each one. A XAML
+        // TextBlock in the same face/size/weight is close enough to the DirectWrite run the
+        // renderer draws (same font, same DIP size).
+        _labelWidths = _labels.Select(text =>
+        {
+            var probe = new TextBlock
+            {
+                Text = text,
+                FontSize = Material.LabelSize,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                FontFamily = new FontFamily(GlassContentSurface.FontFamily),
+            };
+            probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            return (float)probe.DesiredSize.Width;
+        }).ToArray();
         PublishShapes();
     }
 
@@ -217,6 +235,7 @@ public sealed partial class GlassSegmented : UserControl
         if (XamlRoot is null || !IsLoaded) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
+        var baseLayer = GlassSlab.BaseLayerFor(this);
 
         float scale;
         Windows.Foundation.Rect bounds;
@@ -230,6 +249,7 @@ public sealed partial class GlassSegmented : UserControl
             return;
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        var clip = GlassSlab.ClipFor(this, scale);
 
         var left = (float)bounds.X * scale;
         var width = (float)bounds.Width * scale;
@@ -241,7 +261,14 @@ public sealed partial class GlassSegmented : UserControl
         var segW = width / Count;
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
         var grow = 1f + (Material.LiftScale - 1f) * m;
-        var pillHalf = new Vector2(segW * 0.5f - PillInset * scale, (TrackHeight * 0.5f - PillInset) * scale) * grow;
+        // Pill width follows the label under it: between segments it eases from one label's
+        // width to the next's along with the travel.
+        var lo = Math.Clamp((int)MathF.Floor(_travel), 0, Count - 1);
+        var hi = Math.Clamp(lo + 1, 0, Count - 1);
+        var f = Math.Clamp(_travel - lo, 0f, 1f);
+        var labelW = _labelWidths.Length == Count ? _labelWidths[lo] + (_labelWidths[hi] - _labelWidths[lo]) * f : segW / scale;
+        var pillW = Math.Min(segW - 2f * PillInset * scale, (labelW + 2f * PillPadX) * scale);
+        var pillHalf = new Vector2(pillW * 0.5f, (TrackHeight * 0.5f - PillInset) * scale) * grow;
         // Stretch along the travel with velocity, like the toggle thumb.
         var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch * 2f) * m;
         pillHalf.X *= 1f + stretch;
@@ -250,20 +277,20 @@ public sealed partial class GlassSegmented : UserControl
 
         _scene.Publish(this,
             GlassShape.Create(trackCenter, trackHalf, trackRadius, trackRadius * B.BezelFraction, GlassBezelProfile.Lens,
-                B.RestRefraction * scale, B.RestSpecular, layer: 2, B.ClearTint, B.RestTint,
+                B.RestRefraction * scale, B.RestSpecular, layer: baseLayer, B.ClearTint, B.RestTint,
                 shadowStrength: B.RestShadow, shadowRadius: B.RestShadowRadius * scale, shadowOffsetY: B.ShadowOffsetY * scale,
-                edgeRing: B.RestEdgeRing, secondLight: T.SecondLight),
+                edgeRing: B.RestEdgeRing, clip: clip, secondLight: T.SecondLight),
             GlassShape.Create(pillCenter, pillHalf, pillRadius, pillRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.LiftRefraction * m * scale,
                 specularIntensity: T.RestSpecular + (T.LiftSpecular - T.RestSpecular) * m,
-                layer: 3,
+                layer: baseLayer + 1,
                 tintColor: B.AccentTint,
                 tintAmount: Material.PillRestTintAmount + (Material.PillLiftTintAmount - Material.PillRestTintAmount) * m,
                 chromatic: T.LiftChromatic * m,
                 shadowStrength: T.RestShadow + (T.LiftShadow - T.RestShadow) * m,
                 shadowRadius: (T.RestShadowRadius + (T.LiftShadowRadius - T.RestShadowRadius) * m) * scale,
                 shadowOffsetY: T.ShadowOffsetY * scale,
-                edgeRing: T.LiftEdgeRing * m, secondLight: T.SecondLight));
+                edgeRing: T.LiftEdgeRing * m, clip: clip, secondLight: T.SecondLight));
 
         // Labels on the track's layer so the pill (one layer up) refracts them. The selected
         // label reads dark on the white pill, the rest a muted grey on the track, blended by how
@@ -278,12 +305,12 @@ public sealed partial class GlassSegmented : UserControl
             var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
             var at = new Vector2(left + segW * (i + 0.5f), centerY);
             var size = Material.LabelSize * scale;
-            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: 2));
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer, Clip: clip));
             var onPill = near * (1f - m);
             if (onPill > 0.002f)
             {
                 var d = Material.LabelSelectedValue;
-                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: 3));
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer + 1, Clip: clip));
             }
         }
         _scene.PublishText(this, texts.ToArray());

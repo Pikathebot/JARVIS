@@ -9,10 +9,20 @@ using Microsoft.UI.Xaml.Controls;
 namespace Jarvis_App.Views;
 
 /// <summary>Native port of SettingsDialog.tsx (backend/model info, persona, proactive-actions
-/// toggle, plus a Glass quality control that doesn't exist in the original — see the plan's
-/// auto-degrade decision).</summary>
-public sealed partial class SettingsDialog : ContentDialog
+/// toggle, routines) as an in-window glass sheet -- see the remark in SettingsPane.xaml for why
+/// it is not a ContentDialog. The host shows it in an overlay grid and removes it on
+/// <see cref="CloseRequested"/>.</summary>
+public sealed partial class SettingsPane : UserControl
 {
+    public event Action? CloseRequested;
+
+    private void Close_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
+
+    private void Scrim_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => CloseRequested?.Invoke();
+
+    /// <summary>Taps inside the sheet must not reach the scrim's close handler.</summary>
+    private void Sheet_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => e.Handled = true;
+
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
 
@@ -20,7 +30,7 @@ public sealed partial class SettingsDialog : ContentDialog
     public RoutinesViewModel RoutinesViewModel { get; }
     public ModelsViewModel ModelsViewModel { get; }
 
-    public SettingsDialog(
+    public SettingsPane(
         JarvisApiClient api,
         GovernorViewModel governor,
         PersonaViewModel personaViewModel,
@@ -34,10 +44,10 @@ public sealed partial class SettingsDialog : ContentDialog
         ModelsViewModel = modelsViewModel;
         ModelsViewModel.PropertyChanged += (_, _) => RefreshModelState();
         InitializeComponent();
-        Loaded += SettingsDialog_Loaded;
+        Loaded += SettingsPane_Loaded;
     }
 
-    private async void SettingsDialog_Loaded(object sender, RoutedEventArgs e)
+    private async void SettingsPane_Loaded(object sender, RoutedEventArgs e)
     {
         BackendText.Text = string.IsNullOrEmpty(_governor.ActiveBackend) ? "Offline" : _governor.ActiveBackend;
         ModelText.Text = _governor.ConfiguredModel;

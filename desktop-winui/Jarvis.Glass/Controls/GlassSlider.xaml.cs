@@ -179,6 +179,7 @@ public sealed partial class GlassSlider : UserControl
         if (XamlRoot is null || !IsLoaded) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
+        var baseLayer = GlassSlab.BaseLayerFor(this);
 
         float scale;
         Windows.Foundation.Rect bounds;
@@ -192,6 +193,7 @@ public sealed partial class GlassSlider : UserControl
             return;
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        var clip = GlassSlab.ClipFor(this, scale);
 
         var centerY = (float)(bounds.Y + bounds.Height * 0.5) * scale;
         var left = (float)bounds.X * scale;
@@ -229,17 +231,17 @@ public sealed partial class GlassSlider : UserControl
         var shapes = new List<GlassShape>(3)
         {
             GlassShape.Create(railCenter, railHalf, railHalfH, Material.RailBezel * scale, GlassBezelProfile.Lip,
-                2f * scale, Material.RailSpecular, layer: 2, Material.RailColor, 1f),
+                2f * scale, Material.RailSpecular, layer: baseLayer, Material.RailColor, 1f, clip: clip),
         };
         if (hasFill)
         {
             shapes.Add(GlassShape.Create(fillCenter, fillHalf, railHalfH, Material.RailBezel * scale, GlassBezelProfile.Lip,
-                2f * scale, Material.RailSpecular, layer: 3, Material.FillColor, 1f));
+                2f * scale, Material.RailSpecular, layer: baseLayer + 1, Material.FillColor, 1f, clip: clip));
         }
         shapes.Add(GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * GlassToggle.Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: GlassToggle.Material.LiftRefraction * m * scale,
                 specularIntensity: GlassToggle.Material.RestSpecular + (GlassToggle.Material.LiftSpecular - GlassToggle.Material.RestSpecular) * m,
-                layer: 4,
+                layer: baseLayer + 2,
                 tintColor: Vector3.One,
                 tintAmount: GlassToggle.Material.RestTint + (GlassToggle.Material.LiftTint - GlassToggle.Material.RestTint) * m,
                 blurRadius: GlassToggle.Material.LiftBlur * m * scale,
@@ -247,7 +249,7 @@ public sealed partial class GlassSlider : UserControl
                 shadowStrength: GlassToggle.Material.RestShadow + (GlassToggle.Material.LiftShadow - GlassToggle.Material.RestShadow) * m,
                 shadowRadius: (GlassToggle.Material.RestShadowRadius + (GlassToggle.Material.LiftShadowRadius - GlassToggle.Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: GlassToggle.Material.ShadowOffsetY * scale,
-                edgeRing: GlassToggle.Material.LiftEdgeRing * m, secondLight: GlassToggle.Material.SecondLight));
+                edgeRing: GlassToggle.Material.LiftEdgeRing * m, clip: clip, secondLight: GlassToggle.Material.SecondLight));
         _scene.Publish(this, shapes.ToArray());
     }
 }

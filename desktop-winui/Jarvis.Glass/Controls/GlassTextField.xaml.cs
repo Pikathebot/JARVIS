@@ -187,6 +187,7 @@ public sealed partial class GlassTextField : UserControl
         if (XamlRoot is null || !IsLoaded) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
+        var baseLayer = GlassSlab.BaseLayerFor(this);
 
         float scale;
         Windows.Foundation.Rect bounds;
@@ -200,6 +201,7 @@ public sealed partial class GlassTextField : UserControl
             return;
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        var clip = GlassSlab.ClipFor(this, scale);
 
         var m = Math.Max(_focus, GlassToggle.Material.ForceLift);
         var grow = 1f + (Material.FocusScale - 1f) * m;
@@ -215,7 +217,7 @@ public sealed partial class GlassTextField : UserControl
             GlassShape.Create(center, half, radius, radius * Material.BezelFraction, GlassBezelProfile.Lens,
                 refractionScale: (Material.RestRefraction + (Material.FocusRefraction - Material.RestRefraction) * m) * scale,
                 specularIntensity: Material.RestSpecular + (Material.FocusSpecular - Material.RestSpecular) * m,
-                layer: 2,
+                layer: baseLayer,
                 tintColor: tintColor,
                 tintAmount: Math.Clamp(tint, 0f, 1f),
                 chromatic: Material.FocusChromatic * m,
@@ -223,6 +225,6 @@ public sealed partial class GlassTextField : UserControl
                 shadowRadius: (Material.RestShadowRadius + (Material.FocusShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale,
                 edgeRing: Material.RestEdgeRing + (Material.FocusEdgeRing - Material.RestEdgeRing) * m,
-                secondLight: GlassToggle.Material.SecondLight));
+                clip: clip, secondLight: GlassToggle.Material.SecondLight));
     }
 }

@@ -17,7 +17,6 @@ namespace Jarvis_Glass;
 /// </summary>
 public sealed partial class GlassButton : UserControl
 {
-    private const float PillHeight = 40f;
 
     /// <summary>Shared, live-tunable material (see <see cref="GlassToggle.Material"/> for the
     /// convention). Rest numbers were picked so the rim bend reads on a frosted card without the
@@ -198,6 +197,7 @@ public sealed partial class GlassButton : UserControl
         if (XamlRoot is null || !IsLoaded) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
+        var baseLayer = GlassSlab.BaseLayerFor(this);
 
         float scale;
         Windows.Foundation.Rect bounds;
@@ -211,12 +211,13 @@ public sealed partial class GlassButton : UserControl
             return; // not in the tree yet
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        var clip = GlassSlab.ClipFor(this, scale);
 
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift); // rest -> lift blend
         var grow = 1f + (Material.LiftScale - 1f) * m;
 
         var center = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
-        var half = new Vector2((float)bounds.Width * 0.5f, PillHeight * 0.5f) * scale * grow;
+        var half = new Vector2((float)bounds.Width * 0.5f, (float)bounds.Height * 0.5f) * scale * grow;
         var radius = half.Y; // a true pill: corner radius is half the height
 
         var tintColor = IsAccent ? Material.AccentTint : Material.ClearTint;
@@ -228,7 +229,7 @@ public sealed partial class GlassButton : UserControl
             GlassShape.Create(center, half, radius, radius * Material.BezelFraction, GlassBezelProfile.Lens,
                 refractionScale: (Material.RestRefraction + (Material.LiftRefraction - Material.RestRefraction) * m) * scale,
                 specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
-                layer: 2,
+                layer: baseLayer,
                 tintColor: tintColor,
                 tintAmount: Math.Clamp(tint, 0f, 1f),
                 chromatic: Material.LiftChromatic * m,
@@ -236,11 +237,11 @@ public sealed partial class GlassButton : UserControl
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale,
                 edgeRing: Material.RestEdgeRing + (Material.LiftEdgeRing - Material.RestEdgeRing) * m,
-                secondLight: GlassToggle.Material.SecondLight));
+                clip: clip, secondLight: GlassToggle.Material.SecondLight));
 
         // Caption on the button's own layer: composited after the slab, so it sits on the glass
         // (not bent by it) and scales with the lift like part of the slab.
         _scene.PublishText(this,
-            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: 2));
+            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: baseLayer, Clip: clip));
     }
 }

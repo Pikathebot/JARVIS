@@ -4,7 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     MinWidth="96"
-    Height="40">
+    MinHeight="40">
     <!--
         Slab and caption are both drawn by the renderer (the caption as GlassText on the slab's
         layer); this is only the transparent hit-test surface for the pointer handlers.
