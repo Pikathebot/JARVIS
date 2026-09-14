@@ -219,7 +219,7 @@ public sealed partial class GlassSlider : UserControl
 
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
         var thumbRadius = ThumbRadius * (GlassToggle.Material.RestScale + (GlassToggle.Material.LiftScale - GlassToggle.Material.RestScale) * m) * scale;
-        var stretch = Math.Min(0.45f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch) * m;
+        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch) * m;
         var thumbHalf = new Vector2(thumbRadius * Material.ThumbAspect * (1f + stretch), thumbRadius);
         var thumbCenter = new Vector2(thumbX, centerY);
 

@@ -102,7 +102,7 @@ public sealed partial class GlassToggle : UserControl
         /// "Force active"), so the lens can be inspected without holding the pointer down.</summary>
         public static float ForceLift = 0f;
         /// <summary>How much the thumb elongates along its travel per unit of velocity.</summary>
-        public static float ThumbStretch = 0.06f;
+        public static float ThumbStretch = 0.012f; // ~10% at the recording's ~10 travel/s drags
     }
 
     private static readonly List<WeakReference<GlassToggle>> Instances = new();
@@ -122,7 +122,7 @@ public sealed partial class GlassToggle : UserControl
 
     // Spring for the thumb's travel (0 = off, 1 = on) and its press scale.
     public const float SpringStiffness = 520f;
-    public const float SpringDamping = 24f;
+    public const float SpringDamping = 30f; // release settles in ~270ms with a small overshoot (recording)
     private const float Stiffness = SpringStiffness;
     private const float Damping = SpringDamping;
 
@@ -310,7 +310,7 @@ public sealed partial class GlassToggle : UserControl
 
         // Apple's lifted thumb elongates along its direction of travel while moving and relaxes
         // back to a circle as it settles -- driven straight off the spring's velocity.
-        var stretch = Math.Min(0.45f, Math.Abs(_travelVelocity) * Material.ThumbStretch) * m;
+        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * Material.ThumbStretch) * m;
         var aspect = Material.RestAspect + (Material.ToggleLiftAspect - Material.RestAspect) * m;
         var thumbHalf = new Vector2(thumbRadius * aspect * (1f + stretch), thumbRadius);
 

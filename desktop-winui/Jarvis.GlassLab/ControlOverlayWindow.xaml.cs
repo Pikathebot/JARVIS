@@ -81,7 +81,7 @@ public sealed partial class ControlOverlayWindow : Window
         ("Lift chromatic", 0f, 0.5f, () => GlassToggle.Material.LiftChromatic, v => GlassToggle.Material.LiftChromatic = v),
         ("Lift specular", 0f, 2.5f, () => GlassToggle.Material.LiftSpecular, v => GlassToggle.Material.LiftSpecular = v),
         ("Lift blur px", 0f, 8f, () => GlassToggle.Material.LiftBlur, v => GlassToggle.Material.LiftBlur = v),
-        ("Stretch", 0f, 0.2f, () => GlassToggle.Material.ThumbStretch, v => GlassToggle.Material.ThumbStretch = v),
+        ("Stretch", 0f, 0.05f, () => GlassToggle.Material.ThumbStretch, v => GlassToggle.Material.ThumbStretch = v),
         ("Rest tint", 0f, 1f, () => GlassToggle.Material.RestTint, v => GlassToggle.Material.RestTint = v),
         ("Rest shadow", 0f, 0.8f, () => GlassToggle.Material.RestShadow, v => GlassToggle.Material.RestShadow = v),
         ("Shadow radius", 0f, 20f, () => GlassToggle.Material.RestShadowRadius, v => GlassToggle.Material.RestShadowRadius = v),
