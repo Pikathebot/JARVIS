@@ -20,7 +20,11 @@ namespace Jarvis_GlassLab;
 public sealed partial class GlassToggle : UserControl
 {
     // Geometry in DIPs (kube.io's ~32px-tall switch); pixel values come from RasterizationScale.
-    private const float TrackWidth = 56f;
+    // Track width follows the puck: inset + resting puck width + travel + puck width + inset,
+    // so the track always "fits" the puck at both ends whatever aspect it is given.
+    private const float Travel = 24f;
+    private static float ThumbRestHalfWidth => ThumbRadius * Material.RestAspect;
+    private static float TrackWidth => 2f * (ThumbInset + ThumbRestHalfWidth) + Travel;
     private const float TrackHeight = 32f;
     private const float ThumbRadius = 13.5f;
     private const float ThumbInset = 2.5f;
@@ -40,7 +44,9 @@ public sealed partial class GlassToggle : UserControl
         public static float TrackRefraction = 2f;
         public static float TrackSpecular = 0.25f;
 
-        // Thumb at rest.
+        // Thumb at rest: iOS 26's puck is a stadium 1.59x as wide as tall (measured off an iPad
+        // screen recording: 36.5x23pt in a 62.5x28pt track, 2.5pt inset, 21pt travel).
+        public static float RestAspect = 1.59f;
         public static float RestScale = 1.0f;
         public static float RestTint = 1.0f;       // opaque white
         public static float RestSpecular = 0.2f;
@@ -56,11 +62,11 @@ public sealed partial class GlassToggle : UserControl
         /// and shows the card through it; the toggle's sits inside an opaque track, so at the
         /// slider's 1.35 it only shows refracted track and never reads as clear glass -- it has to
         /// overhang the track to show what is behind.</summary>
-        public static float ToggleLiftScale = 1.35f;
+        public static float ToggleLiftScale = 1.46f;
         public static float LiftTint = 0.16f;
         /// <summary>Toggle thumb's lifted tint -- fully clear, since over an opaque track any
         /// white wash just reads as a paler puck.</summary>
-        public static float ToggleLiftTint = 0f;
+        public static float ToggleLiftTint = 0.08f;
         public static float LiftSpecular = 1.1f;
         public static float LiftShadow = 0.30f;
         public static float LiftShadowRadius = 12f;
@@ -68,9 +74,18 @@ public sealed partial class GlassToggle : UserControl
         // (half-height minus rail half-thickness); more than that wraps the rail into a loop
         // inside the lens that reads as a second outline.
         public static float LiftBezelFraction = 0.48f;
-        /// <summary>Toggle thumb: no refracting rim at all (the shaders clamp the band to 1px),
-        /// so the lifted thumb is a clear flat window onto the track.</summary>
-        public static float ToggleLiftBezelFraction = 0f;
+        // iOS 26's pressed switch thumb, measured frame-by-frame off the recording: a clear
+        // 63x34.5pt stadium (1.46x the rest height, aspect 1.83) overhanging the 28pt track top
+        // and bottom and hanging past its end. Two optical effects: the whole lens is a mild
+        // magnifier (so the track colour fills it right out to the caps), and the rim bends
+        // OUTWARD over ~0.46 of the half-height, which shows the dark background beyond the
+        // track edge as a band just inside the rim -- thick at top/bottom, thin at the caps.
+        public static float ToggleLiftBezelFraction = 0.46f;
+        /// <summary>Negative = outward bend at the rim.</summary>
+        public static float ToggleLiftRefraction = -9f;
+        public static float ToggleLiftMagnify = 0.2f;
+        /// <summary>Lifted thumb width / height.</summary>
+        public static float ToggleLiftAspect = 1.83f;
         public static float LiftRefraction = 14.8f;
         public static float LiftChromatic = 0.04f;
         public static float LiftBlur = 0f;
@@ -90,7 +105,7 @@ public sealed partial class GlassToggle : UserControl
     {
         foreach (var weak in Instances)
         {
-            if (weak.TryGetTarget(out var toggle)) toggle.PublishShapes();
+            if (weak.TryGetTarget(out var toggle)) { toggle.Width = TrackWidth; toggle.PublishShapes(); }
         }
         GlassSlider.RepublishAll();
         GlassButton.RepublishAll();
@@ -126,6 +141,8 @@ public sealed partial class GlassToggle : UserControl
     public GlassToggle()
     {
         InitializeComponent();
+        Width = TrackWidth;
+        Height = TrackHeight;
         _travel = IsOn ? 1f : 0f;
         Instances.Add(new WeakReference<GlassToggle>(this));
 
@@ -173,7 +190,7 @@ public sealed partial class GlassToggle : UserControl
         _dragging = true;
 
         // Map the pointer to the thumb-center travel range (same geometry as PublishShapes).
-        var halfTravel = (TrackWidth - 2f * (ThumbInset + ThumbRadius)) * 0.5f;
+        var halfTravel = Travel * 0.5f;
         var centerX = (float)ActualWidth * 0.5f;
         _dragTarget = Math.Clamp((x - (centerX - halfTravel)) / (2f * halfTravel), 0f, 1f);
         e.Handled = true;
@@ -277,7 +294,7 @@ public sealed partial class GlassToggle : UserControl
         var trackHalf = new Vector2(TrackWidth * 0.5f, TrackHeight * 0.5f) * scale;
         var trackRadius = TrackHeight * 0.5f * scale;
 
-        var travelPx = (TrackWidth - 2f * (ThumbInset + ThumbRadius)) * scale;
+        var travelPx = Travel * scale;
         var thumbX = trackCenter.X - travelPx * 0.5f + _travel * travelPx;
         var thumbCenter = new Vector2(thumbX, trackCenter.Y);
 
@@ -287,7 +304,8 @@ public sealed partial class GlassToggle : UserControl
         // Apple's lifted thumb elongates along its direction of travel while moving and relaxes
         // back to a circle as it settles -- driven straight off the spring's velocity.
         var stretch = Math.Min(0.45f, Math.Abs(_travelVelocity) * Material.ThumbStretch) * m;
-        var thumbHalf = new Vector2(thumbRadius * (1f + stretch), thumbRadius);
+        var aspect = Material.RestAspect + (Material.ToggleLiftAspect - Material.RestAspect) * m;
+        var thumbHalf = new Vector2(thumbRadius * aspect * (1f + stretch), thumbRadius);
 
         var trackColor = Vector3.Lerp(Material.OffColor, Material.OnColor, _travel);
 
@@ -295,7 +313,7 @@ public sealed partial class GlassToggle : UserControl
             GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
                 Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, trackColor, 1f),
             GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.ToggleLiftBezelFraction, GlassBezelProfile.Lens,
-                refractionScale: Material.LiftRefraction * m * scale,
+                refractionScale: Material.ToggleLiftRefraction * m * scale,
                 specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
                 layer: 3,
                 tintColor: Vector3.One,
@@ -304,6 +322,7 @@ public sealed partial class GlassToggle : UserControl
                 chromatic: Material.LiftChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
-                shadowOffsetY: Material.ShadowOffsetY * scale));
+                shadowOffsetY: Material.ShadowOffsetY * scale,
+                magnify: Material.ToggleLiftMagnify * m));
     }
 }

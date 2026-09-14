@@ -23,6 +23,7 @@ struct GlassShape
     float4 Params2;
     float4 Tint;
     float4 Extra;
+    float4 Params3;
 };
 
 cbuffer ShapeConstants : register(b1)

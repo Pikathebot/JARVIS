@@ -28,6 +28,7 @@ struct GlassShape
     float4 Params2;        // x specular intensity, y layer, z max refraction magnitude, w blur radius px
     float4 Tint;           // rgb tint color, a tint amount (alpha blend)
     float4 Extra;          // x chromatic px, y shadow strength, z shadow radius px, w shadow y-offset px
+    float4 Params3;        // x magnify (fraction of the centre offset the sample moves inward)
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -199,10 +200,14 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float blur = Shapes[s].Params2.w;
     float coverage = Coverage(sdf);
     float bezel = max(1.0, min(Shapes[s].Params.y, r));
+    // Magnifier: every pixel samples toward the centre by this fraction of its offset. Applies
+    // across the whole shape (interior and bezel alike) so it is continuous at the bezel's
+    // inner boundary; the bezel's own profile displacement is added on top.
+    float2 magnify = -p * Shapes[s].Params3.x;
     if (sdf < -bezel)
     {
-        // Past the bezel band into the flat interior: covered, undisplaced.
-        return float4(0.0, 0.0, 1.0, blur);
+        // Past the bezel band into the flat interior: covered, only the magnifier applies.
+        return float4(magnify, 1.0, blur);
     }
 
     // Depth into the bezel band: 0 at the outer edge, 1 at the inner boundary -- the convention
@@ -212,5 +217,7 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float u = saturate((-sdf) / bezel);
     float mag = RefractionMagnitude(u, Shapes[s].Params.z) / Shapes[s].Params2.z;
     float2 normal = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
-    return float4(-normal * mag * Shapes[s].Params.w, coverage, blur);
+    // Params.w may be negative: the rim then bends OUTWARD (samples past the shape's edge),
+    // which is what puts the dark band just inside the rim of iOS 26's pressed switch thumb.
+    return float4(-normal * mag * Shapes[s].Params.w + magnify, coverage, blur);
 }
