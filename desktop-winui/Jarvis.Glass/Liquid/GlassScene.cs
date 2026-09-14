@@ -23,7 +23,10 @@ public sealed class GlassScene
     private GlassText[] _textSnapshot = Array.Empty<GlassText>();
     private bool _shapesDirty, _textsDirty;
 
-    public const int MaxShapes = 16;
+    /// <summary>Per-window budget. The main window alone is pane + 5 slabs + ~7 pills + 2 toggles + a
+    /// segmented (2 shapes each) -- 16 truncated the top layer (thumbs) off. Shapes are 96 bytes
+    /// each, so 48 is a 4.6 KB cbuffer; the shaders loop over them per pixel.</summary>
+    public const int MaxShapes = 48;
 
     /// <summary>The scene of the window <paramref name="element"/> is in, or null while the
     /// element is not yet in a hosted window's tree (controls should simply skip publishing).</summary>

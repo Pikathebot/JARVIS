@@ -28,7 +28,7 @@ cbuffer RefractionConstants : register(b0)
     float MaxBlur;         // px: the blur radius BlurredTexture was built with (0 = not built)
 };
 
-#define MAX_SHAPES 16
+#define MAX_SHAPES 48
 
 struct GlassShape
 {
