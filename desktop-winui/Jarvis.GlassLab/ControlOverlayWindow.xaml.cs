@@ -73,6 +73,8 @@ public sealed partial class ControlOverlayWindow : Window
         ("Slider lift bezel frac", 0f, 1f, () => GlassToggle.Material.LiftBezelFraction, v => GlassToggle.Material.LiftBezelFraction = v),
         ("Toggle lift bezel frac", 0f, 1f, () => GlassToggle.Material.ToggleLiftBezelFraction, v => GlassToggle.Material.ToggleLiftBezelFraction = v),
         ("Toggle lift refr", -30f, 30f, () => GlassToggle.Material.ToggleLiftRefraction, v => GlassToggle.Material.ToggleLiftRefraction = v),
+        ("Toggle lift chromatic", 0f, 0.4f, () => GlassToggle.Material.ToggleLiftChromatic, v => GlassToggle.Material.ToggleLiftChromatic = v),
+        ("Toggle lift frost", 0f, 12f, () => GlassToggle.Material.ToggleLiftFrost, v => GlassToggle.Material.ToggleLiftFrost = v),
         ("Toggle lift magnify", 0f, 0.5f, () => GlassToggle.Material.ToggleLiftMagnify, v => GlassToggle.Material.ToggleLiftMagnify = v),
         ("Toggle rest aspect", 1f, 2f, () => GlassToggle.Material.RestAspect, v => GlassToggle.Material.RestAspect = v),
         ("Toggle lift aspect", 1f, 2.4f, () => GlassToggle.Material.ToggleLiftAspect, v => GlassToggle.Material.ToggleLiftAspect = v),

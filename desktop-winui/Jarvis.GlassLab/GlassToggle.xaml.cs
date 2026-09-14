@@ -84,6 +84,13 @@ public sealed partial class GlassToggle : UserControl
         /// <summary>Negative = outward bend at the rim.</summary>
         public static float ToggleLiftRefraction = -9f;
         public static float ToggleLiftMagnify = 0.2f;
+        /// <summary>Rim colour fringe while lifted -- clearly visible in the recording (orange
+        /// one side, blue the other), far stronger than the slider's.</summary>
+        public static float ToggleLiftChromatic = 0.12f;
+        /// <summary>Peak frost (blur px) mid-way through the lift transition: on release the lens
+        /// goes glass -> milky frosted -> opaque white over ~150ms rather than straight to white.
+        /// Shaped as 4m(1-m) so it is zero at both rest and full lift.</summary>
+        public static float ToggleLiftFrost = 5f;
         /// <summary>Lifted thumb width / height.</summary>
         public static float ToggleLiftAspect = 1.83f;
         public static float LiftRefraction = 14.8f;
@@ -318,8 +325,8 @@ public sealed partial class GlassToggle : UserControl
                 layer: 3,
                 tintColor: Vector3.One,
                 tintAmount: Material.RestTint + (Material.ToggleLiftTint - Material.RestTint) * m,
-                blurRadius: Material.LiftBlur * m * scale,
-                chromatic: Material.LiftChromatic * m,
+                blurRadius: (Material.LiftBlur * m + Material.ToggleLiftFrost * 4f * m * (1f - m)) * scale,
+                chromatic: Material.ToggleLiftChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale,
