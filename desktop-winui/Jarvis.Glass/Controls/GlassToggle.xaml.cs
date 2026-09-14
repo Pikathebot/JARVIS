@@ -160,7 +160,7 @@ public sealed partial class GlassToggle : UserControl
         _travel = IsOn ? 1f : 0f;
         Instances.Add(new WeakReference<GlassToggle>(this));
 
-        Loaded += (_, _) => { PublishShapes(); StartAnimating(); };
+        Loaded += (_, _) => { PublishShapes(); StartAnimating(); GlassScroll.Track(this, PublishShapes); };
         Unloaded += (_, _) => { StopAnimating(); _scene?.Remove(this); _scene = null; };
         LayoutUpdated += (_, _) => PublishShapes();
 

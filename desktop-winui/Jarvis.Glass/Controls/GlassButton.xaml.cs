@@ -105,7 +105,7 @@ public sealed partial class GlassButton : UserControl
         InitializeComponent();
         Instances.Add(new WeakReference<GlassButton>(this));
 
-        Loaded += (_, _) => { PublishShape(); StartAnimating(); };
+        Loaded += (_, _) => { PublishShape(); StartAnimating(); GlassScroll.Track(this, PublishShape); };
         Unloaded += (_, _) => { StopAnimating(); _scene?.Remove(this); _scene = null; };
         LayoutUpdated += (_, _) => PublishShape();
 

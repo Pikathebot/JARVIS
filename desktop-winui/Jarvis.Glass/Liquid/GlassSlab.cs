@@ -139,7 +139,7 @@ public sealed class GlassSlab : Grid
 
     public GlassSlab()
     {
-        Loaded += (_, _) => Publish();
+        Loaded += (_, _) => { Publish(); GlassScroll.Track(this, Publish); };
         LayoutUpdated += (_, _) => Publish();
         Unloaded += (_, _) => { _scene?.Remove(this); _scene = null; };
     }

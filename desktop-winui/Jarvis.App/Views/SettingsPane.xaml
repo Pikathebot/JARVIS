@@ -28,7 +28,7 @@
                     <TextBlock Text="Settings" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                     <glass:GlassButton Text="✕" Width="34" Height="34" MinWidth="34" MinHeight="34" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
                 </Grid>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
         <StackPanel Spacing="16" MinWidth="380">
 
             <StackPanel Spacing="4">

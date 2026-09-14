@@ -74,7 +74,7 @@ public sealed partial class GlassSlider : UserControl
         _travel = _target = (float)Value;
         Instances.Add(new WeakReference<GlassSlider>(this));
 
-        Loaded += (_, _) => { PublishShapes(); StartAnimating(); };
+        Loaded += (_, _) => { PublishShapes(); StartAnimating(); GlassScroll.Track(this, PublishShapes); };
         Unloaded += (_, _) => { StopAnimating(); _scene?.Remove(this); _scene = null; };
         LayoutUpdated += (_, _) => PublishShapes();
 

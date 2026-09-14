@@ -98,7 +98,7 @@ public sealed partial class GlassSegmented : UserControl
         _travel = SelectedIndex;
         Instances.Add(new WeakReference<GlassSegmented>(this));
 
-        Loaded += (_, _) => { PublishShapes(); StartAnimating(); };
+        Loaded += (_, _) => { PublishShapes(); StartAnimating(); GlassScroll.Track(this, PublishShapes); };
         Unloaded += (_, _) => { StopAnimating(); _scene?.Remove(this); _scene = null; };
         LayoutUpdated += (_, _) => PublishShapes();
 
