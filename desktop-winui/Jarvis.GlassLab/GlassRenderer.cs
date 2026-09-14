@@ -14,6 +14,9 @@ namespace Jarvis_GlassLab;
 /// pass 3 (SpecularRim.hlsl) screen-blends a Fresnel-style rim highlight and per-shape tint on
 /// top (SrcBlend=One, DestBlend=InvSrcColor: result = src + dst - src*dst). Intermediate layers
 /// ping-pong between two window-sized textures; the last layer draws into the swapchain.
+/// When a layer carries a frosted shape, a separable Gaussian pre-pass (GaussianBlur.hlsl, H then
+/// V through two scratch textures) blurs that layer's source once at the largest frost radius on
+/// the layer, and pass 2 samples the blurred copy for frosted pixels.
 /// </summary>
 internal sealed class GlassRenderer : IDisposable
 {
@@ -24,6 +27,7 @@ internal sealed class GlassRenderer : IDisposable
     private readonly ID3D11PixelShader _displacementPs;
     private readonly ID3D11PixelShader _refractionPs;
     private readonly ID3D11PixelShader _specularRimPs;
+    private readonly ID3D11PixelShader _blurPs;
 
     private readonly ID3D11SamplerState _pointSampler;
     private readonly ID3D11SamplerState _linearSampler;
@@ -32,6 +36,7 @@ internal sealed class GlassRenderer : IDisposable
     private readonly ID3D11Buffer _refractionConstants;
     private readonly ID3D11Buffer _specularRimConstants;
     private readonly ID3D11Buffer _shapeConstants;
+    private readonly ID3D11Buffer _blurConstants;
 
     /// <summary>float4 header + MaxShapes * GlassShape.Size.</summary>
     private const int ShapeConstantsSize = 16 + GlassShapeRegistry.MaxShapes * GlassShape.Size;
@@ -39,6 +44,15 @@ internal sealed class GlassRenderer : IDisposable
     private readonly ID3D11Texture2D?[] _layerTextures = new ID3D11Texture2D?[2];
     private readonly ID3D11RenderTargetView?[] _layerRtvs = new ID3D11RenderTargetView?[2];
     private readonly ID3D11ShaderResourceView?[] _layerSrvs = new ID3D11ShaderResourceView?[2];
+
+    // [0] = horizontal pass output (scratch), [1] = final blurred source for the refraction pass.
+    private readonly ID3D11Texture2D?[] _blurTextures = new ID3D11Texture2D?[2];
+    private readonly ID3D11RenderTargetView?[] _blurRtvs = new ID3D11RenderTargetView?[2];
+    private readonly ID3D11ShaderResourceView?[] _blurSrvs = new ID3D11ShaderResourceView?[2];
+
+    /// <summary>Gaussian sigma as a fraction of a shape's blur radius. 0.5 puts the kernel's 2-sigma
+    /// extent at the radius, so "blur 10" spreads about as far as the old 10px Poisson disc did.</summary>
+    public float BlurSigmaPerRadius { get; set; } = 0.5f;
 
     private readonly ID3D11BlendState _screenBlendState;
 
@@ -71,6 +85,7 @@ internal sealed class GlassRenderer : IDisposable
         var displacementPath = Path.Combine(shaderDir, "DisplacementField.hlsl");
         var refractionPath = Path.Combine(shaderDir, "Refraction.hlsl");
         var specularRimPath = Path.Combine(shaderDir, "SpecularRim.hlsl");
+        var blurPath = Path.Combine(shaderDir, "GaussianBlur.hlsl");
 
         // All three passes draw the same full-screen triangle, so one VS compiled from
         // DisplacementField.hlsl covers all of them - the other two shader files only supply a
@@ -79,6 +94,7 @@ internal sealed class GlassRenderer : IDisposable
         _displacementPs = ShaderPipeline.CreatePixelShader(_device, displacementPath, "PSMain");
         _refractionPs = ShaderPipeline.CreatePixelShader(_device, refractionPath, "PSMain");
         _specularRimPs = ShaderPipeline.CreatePixelShader(_device, specularRimPath, "PSMain");
+        _blurPs = ShaderPipeline.CreatePixelShader(_device, blurPath, "PSMain");
 
         var screenBlendDesc = BlendDescription.Opaque;
         screenBlendDesc.RenderTarget[0] = new RenderTargetBlendDescription
@@ -120,6 +136,9 @@ internal sealed class GlassRenderer : IDisposable
         // float2 WindowSize + float2 pad (16) + float3 LightDir + float pad (16) = 32 bytes.
         _specularRimConstants = ShaderPipeline.CreateConstantBuffer(_device, 32);
         _shapeConstants = ShaderPipeline.CreateConstantBuffer(_device, ShapeConstantsSize);
+        // float4 UvRect (16) + float2 WindowSize + float SourceIsCapture + float Sigma (16)
+        // + float2 Direction + float2 pad (16) = 48 bytes.
+        _blurConstants = ShaderPipeline.CreateConstantBuffer(_device, 48);
     }
 
     /// <summary>The panel slab covering the whole window, built from the tunable properties above.</summary>
@@ -137,23 +156,29 @@ internal sealed class GlassRenderer : IDisposable
 
         for (var i = 0; i < 2; i++)
         {
-            _layerSrvs[i]?.Dispose();
-            _layerRtvs[i]?.Dispose();
-            _layerTextures[i]?.Dispose();
-            _layerTextures[i] = _device.CreateTexture2D(new Texture2DDescription
-            {
-                Width = (uint)width,
-                Height = (uint)height,
-                MipLevels = 1,
-                ArraySize = 1,
-                Format = Format.B8G8R8A8_UNorm,
-                SampleDescription = new SampleDescription(1, 0),
-                Usage = ResourceUsage.Default,
-                BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
-            });
-            _layerRtvs[i] = _device.CreateRenderTargetView(_layerTextures[i]);
-            _layerSrvs[i] = _device.CreateShaderResourceView(_layerTextures[i]);
+            CreateWindowTexture(width, height, ref _layerTextures[i], ref _layerRtvs[i], ref _layerSrvs[i]);
+            CreateWindowTexture(width, height, ref _blurTextures[i], ref _blurRtvs[i], ref _blurSrvs[i]);
         }
+    }
+
+    private void CreateWindowTexture(int width, int height, ref ID3D11Texture2D? texture, ref ID3D11RenderTargetView? rtv, ref ID3D11ShaderResourceView? srv)
+    {
+        srv?.Dispose();
+        rtv?.Dispose();
+        texture?.Dispose();
+        texture = _device.CreateTexture2D(new Texture2DDescription
+        {
+            Width = (uint)width,
+            Height = (uint)height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.B8G8R8A8_UNorm,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+        });
+        rtv = _device.CreateRenderTargetView(texture);
+        srv = _device.CreateShaderResourceView(texture);
     }
 
     private void EnsureDisplacementTarget(int width, int height)
@@ -216,6 +241,30 @@ internal sealed class GlassRenderer : IDisposable
             WriteShapeConstants(shapes, layer);
             _context.OMSetBlendState(null);
 
+            // Pass 0 (only if something on this layer is frosted): separable Gaussian of the
+            // source at the layer's largest blur radius, H into scratch then V into the blurred
+            // texture. Pass 2 lerps toward it per shape.
+            var maxBlur = MaxBlurOnLayer(shapes, layer);
+            if (maxBlur > 0f)
+            {
+                var sigma = Math.Max(0.25f, maxBlur * BlurSigmaPerRadius);
+                _context.PSSetShader(_blurPs);
+                _context.PSSetConstantBuffer(0, _blurConstants);
+                _context.PSSetShaderResource(0, null);
+                _context.PSSetShaderResource(2, null);
+
+                WriteBlurConstants(uvRect, width, height, sourceIsCapture: layer == 0, sigma, horizontal: true);
+                _context.OMSetRenderTargets(_blurRtvs[0]!);
+                _context.PSSetShaderResource(1, source);
+                _context.Draw(3, 0);
+
+                WriteBlurConstants(uvRect, width, height, sourceIsCapture: false, sigma, horizontal: false);
+                _context.OMSetRenderTargets(_blurRtvs[1]!);
+                _context.PSSetShaderResource(1, _blurSrvs[0]!);
+                _context.Draw(3, 0);
+                _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
+            }
+
             // Pass 1: displacement field for this layer's shapes. Unbind the SRVs first so the
             // displacement texture (read by the previous layer's pass 2) can be a render target
             // again without a hazard warning.
@@ -228,14 +277,16 @@ internal sealed class GlassRenderer : IDisposable
             _context.Draw(3, 0);
 
             // Pass 2: refract this layer's source through the field into the layer target.
-            WriteRefractionConstants(uvRect, width, height, sourceIsCapture: layer == 0);
+            WriteRefractionConstants(uvRect, width, height, sourceIsCapture: layer == 0, maxBlur);
             _context.OMSetRenderTargets(target);
             _context.PSSetShader(_refractionPs);
             _context.PSSetConstantBuffer(0, _refractionConstants);
             _context.PSSetConstantBuffer(1, _shapeConstants);
             _context.PSSetShaderResource(0, _displacementSrv!);
             _context.PSSetShaderResource(1, source);
+            _context.PSSetShaderResource(2, maxBlur > 0f ? _blurSrvs[1] : null);
             _context.Draw(3, 0);
+            _context.PSSetShaderResource(2, null);
 
             // Pass 3: rim highlight + tint, screen-blended onto the same target.
             _context.OMSetBlendState(_screenBlendState);
@@ -258,7 +309,7 @@ internal sealed class GlassRenderer : IDisposable
         WriteConstantBuffer(_displacementConstants, data);
     }
 
-    private void WriteRefractionConstants(Vector4 uvRect, int width, int height, bool sourceIsCapture)
+    private void WriteRefractionConstants(Vector4 uvRect, int width, int height, bool sourceIsCapture, float maxBlur)
     {
         Span<float> data = stackalloc float[8];
         data[0] = uvRect.X;
@@ -268,7 +319,34 @@ internal sealed class GlassRenderer : IDisposable
         data[4] = width;
         data[5] = height;
         data[6] = sourceIsCapture ? 1f : 0f;
+        data[7] = maxBlur;
         WriteConstantBuffer(_refractionConstants, data);
+    }
+
+    private void WriteBlurConstants(Vector4 uvRect, int width, int height, bool sourceIsCapture, float sigma, bool horizontal)
+    {
+        Span<float> data = stackalloc float[12];
+        data[0] = uvRect.X;
+        data[1] = uvRect.Y;
+        data[2] = uvRect.Z;
+        data[3] = uvRect.W;
+        data[4] = width;
+        data[5] = height;
+        data[6] = sourceIsCapture ? 1f : 0f;
+        data[7] = sigma;
+        data[8] = horizontal ? 1f : 0f;
+        data[9] = horizontal ? 0f : 1f;
+        WriteConstantBuffer(_blurConstants, data);
+    }
+
+    private static float MaxBlurOnLayer(ReadOnlySpan<GlassShape> shapes, int layer)
+    {
+        var max = 0f;
+        foreach (var shape in shapes)
+        {
+            if ((int)shape.Params2.Y == layer) max = Math.Max(max, shape.Params2.W);
+        }
+        return max;
     }
 
     private void WriteSpecularRimConstants(int width, int height)
@@ -313,14 +391,19 @@ internal sealed class GlassRenderer : IDisposable
             _layerSrvs[i]?.Dispose();
             _layerRtvs[i]?.Dispose();
             _layerTextures[i]?.Dispose();
+            _blurSrvs[i]?.Dispose();
+            _blurRtvs[i]?.Dispose();
+            _blurTextures[i]?.Dispose();
         }
         _screenBlendState.Dispose();
+        _blurConstants.Dispose();
         _shapeConstants.Dispose();
         _specularRimConstants.Dispose();
         _refractionConstants.Dispose();
         _displacementConstants.Dispose();
         _linearSampler.Dispose();
         _pointSampler.Dispose();
+        _blurPs.Dispose();
         _specularRimPs.Dispose();
         _refractionPs.Dispose();
         _displacementPs.Dispose();

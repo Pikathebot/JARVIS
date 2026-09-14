@@ -25,7 +25,7 @@ cbuffer RefractionConstants : register(b0)
     float4 UvRect;         // xy = UV offset, zw = UV scale - crop into the whole-display capture
     float2 WindowSize;     // pixels
     float SourceIsCapture; // 1 = sample the capture via UvRect, 0 = sample the previous layer 1:1
-    float _Pad0;
+    float MaxBlur;         // px: the blur radius BlurredTexture was built with (0 = not built)
 };
 
 #define MAX_SHAPES 16
@@ -47,6 +47,9 @@ cbuffer ShapeConstants : register(b1)
 
 Texture2D DisplacementTexture : register(t0);
 Texture2D SourceTexture : register(t1);
+// The source pre-blurred by GaussianBlur.hlsl at MaxBlur (the largest frost on this layer);
+// always window-space. Only bound when MaxBlur > 0.
+Texture2D BlurredTexture : register(t2);
 SamplerState PointSampler : register(s0);
 SamplerState LinearSampler : register(s1);
 
@@ -122,28 +125,17 @@ float2 ToSourceUv(float2 windowUv)
 
 float3 SampleSource(float2 windowUv, float blur)
 {
-    if (blur < 0.5)
+    float3 sharp = SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv), 0).rgb;
+    if (blur < 0.5 || MaxBlur <= 0.0)
     {
-        return SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv), 0).rgb;
+        return sharp;
     }
 
-    // Frost: a 12-tap Poisson disc of the given pixel radius around the displaced sample.
-    // Cheap, and soft enough at the radii glass controls use (a few px).
-    static const float2 Taps[12] =
-    {
-        float2(-0.326, -0.406), float2(-0.840, -0.074), float2(-0.696,  0.457),
-        float2(-0.203,  0.621), float2( 0.962, -0.195), float2( 0.473, -0.480),
-        float2( 0.519,  0.767), float2( 0.185, -0.893), float2( 0.507,  0.064),
-        float2( 0.896,  0.412), float2(-0.322, -0.933), float2(-0.792, -0.598)
-    };
-    float2 pxToWindowUv = 1.0 / WindowSize;
-    float3 sum = SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv), 0).rgb;
-    [unroll]
-    for (int k = 0; k < 12; k++)
-    {
-        sum += SourceTexture.SampleLevel(LinearSampler, ToSourceUv(windowUv + Taps[k] * blur * pxToWindowUv), 0).rgb;
-    }
-    return sum / 13.0;
+    // Frost: the separable Gaussian pre-pass blurred this layer's source at the layer's largest
+    // frost radius. A shape wanting less than that gets a blend toward the sharp sample -- not a
+    // true smaller kernel, but every frosted shape on a layer so far shares one radius anyway.
+    float3 frosted = BlurredTexture.SampleLevel(LinearSampler, windowUv, 0).rgb;
+    return lerp(sharp, frosted, saturate(blur / MaxBlur));
 }
 
 float4 PSMain(VSOutput i) : SV_TARGET
