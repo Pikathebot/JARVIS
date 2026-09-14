@@ -82,6 +82,38 @@ public sealed class GlassSlab : Grid
         set => SetValue(SpecularProperty, value);
     }
 
+    public static readonly DependencyProperty ShadowProperty = DependencyProperty.Register(
+        nameof(Shadow), typeof(double), typeof(GlassSlab), new PropertyMetadata(0.32, OnMaterialChanged));
+
+    /// <summary>Strength (0..1) of the soft shadow the slab drops onto the layer beneath it --
+    /// the desktop for a panel, the panel for a nested sheet. What grounds a slab instead of
+    /// leaving it as a bent rectangle floating in the capture.</summary>
+    public double Shadow
+    {
+        get => (double)GetValue(ShadowProperty);
+        set => SetValue(ShadowProperty, value);
+    }
+
+    public static readonly DependencyProperty ShadowRadiusProperty = DependencyProperty.Register(
+        nameof(ShadowRadius), typeof(double), typeof(GlassSlab), new PropertyMetadata(28.0, OnMaterialChanged));
+
+    /// <summary>How far the shadow reaches out from the outline, in DIPs.</summary>
+    public double ShadowRadius
+    {
+        get => (double)GetValue(ShadowRadiusProperty);
+        set => SetValue(ShadowRadiusProperty, value);
+    }
+
+    public static readonly DependencyProperty ShadowOffsetYProperty = DependencyProperty.Register(
+        nameof(ShadowOffsetY), typeof(double), typeof(GlassSlab), new PropertyMetadata(8.0, OnMaterialChanged));
+
+    /// <summary>Downward offset of the shadow in DIPs, so it reads as light from above.</summary>
+    public double ShadowOffsetY
+    {
+        get => (double)GetValue(ShadowOffsetYProperty);
+        set => SetValue(ShadowOffsetYProperty, value);
+    }
+
     public static readonly DependencyProperty LayerProperty = DependencyProperty.Register(
         nameof(Layer), typeof(int), typeof(GlassSlab), new PropertyMetadata(1, OnMaterialChanged));
 
@@ -181,6 +213,9 @@ public sealed class GlassSlab : Grid
             tintColor: new Vector3(tint.R / 255f, tint.G / 255f, tint.B / 255f),
             tintAmount: (float)Math.Clamp(TintAmount, 0, 1),
             blurRadius: (float)Frost * scale,
+            shadowStrength: (float)Math.Clamp(Shadow, 0, 1),
+            shadowRadius: (float)ShadowRadius * scale,
+            shadowOffsetY: (float)ShadowOffsetY * scale,
             secondLight: 0.33f));
     }
 }

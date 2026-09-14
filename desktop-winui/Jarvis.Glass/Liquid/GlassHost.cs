@@ -166,6 +166,7 @@ public sealed class GlassHost : IDisposable
         if (!visible)
         {
             _glass.SetVisible(false);
+            _glassVisible = false;
             return;
         }
 
@@ -173,25 +174,34 @@ public sealed class GlassHost : IDisposable
         if (client.Width <= 0 || client.Height <= 0)
         {
             _glass.SetVisible(false);
+            _glassVisible = false;
             return;
         }
 
         _glass.SetBounds(client.X, client.Y, client.Width, client.Height);
-        if (client.Width != _d3d.Width || client.Height != _d3d.Height)
+        var resized = client.Width != _d3d.Width || client.Height != _d3d.Height;
+        if (resized)
         {
             _composition.AroundResize(() => _d3d.ResizeBuffers(client.Width, client.Height));
         }
         _capture.RetargetIfDisplayChanged(_glass.HandleValue);
         RecomputeUvRect();
+        var wasVisible = _glassVisible;
         _glass.SetVisible(true);
-        if (_captureReady)
+        _glassVisible = true;
+        if (_captureReady && (resized || !wasVisible))
         {
-            // Prime both swapchain buffers right away rather than waiting a tick, so a move or
-            // resize never shows a stale frame.
-            RenderTick();
+            // A resize or first show needs a fresh frame now, not a tick later, or the resized
+            // buffers show up stale/black. A pure move does NOT render here: AppWindow.Changed
+            // fires per mouse-move during a drag, and a vsync-bound Present on every one fills
+            // the present queue and blocks the UI thread -- the WinUI window itself then
+            // stutters along behind the glass. The 16ms timer re-renders the shifted UV crop
+            // within a frame, which is the latency the capture already has while dragging.
             RenderTick();
         }
     }
+
+    private bool _glassVisible;
 
     private void RecomputeUvRect()
     {
