@@ -102,6 +102,12 @@ public sealed partial class GlassToggle : UserControl
         /// "Force active"), so the lens can be inspected without holding the pointer down.</summary>
         public static float ForceLift = 0f;
         /// <summary>How much the thumb elongates along its travel per unit of velocity.</summary>
+        /// <summary>Bright ~1px ring inside a lifted lens's rim (shared by the thumb, slider
+        /// thumb and segmented pill); invisible on the opaque resting thumb anyway.</summary>
+        public static float LiftEdgeRing = 0.22f;
+        /// <summary>Exit-side sheen weight for every control's rim (see GlassShape.Params3.z).</summary>
+        public static float SecondLight = 0.5f;
+
         public static float ThumbStretch = 0.012f; // ~10% at the recording's ~10 travel/s drags
     }
 
@@ -330,6 +336,7 @@ public sealed partial class GlassToggle : UserControl
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale,
-                magnify: Material.ToggleLiftMagnify * m));
+                magnify: Material.ToggleLiftMagnify * m,
+                edgeRing: Material.LiftEdgeRing * m, secondLight: Material.SecondLight));
     }
 }

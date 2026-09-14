@@ -255,7 +255,8 @@ public sealed partial class GlassSegmented : UserControl
                 chromatic: T.LiftChromatic * m,
                 shadowStrength: T.RestShadow + (T.LiftShadow - T.RestShadow) * m,
                 shadowRadius: (T.RestShadowRadius + (T.LiftShadowRadius - T.RestShadowRadius) * m) * scale,
-                shadowOffsetY: T.ShadowOffsetY * scale));
+                shadowOffsetY: T.ShadowOffsetY * scale,
+                edgeRing: T.LiftEdgeRing * m, secondLight: T.SecondLight));
 
         // Labels on the track's layer so the pill (one layer up) refracts them. The selected
         // label reads dark on the white pill, the rest a muted grey on the track, blended by how

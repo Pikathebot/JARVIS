@@ -43,7 +43,10 @@ internal struct GlassShape
 
     /// <summary>x = magnify: the whole shape samples toward its own centre by this fraction of
     /// the offset (0.2 = a 1.25x magnifier), so a lens overhanging an opaque track still shows
-    /// the track out to its rim -- iOS 26's pressed switch thumb. y/z/w reserved.</summary>
+    /// the track out to its rim -- iOS 26's pressed switch thumb. y = edge ring: a ~1px bright
+    /// outline just inside the rim, independent of the light direction (Apple's "this is glass"
+    /// cue at rest). z = second light weight: how much the rim on the side AWAY from the light
+    /// catches an exit highlight (0 = lit from one edge only, 1 = symmetric). w reserved.</summary>
     public Vector4 Params3;
 
     public static GlassShape Create(
@@ -51,7 +54,7 @@ internal struct GlassShape
         GlassBezelProfile profile, float refractionScale, float specularIntensity, int layer,
         Vector3 tintColor, float tintAmount, float blurRadius = 0f,
         float chromatic = 0f, float shadowStrength = 0f, float shadowRadius = 0f, float shadowOffsetY = 0f,
-        float magnify = 0f)
+        float magnify = 0f, float edgeRing = 0f, float secondLight = 0.6f)
     {
         return new GlassShape
         {
@@ -60,7 +63,7 @@ internal struct GlassShape
             Params2 = new Vector4(specularIntensity, layer, BezelProfileMath.MaxRefractionMagnitude(profile), blurRadius),
             Tint = new Vector4(tintColor, tintAmount),
             Extra = new Vector4(chromatic, shadowStrength, shadowRadius, shadowOffsetY),
-            Params3 = new Vector4(magnify, 0f, 0f, 0f),
+            Params3 = new Vector4(magnify, edgeRing, secondLight, 0f),
         };
     }
 }

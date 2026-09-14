@@ -243,7 +243,8 @@ public sealed partial class GlassSlider : UserControl
                 chromatic: GlassToggle.Material.LiftChromatic * m,
                 shadowStrength: GlassToggle.Material.RestShadow + (GlassToggle.Material.LiftShadow - GlassToggle.Material.RestShadow) * m,
                 shadowRadius: (GlassToggle.Material.RestShadowRadius + (GlassToggle.Material.LiftShadowRadius - GlassToggle.Material.RestShadowRadius) * m) * scale,
-                shadowOffsetY: GlassToggle.Material.ShadowOffsetY * scale));
+                shadowOffsetY: GlassToggle.Material.ShadowOffsetY * scale,
+                edgeRing: GlassToggle.Material.LiftEdgeRing * m, secondLight: GlassToggle.Material.SecondLight));
         GlassShapeRegistry.Publish(this, shapes.ToArray());
     }
 }

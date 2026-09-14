@@ -24,6 +24,8 @@ public sealed partial class GlassTextField : UserControl
         public static float BezelFraction = 0.45f;
         public static float RestRefraction = 5f;
         public static float RestSpecular = 0.55f;
+        public static float RestEdgeRing = 0.15f;
+        public static float FocusEdgeRing = 0.25f;
         public static float RestTint = 0.08f;
         public static float RestShadow = 0.14f;
         public static float RestShadowRadius = 6f;
@@ -181,6 +183,8 @@ public sealed partial class GlassTextField : UserControl
                 chromatic: Material.FocusChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.FocusShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.FocusShadowRadius - Material.RestShadowRadius) * m) * scale,
-                shadowOffsetY: Material.ShadowOffsetY * scale));
+                shadowOffsetY: Material.ShadowOffsetY * scale,
+                edgeRing: Material.RestEdgeRing + (Material.FocusEdgeRing - Material.RestEdgeRing) * m,
+                secondLight: GlassToggle.Material.SecondLight));
     }
 }

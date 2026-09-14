@@ -23,7 +23,7 @@ struct GlassShape
     float4 Params2;
     float4 Tint;
     float4 Extra;
-    float4 Params3;
+    float4 Params3;        // x magnify, y edge ring intensity, z second (exit) light weight
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -166,18 +166,31 @@ float4 PSMain(VSOutput i) : SV_TARGET
     // directly lit the whole band ~uniformly (LightDir's z alone gives every near-flat pixel
     // ~0.7), which read as a grey translucent border around a lifted thumb. A faint counter-
     // highlight on the far side keeps the lens from looking lit from one edge only.
+    // "facing" is by the OUTWARD direction, not the bump normal: the entry lobe sits on the
+    // corner arc that points toward the light (upper-left), the exit lobe on the one pointing
+    // away (lower-right) -- the normal's inward tilt at a convex edge would swap them.
     float tilt = length(normal.xy);
-    float2 n2 = tilt > 1e-4 ? normal.xy / tilt : float2(0.0, 0.0);
     float2 l2 = normalize(LightDir.xy);
-    float facing = dot(n2, l2);
-    // kube.io's lens has a thin, near-uniform bright outline all the way round, brighter on the
-    // side facing the light: a base term plus a directional boost, both confined to the outer
-    // sliver of the band by a steep falloff (the old sqrt falloff spread it across the whole
-    // band, which read as a wide translucent border).
-    float rim = 0.55 + 0.45 * saturate(facing) + 0.15 * saturate(-facing);
+    float facing = dot(outward2D, l2);
+    // Two lobes, not an outline: the sheen lives on the corner arcs that face the light (entry,
+    // upper-left) and the ones facing away (exit, lower-right, Params3.z as strong -- Apple's
+    // slabs are lit two-sided), and the straight runs between them fade to a faint floor. A flat
+    // base term here (it used to be 0.55) lights the whole outline evenly, which reads as a
+    // drawn border, not a lit edge. Confined to the outer sliver of the band by a steep falloff.
+    float secondLight = Shapes[s].Params3.z;
+    float lobes = pow(saturate(facing), 1.5) + secondLight * pow(saturate(-facing), 1.5);
+    const float floorLight = 0.08;
+    float rim = floorLight + (1.0 - floorLight) * lobes;
     rim *= saturate(tilt * 3.0);
     float edgeFalloff = pow(t, 8.0);
+    float coverage = Coverage(sdf);
+    float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x * coverage;
 
-    float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x * Coverage(sdf);
+    // Edge ring: a ~1px bright line just inside the outline, independent of the bezel profile
+    // (so it shows even when the band is flat), weighted by the same lobes so it too is a
+    // lit edge rather than a border.
+    float ring = smoothstep(1.5, 0.5, abs(sdf + 1.0)) * Shapes[s].Params3.y * coverage
+               * (floorLight + (1.0 - floorLight) * lobes);
+    rimColor += ring;
     return float4(saturate(rimColor), 0.0);
 }

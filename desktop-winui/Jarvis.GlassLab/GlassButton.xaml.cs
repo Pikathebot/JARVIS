@@ -34,6 +34,8 @@ public sealed partial class GlassButton : UserControl
         public static float BezelFraction = 0.55f;
         public static float RestRefraction = 7f;
         public static float RestSpecular = 0.7f;
+        public static float RestEdgeRing = 0.18f;
+        public static float LiftEdgeRing = 0.3f;
         public static float RestTint = 0.10f;
         public static float RestShadow = 0.18f;
         public static float RestShadowRadius = 8f;
@@ -229,7 +231,9 @@ public sealed partial class GlassButton : UserControl
                 chromatic: Material.LiftChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
-                shadowOffsetY: Material.ShadowOffsetY * scale));
+                shadowOffsetY: Material.ShadowOffsetY * scale,
+                edgeRing: Material.RestEdgeRing + (Material.LiftEdgeRing - Material.RestEdgeRing) * m,
+                secondLight: GlassToggle.Material.SecondLight));
 
         // Caption on the button's own layer: composited after the slab, so it sits on the glass
         // (not bent by it) and scales with the lift like part of the slab.

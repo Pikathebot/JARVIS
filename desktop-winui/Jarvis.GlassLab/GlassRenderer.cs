@@ -169,7 +169,7 @@ internal sealed class GlassRenderer : IDisposable
     public GlassShape PanelShape(int width, int height) => GlassShape.Create(
         new Vector2(width * 0.5f, height * 0.5f), new Vector2(width * 0.5f, height * 0.5f),
         CornerRadius, BezelWidth, Profile, RefractionScale, SpecularIntensity, layer: 0,
-        tintColor: Vector3.One, tintAmount: 0f);
+        tintColor: Vector3.One, tintAmount: 0f, secondLight: 0.33f); // the card keeps its old one-sided sheen
 
     private void EnsureLayerTargets(int width, int height)
     {
