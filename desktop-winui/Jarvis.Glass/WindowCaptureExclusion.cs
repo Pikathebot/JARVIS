@@ -6,7 +6,7 @@ namespace Jarvis_Glass;
 /// <summary>
 /// Excludes (or restores) Jarvis's own top-level windows from every system capture consumer via
 /// <c>SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)</c>. This is what actually fixes live
-/// capture's feedback loop: <see cref="LiveCaptureService"/> captures the final composited screen,
+/// capture's feedback loop: <see cref="LiveCaptureSource"/> captures the final composited screen,
 /// which otherwise always includes this app's own opaque glass panel drawn on top of wherever it
 /// sits -- there is no "capture the display except this window" mode in
 /// Windows.Graphics.Capture. Excluding the window from capture makes DWM omit it from every
@@ -44,7 +44,7 @@ public static class WindowCaptureExclusion
 
     /// <summary>
     /// Applies or clears capture exclusion on every registered window. Safe to call redundantly --
-    /// <see cref="LiveCaptureService"/> only calls this on real Start/Stop transitions, but nothing
+    /// <see cref="GlassHost"/> only calls this once capture is up, but nothing
     /// here depends on that. Requires Windows 10 2004+ / Windows 11; on older builds
     /// SetWindowDisplayAffinity simply fails (returns false, no exception) and this silently no-ops.
     /// </summary>

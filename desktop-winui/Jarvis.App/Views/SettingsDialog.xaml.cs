@@ -15,7 +15,6 @@ public sealed partial class SettingsDialog : ContentDialog
 {
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
-    private readonly GlassQualityService _glassQuality;
 
     public PersonaViewModel PersonaViewModel { get; }
     public RoutinesViewModel RoutinesViewModel { get; }
@@ -26,12 +25,10 @@ public sealed partial class SettingsDialog : ContentDialog
         GovernorViewModel governor,
         PersonaViewModel personaViewModel,
         RoutinesViewModel routinesViewModel,
-        ModelsViewModel modelsViewModel,
-        GlassQualityService glassQuality)
+        ModelsViewModel modelsViewModel)
     {
         _api = api;
         _governor = governor;
-        _glassQuality = glassQuality;
         PersonaViewModel = personaViewModel;
         RoutinesViewModel = routinesViewModel;
         ModelsViewModel = modelsViewModel;
@@ -43,16 +40,6 @@ public sealed partial class SettingsDialog : ContentDialog
     private async void SettingsDialog_Loaded(object sender, RoutedEventArgs e)
     {
         BackendText.Text = string.IsNullOrEmpty(_governor.ActiveBackend) ? "Offline" : _governor.ActiveBackend;
-        // Set before subscribing, so seeding the current mode doesn't count as a user change.
-        GlassQualityCombo.SelectedIndex = _glassQuality.Controller.Mode switch
-        {
-            GlassQualityMode.Full => 1,
-            GlassQualityMode.System => 2,
-            _ => 0,
-        };
-        GlassQualityCombo.SelectionChanged += GlassQuality_SelectionChanged;
-        // Same "set before subscribing" order as the combo above.
-        LiveCaptureToggle.IsOn = _glassQuality.LiveCaptureEnabled;
         ModelText.Text = _governor.ConfiguredModel;
 
         await PersonaViewModel.RefreshAsync();
@@ -75,21 +62,6 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             // leave default
         }
-    }
-
-    private void GlassQuality_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        _glassQuality.SetMode(GlassQualityCombo.SelectedIndex switch
-        {
-            1 => GlassQualityMode.Full,
-            2 => GlassQualityMode.System,
-            _ => GlassQualityMode.Auto,
-        });
-    }
-
-    private void LiveCapture_Toggled(object sender, RoutedEventArgs e)
-    {
-        _glassQuality.SetLiveCaptureEnabled(LiveCaptureToggle.IsOn);
     }
 
     /// <summary>

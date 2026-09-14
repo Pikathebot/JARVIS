@@ -196,21 +196,8 @@
             </StackPanel>
 
             <StackPanel Spacing="4">
-                <TextBlock Text="GLASS QUALITY" FontSize="11" Foreground="#64748B" />
-                <ComboBox x:Name="GlassQualityCombo" HorizontalAlignment="Stretch" SelectedIndex="0">
-                    <ComboBoxItem Content="Auto" />
-                    <ComboBoxItem Content="Full" />
-                    <ComboBoxItem Content="System" />
-                </ComboBox>
-            </StackPanel>
-
-            <StackPanel Spacing="4">
-                <ToggleSwitch x:Name="LiveCaptureToggle" Header="Live-capture glass (experimental)"
-                              OffContent="Off — designed material" OnContent="On — refracts the live desktop"
-                              Toggled="LiveCapture_Toggled" />
-                <TextBlock Text="Continuously captures the screen behind the window so glass panels refract what's actually on your desktop, including animated wallpapers. Uses extra GPU/CPU. Only active at Full glass quality."
-                           FontSize="11" Foreground="#64748B" TextWrapping="Wrap" />
-                <TextBlock Text="While on, Jarvis excludes itself from all screen capture — screen recorders, Zoom/Teams screen-share, and Xbox Game Bar won't be able to see this window either. Turn this off before sharing your screen."
+                <TextBlock Text="GLASS" FontSize="11" Foreground="#64748B" />
+                <TextBlock Text="The liquid-glass panels refract what is actually on your desktop. To do that Jarvis excludes its own windows from screen capture — screen recorders, Zoom/Teams screen-share and Xbox Game Bar will not see it."
                            FontSize="11" Foreground="#F59E0B" TextWrapping="Wrap" />
             </StackPanel>
 

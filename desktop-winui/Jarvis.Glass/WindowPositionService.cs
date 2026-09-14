@@ -9,7 +9,7 @@ namespace Jarvis_Glass;
 /// Tracks the live screen position of every registered top-level window, in raw display pixels, so
 /// <see cref="LiquidGlassCanvas"/> can crop a live-capture frame (which spans a whole display) by
 /// where the window *actually* is on screen rather than only where a panel sits within its own
-/// window. Shaped like <see cref="LiveCaptureService"/>/<see cref="WallpaperBitmapCache"/>: one
+/// window. Shaped like <see cref="WindowCaptureExclusion"/>: one
 /// shared static store, callers pull the latest value rather than having it pushed down through
 /// every panel's dependency-property chain.
 /// </summary>

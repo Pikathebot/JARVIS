@@ -98,6 +98,21 @@ public sealed class GlassHost : IDisposable
         window.Closed += (_, _) => Dispose();
 
         SyncToWindow();
+
+        // Capture access is requested only once the window has actually been activated: the
+        // consent prompt has to be shown over a visible window of ours, and a request made from
+        // a constructor (before Activate(), or for a HUD that starts hidden) comes back
+        // DeniedByUser without any prompt appearing.
+        window.Activated += OnFirstActivated;
+    }
+
+    private bool _captureRequested;
+
+    private void OnFirstActivated(object sender, WindowActivatedEventArgs args)
+    {
+        if (_captureRequested || args.WindowActivationState == WindowActivationState.Deactivated) return;
+        _captureRequested = true;
+        ((Window)sender).Activated -= OnFirstActivated;
         _ = StartCaptureAsync();
     }
 

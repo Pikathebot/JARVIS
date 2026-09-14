@@ -36,8 +36,6 @@ public sealed partial class MainWindow : Window
     /// Drives every glass panel's rendering tier from live telemetry. Owned here rather than in
     /// App because it needs the governor and awareness view-models, which this window creates.
     /// </summary>
-    public GlassQualityService GlassQuality { get; }
-
     /// <summary>The liquid-glass renderer behind this window (see GlassHost).</summary>
     public Jarvis_Glass.GlassHost Glass { get; }
 
@@ -59,10 +57,6 @@ public sealed partial class MainWindow : Window
         VoiceViewModel = new VoiceViewModel(api, dispatcher, "jarvis-main");
         ModelsViewModel = new ModelsViewModel(api, dispatcher);
 
-        // Still constructed for the Settings dialog's quality/live-capture rows, but no longer
-        // registered against the tree: the panels are GlassSlabs on the GlassHost now, not
-        // Win2D GlassPanels for it to govern.
-        GlassQuality = new GlassQualityService(AwarenessViewModel, GovernorViewModel);
 
         GovernorViewModel.PropertyChanged += (_, _) => UpdateGovernorPill();
         GovernorViewModel.Start();
@@ -378,7 +372,7 @@ public sealed partial class MainWindow : Window
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel, GlassQuality)
+        var dialog = new SettingsDialog(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel)
         {
             XamlRoot = Content.XamlRoot,
         };
