@@ -28,10 +28,9 @@ public sealed partial class HudWindow : Window
     private CancellationTokenSource? _telemetryCts;
     public VoiceViewModel VoiceViewModel { get; }
 
-    /// <summary>The HUD's glass card, so GlassQualityService can govern its tier alongside the
-    /// main window's panels. A Window is not a FrameworkElement in WinUI 3, so the tree walk has
-    /// to start from the content element rather than from the window itself.</summary>
-    public Microsoft.UI.Xaml.FrameworkElement GlassRoot => Card;
+    /// <summary>The liquid-glass renderer behind this window (see GlassHost). Created before the
+    /// window is first shown so the backdrop HWND exists and is owner-linked from the start.</summary>
+    public Jarvis_Glass.GlassHost Glass { get; }
 
     public HudWindow(JarvisApiClient api)
     {
@@ -64,6 +63,9 @@ public sealed partial class HudWindow : Window
         }
 
         _appWindow.Hide();
+
+        // Always-on-top glass behind an always-on-top HUD; not a taskbar window.
+        Glass = new Jarvis_Glass.GlassHost(this, topmost: true, showInTaskbar: false);
     }
 
     public void ToggleVisible()

@@ -12,10 +12,10 @@
     Title="Jarvis - Local AI Command Center"
     mc:Ignorable="d">
 
-    <Window.SystemBackdrop>
-        <DesktopAcrylicBackdrop />
-    </Window.SystemBackdrop>
-
+    <!--
+        No system backdrop: the window is hosted by a GlassHost (see MainWindow.xaml.cs), which
+        makes it transparent and renders every GlassSlab below as liquid glass behind it.
+    -->
     <Grid x:Name="RootGrid" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
@@ -70,9 +70,8 @@
                 <ColumnDefinition x:Name="RightPanelColumn" Width="0" />
             </Grid.ColumnDefinitions>
 
-            <!-- Sidebar: floating glass slab. ShaderEnabled opts this hero surface into Tier A. -->
-            <glass:GlassPanel Grid.Column="0" Margin="0,0,8,0" GlassCornerRadius="18" ShaderEnabled="True" LiveCaptureRequested="True" EdgeRefractionRequested="True">
-                <glass:GlassPanel.GlassContent>
+            <!-- Sidebar: floating glass slab. -->
+            <glass:GlassSlab Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="18">
                     <StackPanel Padding="16" Spacing="12">
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
 
@@ -125,8 +124,7 @@
                         <Button Content="Free VRAM" HorizontalAlignment="Stretch" Click="FreeVram_Click" />
                         <Button Content="Settings" HorizontalAlignment="Stretch" Click="Settings_Click" />
                     </StackPanel>
-                </glass:GlassPanel.GlassContent>
-            </glass:GlassPanel>
+            </glass:GlassSlab>
 
             <!-- Chat surface -->
             <Grid Grid.Column="1">
@@ -137,8 +135,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Header: session label, mode toggle, governor pill -->
-                <glass:GlassPanel Grid.Row="0" Margin="0,0,0,8" GlassCornerRadius="14" ShaderEnabled="True">
-                    <glass:GlassPanel.GlassContent>
+                <glass:GlassSlab Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="14">
                         <Grid Padding="16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -170,12 +167,10 @@
                                 <Button Content="Panel" Click="ToggleRightPanel_Click" />
                             </StackPanel>
                         </Grid>
-                    </glass:GlassPanel.GlassContent>
-                </glass:GlassPanel>
+                </glass:GlassSlab>
 
                 <!-- Message list -->
-                <glass:GlassPanel Grid.Row="1" GlassCornerRadius="18" ShaderEnabled="True">
-                    <glass:GlassPanel.GlassContent>
+                <glass:GlassSlab Grid.Row="1" SlabCornerRadius="18">
                         <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -213,12 +208,10 @@
                             </ListView.ItemTemplate>
                         </ListView>
                         </Grid>
-                    </glass:GlassPanel.GlassContent>
-                </glass:GlassPanel>
+                </glass:GlassSlab>
 
                 <!-- Composer -->
-                <glass:GlassPanel Grid.Row="2" Margin="0,8,0,0" GlassCornerRadius="14" ShaderEnabled="True">
-                    <glass:GlassPanel.GlassContent>
+                <glass:GlassSlab Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="14">
                         <StackPanel Padding="12" Spacing="6">
                             <ItemsControl x:Name="AttachmentChips">
                                 <ItemsControl.ItemsPanel>
@@ -252,8 +245,7 @@
                                     Click="SendButton_Click" />
                             </Grid>
                         </StackPanel>
-                    </glass:GlassPanel.GlassContent>
-                </glass:GlassPanel>
+                </glass:GlassSlab>
 
                 <!-- Awareness tray: floats above the composer, bottom-right of the chat column -->
                 <ContentControl
@@ -266,14 +258,12 @@
             </Grid>
 
             <!-- Right panel: overlay sheet with Artifacts + Files tabs -->
-            <glass:GlassPanel
+            <glass:GlassSlab
                 x:Name="RightPanel"
                 Grid.Column="2"
                 Margin="8,0,0,0"
-                GlassCornerRadius="18"
-                ShaderEnabled="True"
+                SlabCornerRadius="18"
                 Visibility="Collapsed">
-                <glass:GlassPanel.GlassContent>
                     <TabView IsAddTabButtonVisible="False" Background="Transparent">
                         <TabViewItem Header="Artifacts" IsClosable="False">
                             <Grid Padding="12">
@@ -389,8 +379,7 @@
                             </ScrollViewer>
                         </TabViewItem>
                     </TabView>
-                </glass:GlassPanel.GlassContent>
-            </glass:GlassPanel>
+            </glass:GlassSlab>
         </Grid>
     </Grid>
 </Window>

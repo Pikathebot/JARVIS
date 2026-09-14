@@ -38,6 +38,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public GlassQualityService GlassQuality { get; }
 
+    /// <summary>The liquid-glass renderer behind this window (see GlassHost).</summary>
+    public Jarvis_Glass.GlassHost Glass { get; }
+
     public MainWindow(JarvisApiClient api, ChatStreamClient streamClient, AwarenessStreamClient awarenessStream)
     {
         InitializeComponent();
@@ -56,9 +59,10 @@ public sealed partial class MainWindow : Window
         VoiceViewModel = new VoiceViewModel(api, dispatcher, "jarvis-main");
         ModelsViewModel = new ModelsViewModel(api, dispatcher);
 
+        // Still constructed for the Settings dialog's quality/live-capture rows, but no longer
+        // registered against the tree: the panels are GlassSlabs on the GlassHost now, not
+        // Win2D GlassPanels for it to govern.
         GlassQuality = new GlassQualityService(AwarenessViewModel, GovernorViewModel);
-        // Registered on Loaded: the visual tree has to exist before the panels can be found in it.
-        RootGrid.Loaded += (_, _) => GlassQuality.Register(RootGrid);
 
         GovernorViewModel.PropertyChanged += (_, _) => UpdateGovernorPill();
         GovernorViewModel.Start();
@@ -136,6 +140,8 @@ public sealed partial class MainWindow : Window
         _ = SessionsViewModel.RefreshAsync();
 
         ExtendTitleBar();
+        // Liquid glass behind this window: normal z-band, and it must stay a taskbar window.
+        Glass = new Jarvis_Glass.GlassHost(this, topmost: false, showInTaskbar: true);
 
         _hotkey = new GlobalHotkeyService();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);

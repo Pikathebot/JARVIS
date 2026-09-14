@@ -65,7 +65,6 @@ public partial class App : Application
             _mainWindow = new MainWindow(_api, chatStreamClient, awarenessStreamClient);
             _hudWindow = new HudWindow(_api);
             _mainWindow.Hud = _hudWindow;
-            _mainWindow.GlassQuality.Register(_hudWindow.GlassRoot);
             WindowPositionService.Register(_mainWindow);
             WindowPositionService.Register(_hudWindow);
             WindowCaptureExclusion.Register(_mainWindow);

@@ -1,0 +1,49 @@
+// CsWin32 generation config. Enumerate exactly the Win32 surface this project needs, growing
+// phase by phase rather than pulling in the whole Win32 metadata surface.
+// Phase 0: trivial smoke-test call.
+GetSystemMetrics
+// Phase 1: window creation / click-through / DWM blur-behind sequence.
+CreateWindowEx
+DefWindowProc
+RegisterClassEx
+LoadCursor
+GetModuleHandle
+ShowWindow
+SetLayeredWindowAttributes
+DwmEnableBlurBehindWindow
+DestroyWindow
+PostQuitMessage
+GetMessage
+TranslateMessage
+DispatchMessage
+SetWindowLong
+GetWindowLong
+SetWindowPos
+IDC_ARROW
+WM_NCHITTEST
+WM_DESTROY
+DWM_BB_ENABLE
+HRGN
+SetWindowDisplayAffinity
+GetWindowRect
+GetSystemMetrics
+SetTimer
+KillTimer
+WM_TIMER
+WM_WINDOWPOSCHANGED
+WM_DISPLAYCHANGE
+SetWindowLongPtr
+CallWindowProc
+// Phase 8: empty blur region for the WinUI overlay (see ControlOverlayWindow ctor).
+CreateRectRgn
+DeleteObject
+DWM_BB_BLURREGION
+// GlassHost: keep the glass HWND locked to a WinUI window's client rect and visibility.
+GetClientRect
+ClientToScreen
+IsIconic
+IsWindowVisible
+GetWindowLongPtr
+WS_EX_APPWINDOW
+GetWindowLongPtr
+GWL_EXSTYLE

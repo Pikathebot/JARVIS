@@ -31,9 +31,11 @@ public static class WindowCaptureExclusion
 
     /// <summary>Call once per top-level window (MainWindow, HudWindow) after construction, same as
     /// <see cref="WindowPositionService.Register"/>.</summary>
-    public static void Register(Window window)
+    public static void Register(Window window) => Register(WinRT.Interop.WindowNative.GetWindowHandle(window));
+
+    /// <summary>Raw-HWND form for the glass backdrop windows <see cref="GlassHost"/> creates.</summary>
+    public static void Register(IntPtr hwnd)
     {
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
         if (!_hwnds.Contains(hwnd))
         {
             _hwnds.Add(hwnd);

@@ -9,9 +9,12 @@
     Title="Jarvis HUD"
     mc:Ignorable="d">
 
-    <glass:GlassPanel x:Name="Card" GlassCornerRadius="24" ShaderEnabled="True">
-        <glass:GlassPanel.GlassContent>
-            <Grid Padding="16,12" PointerPressed="Card_PointerPressed">
+    <!--
+        The card is a liquid-glass slab rendered BEHIND this window by its GlassHost; the XAML
+        here only draws the chrome and text on top of a transparent backdrop.
+    -->
+    <glass:GlassSlab x:Name="Card" SlabCornerRadius="24">
+            <Grid Padding="16,12" Background="Transparent" PointerPressed="Card_PointerPressed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -38,6 +41,5 @@
                     <TextBlock x:Name="GpuRing" Text="GPU --%" Foreground="#FBBF24" FontSize="11" />
                 </StackPanel>
             </Grid>
-        </glass:GlassPanel.GlassContent>
-    </glass:GlassPanel>
+    </glass:GlassSlab>
 </Window>
