@@ -52,15 +52,26 @@ public sealed partial class GlassToggle : UserControl
         // the rail right up into the lens's edge, a crisp (unblurred) lightly-whitened interior,
         // a thin bright outline and a blue-ish chromatic fringe.
         public static float LiftScale = 1.35f;
+        /// <summary>The toggle thumb's own lift scale. The slider's thumb lifts over a thin rail
+        /// and shows the card through it; the toggle's sits inside an opaque track, so at the
+        /// slider's 1.35 it only shows refracted track and never reads as clear glass -- it has to
+        /// overhang the track to show what is behind.</summary>
+        public static float ToggleLiftScale = 1.35f;
         public static float LiftTint = 0.16f;
+        /// <summary>Toggle thumb's lifted tint -- fully clear, since over an opaque track any
+        /// white wash just reads as a paler puck.</summary>
+        public static float ToggleLiftTint = 0f;
         public static float LiftSpecular = 1.1f;
         public static float LiftShadow = 0.30f;
         public static float LiftShadowRadius = 12f;
         // Refraction is sized so the outer edge pulls the rail's edge just to the lens edge
         // (half-height minus rail half-thickness); more than that wraps the rail into a loop
         // inside the lens that reads as a second outline.
-        public static float LiftBezelFraction = 0.7f;
-        public static float LiftRefraction = 16f;
+        public static float LiftBezelFraction = 0.27f;
+        /// <summary>Toggle thumb: no refracting rim at all (the shaders clamp the band to 1px),
+        /// so the lifted thumb is a clear flat window onto the track.</summary>
+        public static float ToggleLiftBezelFraction = 0f;
+        public static float LiftRefraction = 19.2f;
         public static float LiftChromatic = 0.04f;
         public static float LiftBlur = 0f;
 
@@ -82,6 +93,7 @@ public sealed partial class GlassToggle : UserControl
             if (weak.TryGetTarget(out var toggle)) toggle.PublishShapes();
         }
         GlassSlider.RepublishAll();
+        GlassButton.RepublishAll();
     }
 
     // Spring for the thumb's travel (0 = off, 1 = on) and its press scale.
@@ -212,7 +224,11 @@ public sealed partial class GlassToggle : UserControl
         dt = Math.Clamp(dt, 0.001f, 0.05f);
 
         var travelTarget = _dragging ? _dragTarget : (IsOn ? 1f : 0f);
-        var liftTarget = _pressed ? 1f : 0f;
+        // Stay lifted for the whole slide, not just while the pointer is down: a tap releases
+        // within a frame or two, so a press-only lift never gets past a few percent and the thumb
+        // crosses as an opaque puck. iOS keeps the lens up until the thumb has landed.
+        var travelling = Math.Abs(_travel - travelTarget) > 0.03f || Math.Abs(_travelVelocity) > 0.5f;
+        var liftTarget = _pressed || travelling ? 1f : 0f;
 
         Spring(ref _travel, ref _travelVelocity, travelTarget, dt);
         Spring(ref _lift, ref _liftVelocity, liftTarget, dt);
@@ -264,7 +280,7 @@ public sealed partial class GlassToggle : UserControl
         var thumbCenter = new Vector2(thumbX, trackCenter.Y);
 
         var m = Math.Max(_lift, Material.ForceLift); // rest -> lift blend
-        var thumbRadius = ThumbRadius * (Material.RestScale + (Material.LiftScale - Material.RestScale) * m) * scale;
+        var thumbRadius = ThumbRadius * (Material.RestScale + (Material.ToggleLiftScale - Material.RestScale) * m) * scale;
 
         // Apple's lifted thumb elongates along its direction of travel while moving and relaxes
         // back to a circle as it settles -- driven straight off the spring's velocity.
@@ -276,12 +292,12 @@ public sealed partial class GlassToggle : UserControl
         GlassShapeRegistry.Publish(this,
             GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
                 Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, trackColor, 1f),
-            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
+            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * Material.ToggleLiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.LiftRefraction * m * scale,
                 specularIntensity: Material.RestSpecular + (Material.LiftSpecular - Material.RestSpecular) * m,
                 layer: 3,
                 tintColor: Vector3.One,
-                tintAmount: Material.RestTint + (Material.LiftTint - Material.RestTint) * m,
+                tintAmount: Material.RestTint + (Material.ToggleLiftTint - Material.RestTint) * m,
                 blurRadius: Material.LiftBlur * m * scale,
                 chromatic: Material.LiftChromatic * m,
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,

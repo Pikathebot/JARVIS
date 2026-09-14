@@ -18,29 +18,10 @@
             Spacing="8"
             Padding="12"
             Background="Transparent"
-            Width="300">
+            Width="560">
             <Button x:Name="TestButton"
                     Content="GlassLab test button"
                     Click="TestButton_Click" />
-
-            <!--
-                Toggles GlassRenderer.Profile between Squircle (panels) and Lip (kube.io's
-                switch/slider bezel: convex outside, concave middle). See BezelProfileMath.cs.
-            -->
-            <ToggleSwitch x:Name="LipProfileToggle"
-                          Header="Lip bezel profile (kube.io switch)"
-                          OffContent="Squircle"
-                          OnContent="Lip"
-                          Toggled="LipProfileToggle_Toggled" />
-
-            <StackPanel Spacing="4">
-                <TextBlock Text="Bezel width" Foreground="White" FontSize="12" />
-                <Slider x:Name="BezelWidthSlider"
-                        Minimum="4"
-                        Maximum="120"
-                        StepFrequency="1"
-                        ValueChanged="BezelWidthSlider_ValueChanged" />
-            </StackPanel>
 
             <!-- The first real liquid-glass control: track + thumb are shapes drawn by the renderer. -->
             <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
@@ -53,9 +34,26 @@
                 <TextBlock x:Name="DemoSliderLabel" Text="35%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
 
+            <!-- Glass buttons: clear pill with a lens rim, and the accent-filled variant. -->
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <local:GlassButton x:Name="DemoButton" Text="Glass" Click="DemoButton_Click" />
+                <local:GlassButton x:Name="DemoAccentButton" Text="Accent" IsAccent="True" Click="DemoButton_Click" />
+                <TextBlock x:Name="DemoButtonLabel" Text="clicks: 0" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+            </StackPanel>
+
             <!-- Toggle material tuning: rows are generated in code-behind from a table. -->
-            <TextBlock Text="Toggle material" Foreground="#AAFFFFFF" FontSize="11" Margin="0,6,0,0" />
-            <StackPanel x:Name="TuningPanel" Spacing="2" />
+            <Grid Margin="0,6,0,0">
+                <TextBlock Text="Toggle material" Foreground="#AAFFFFFF" FontSize="11" VerticalAlignment="Center" />
+                <Button x:Name="ResetTuningButton" Content="Reset to defaults" FontSize="11" Padding="8,2" HorizontalAlignment="Right" Click="ResetTuningButton_Click" />
+            </Grid>
+            <Grid x:Name="TuningPanel" ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel x:Name="TuningColumnLeft" Spacing="2" />
+                <StackPanel x:Name="TuningColumnRight" Grid.Column="1" Spacing="2" />
+            </Grid>
 
             <StackPanel Spacing="4">
                 <TextBlock Text="Corner radius" Foreground="White" FontSize="12" />

@@ -37,19 +37,41 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>
-    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, LipProfileToggle, BezelWidthSlider, CornerRadiusSlider, DemoToggle, DemoSlider }
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, ResetTuningButton, CornerRadiusSlider, DemoToggle, DemoSlider, DemoButton, DemoAccentButton }
         .Concat(_tuningSliders).ToArray();
 
     private readonly List<FrameworkElement> _tuningSliders = new();
+
+    /// <summary>Every tunable's value as it was before the user touched anything, captured the
+    /// first time the panel is built -- the Material statics have no other record of their
+    /// code defaults once a slider has overwritten them.</summary>
+    private float[]? _tuningDefaults;
+    private float _cornerRadiusDefault;
+
+    private void ResetTuningButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tuningDefaults is null) return;
+        for (var i = 0; i < ToggleTunables.Length; i++)
+        {
+            ToggleTunables[i].Set(_tuningDefaults[i]);
+        }
+        GlassToggle.MaterialChanged();
+        // Rebuilding re-reads each getter, so the sliders show the restored values.
+        BuildTuningPanel();
+        CornerRadiusSlider.Value = _cornerRadiusDefault;
+    }
 
     /// <summary>One row per tunable of GlassToggle.Material: label, min, max, getter, setter.</summary>
     private static readonly (string Label, float Min, float Max, Func<float> Get, Action<float> Set)[] ToggleTunables =
     {
         ("Force lift (debug)", 0f, 1f, () => GlassToggle.Material.ForceLift, v => GlassToggle.Material.ForceLift = v),
-        ("Lift scale", 1f, 1.8f, () => GlassToggle.Material.LiftScale, v => GlassToggle.Material.LiftScale = v),
-        ("Lift tint", 0f, 1f, () => GlassToggle.Material.LiftTint, v => GlassToggle.Material.LiftTint = v),
+        ("Slider lift scale", 1f, 1.8f, () => GlassToggle.Material.LiftScale, v => GlassToggle.Material.LiftScale = v),
+        ("Toggle lift scale", 1f, 2.4f, () => GlassToggle.Material.ToggleLiftScale, v => GlassToggle.Material.ToggleLiftScale = v),
+        ("Slider lift tint", 0f, 1f, () => GlassToggle.Material.LiftTint, v => GlassToggle.Material.LiftTint = v),
+        ("Toggle lift tint", 0f, 1f, () => GlassToggle.Material.ToggleLiftTint, v => GlassToggle.Material.ToggleLiftTint = v),
         ("Lift refraction", 0f, 40f, () => GlassToggle.Material.LiftRefraction, v => GlassToggle.Material.LiftRefraction = v),
-        ("Lift bezel frac", 0.1f, 1f, () => GlassToggle.Material.LiftBezelFraction, v => GlassToggle.Material.LiftBezelFraction = v),
+        ("Slider lift bezel frac", 0f, 1f, () => GlassToggle.Material.LiftBezelFraction, v => GlassToggle.Material.LiftBezelFraction = v),
+        ("Toggle lift bezel frac", 0f, 1f, () => GlassToggle.Material.ToggleLiftBezelFraction, v => GlassToggle.Material.ToggleLiftBezelFraction = v),
         ("Lift chromatic", 0f, 0.5f, () => GlassToggle.Material.LiftChromatic, v => GlassToggle.Material.LiftChromatic = v),
         ("Lift specular", 0f, 2.5f, () => GlassToggle.Material.LiftSpecular, v => GlassToggle.Material.LiftSpecular = v),
         ("Lift blur px", 0f, 8f, () => GlassToggle.Material.LiftBlur, v => GlassToggle.Material.LiftBlur = v),
@@ -59,12 +81,27 @@ public sealed partial class ControlOverlayWindow : Window
         ("Shadow radius", 0f, 20f, () => GlassToggle.Material.RestShadowRadius, v => GlassToggle.Material.RestShadowRadius = v),
         ("Track specular", 0f, 2f, () => GlassToggle.Material.TrackSpecular, v => GlassToggle.Material.TrackSpecular = v),
         ("Slider thumb aspect", 0.6f, 2.2f, () => GlassSlider.Material.ThumbAspect, v => GlassSlider.Material.ThumbAspect = v),
+        ("Button refraction", 0f, 24f, () => GlassButton.Material.RestRefraction, v => GlassButton.Material.RestRefraction = v),
+        ("Button bezel frac", 0.1f, 1f, () => GlassButton.Material.BezelFraction, v => GlassButton.Material.BezelFraction = v),
+        ("Button tint", 0f, 0.6f, () => GlassButton.Material.RestTint, v => GlassButton.Material.RestTint = v),
+        ("Button specular", 0f, 2.5f, () => GlassButton.Material.RestSpecular, v => GlassButton.Material.RestSpecular = v),
+        ("Button lift scale", 1f, 1.3f, () => GlassButton.Material.LiftScale, v => GlassButton.Material.LiftScale = v),
+        ("Button lift refr", 0f, 30f, () => GlassButton.Material.LiftRefraction, v => GlassButton.Material.LiftRefraction = v),
     };
 
+    /// <summary>Two columns: the row count outgrew the 600px window with the button tunables.</summary>
     private void BuildTuningPanel()
     {
-        foreach (var (label, min, max, get, set) in ToggleTunables)
+        _tuningDefaults ??= ToggleTunables.Select(t => t.Get()).ToArray();
+        _tuningSliders.Clear();
+        var columns = new[] { TuningColumnLeft, TuningColumnRight };
+        columns[0].Children.Clear();
+        columns[1].Children.Clear();
+        var half = (ToggleTunables.Length + 1) / 2;
+        for (var i = 0; i < ToggleTunables.Length; i++)
         {
+            var (label, min, max, get, set) = ToggleTunables[i];
+            var column = columns[i < half ? 0 : 1];
             var row = new Microsoft.UI.Xaml.Controls.Grid { ColumnSpacing = 8 };
             row.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new GridLength(110) });
             row.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -83,7 +120,7 @@ public sealed partial class ControlOverlayWindow : Window
             Microsoft.UI.Xaml.Controls.Grid.SetColumn(slider, 1);
             row.Children.Add(text);
             row.Children.Add(slider);
-            TuningPanel.Children.Add(row);
+            column.Children.Add(row);
             _tuningSliders.Add(slider);
         }
     }
@@ -98,9 +135,8 @@ public sealed partial class ControlOverlayWindow : Window
         DemoSlider.Value = 0.35;
         Card.LayoutUpdated += (_, _) => PublishCardShape();
         Card.Loaded += (_, _) => PublishCardShape();
-        BezelWidthSlider.Value = _renderer.BezelWidth;
+        _cornerRadiusDefault = _renderer.CornerRadius;
         CornerRadiusSlider.Value = _renderer.CornerRadius;
-        LipProfileToggle.IsOn = _renderer.Profile == GlassBezelProfile.Lip;
 
         var hwndValue = WinRT.Interop.WindowNative.GetWindowHandle(this);
         _hwnd = (HWND)hwndValue;
@@ -168,37 +204,6 @@ public sealed partial class ControlOverlayWindow : Window
         }
     }
 
-    /// <summary>kube.io's own switch/slider pills read at roughly a 32px-tall track: corner
-    /// radius = half the track height (a true pill), bezel band a bit over a third of that radius
-    /// so the concave inner lobe has room to read as concave rather than degenerating into a
-    /// point. The panel/squircle numbers (48/36) were tuned for this window's own ~900x600 body
-    /// and are proportionally far too heavy for a control-scale bezel.</summary>
-    private const float LipCornerRadius = 16f;
-    private const float LipBezelWidth = 7f;
-    private const float SquircleCornerRadius = 48f;
-    private const float SquircleBezelWidth = 36f;
-
-    /// <summary>Flips GlassRenderer.Profile live and swaps in the profile-appropriate bezel
-    /// defaults -- no explicit redraw call needed, since the window's own render timer
-    /// (App.StartCaptureAsync, ~12fps once live capture is flowing) picks up the new values on
-    /// its next tick.</summary>
-    private void LipProfileToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        _renderer.Profile = LipProfileToggle.IsOn ? GlassBezelProfile.Lip : GlassBezelProfile.Squircle;
-        _renderer.CornerRadius = LipProfileToggle.IsOn ? LipCornerRadius : SquircleCornerRadius;
-        _renderer.BezelWidth = LipProfileToggle.IsOn ? LipBezelWidth : SquircleBezelWidth;
-
-        // Reflects the auto-picked defaults back into the sliders rather than leaving them stale
-        // -- without this the sliders would silently disagree with what the renderer is actually
-        // using until the user drags one themselves.
-        CornerRadiusSlider.Value = _renderer.CornerRadius;
-        BuildTuningPanel();
-        DemoSlider.Value = 0.35;
-        Card.LayoutUpdated += (_, _) => PublishCardShape();
-        Card.Loaded += (_, _) => PublishCardShape();
-        BezelWidthSlider.Value = _renderer.BezelWidth;
-    }
-
     /// <summary>The control card as a glass slab: frosted, dark-tinted, on layer 1 so the
     /// controls (layers 2+) refract it rather than being covered by it.</summary>
     private void PublishCardShape()
@@ -219,14 +224,17 @@ public sealed partial class ControlOverlayWindow : Window
         DemoSliderLabel.Text = $"{DemoSlider.Value * 100:0}%";
     }
 
+    private int _demoClicks;
+
+    private void DemoButton_Click(object sender, RoutedEventArgs e)
+    {
+        _demoClicks++;
+        DemoButtonLabel.Text = $"clicks: {_demoClicks}";
+    }
+
     private void DemoToggle_Toggled(object sender, RoutedEventArgs e)
     {
         DemoToggleLabel.Text = DemoToggle.IsOn ? "Glass toggle: on" : "Glass toggle: off";
-    }
-
-    private void BezelWidthSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        _renderer.BezelWidth = (float)e.NewValue;
     }
 
     private void CornerRadiusSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)

@@ -43,7 +43,7 @@ internal sealed class GlassRenderer : IDisposable
     private readonly ID3D11BlendState _screenBlendState;
 
     /// <summary>Bezel profile of the panel shape (shape 0). Tunable live from ControlOverlayWindow.</summary>
-    public GlassBezelProfile Profile { get; set; } = GlassBezelProfile.Squircle;
+    public GlassBezelProfile Profile { get; set; } = GlassBezelProfile.Lip;
 
     private ID3D11Texture2D? _displacementTexture;
     private ID3D11RenderTargetView? _displacementRtv;
@@ -53,8 +53,8 @@ internal sealed class GlassRenderer : IDisposable
 
     /// <summary>Panel-shape material, tunable at runtime from the overlay's sliders. Controls
     /// carry their own parameters in the shapes they publish.</summary>
-    public float CornerRadius { get; set; } = 48f;
-    public float BezelWidth { get; set; } = 36f;
+    public float CornerRadius { get; set; } = 16f;
+    public float BezelWidth { get; set; } = 16f;
     public float RefractionScale { get; set; } = 28f;
 
     /// <summary>Fixed light direction (normalized), pointing from the glass surface toward the
