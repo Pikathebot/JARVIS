@@ -37,7 +37,7 @@ public sealed partial class ControlOverlayWindow : Window
     /// <summary>Hit-tested against WM_NCHITTEST -- every interactive control needs an entry here
     /// or clicks fall through to the desktop underneath, per the "maintained hit-region list" the
     /// Phase 7 plan called for once more than one control existed.</summary>
-    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, ResetTuningButton, CornerRadiusSlider, DemoToggle, DemoSlider, DemoButton, DemoAccentButton }
+    private FrameworkElement[] HitRegions => new FrameworkElement[] { TestButton, ResetTuningButton, CornerRadiusSlider, DemoToggle, DemoSlider, DemoButton, DemoAccentButton, DemoTextField, DemoSegmented }
         .Concat(_tuningSliders).ToArray();
 
     private readonly List<FrameworkElement> _tuningSliders = new();
@@ -236,6 +236,11 @@ public sealed partial class ControlOverlayWindow : Window
     {
         _demoClicks++;
         DemoButtonLabel.Text = $"clicks: {_demoClicks}";
+    }
+
+    private void DemoSegmented_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        DemoSegmentedLabel.Text = DemoSegmented.SelectedIndex.ToString();
     }
 
     private void DemoToggle_Toggled(object sender, RoutedEventArgs e)

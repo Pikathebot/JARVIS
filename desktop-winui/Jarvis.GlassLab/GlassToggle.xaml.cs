@@ -94,6 +94,8 @@ public sealed partial class GlassToggle : UserControl
         }
         GlassSlider.RepublishAll();
         GlassButton.RepublishAll();
+        GlassTextField.RepublishAll();
+        GlassSegmented.RepublishAll();
     }
 
     // Spring for the thumb's travel (0 = off, 1 = on) and its press scale.

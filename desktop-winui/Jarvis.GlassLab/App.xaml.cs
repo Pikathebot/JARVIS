@@ -48,7 +48,7 @@ public partial class App : Application
             _window = new GlassWindow();
             _window.Create();
 
-            _d3d = new D3D11Context(900, 600);
+            _d3d = new D3D11Context(960, 760);
             _composition = new CompositionContext(_d3d.DxgiDevice, _window.HandleValue, _d3d.SwapChain);
             _capture = new LiveCaptureSource(_d3d);
             _capture.FirstFrameReceived += () =>

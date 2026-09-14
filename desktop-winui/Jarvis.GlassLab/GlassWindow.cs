@@ -129,7 +129,7 @@ internal sealed unsafe class GlassWindow
             ClassName,
             "Jarvis GlassLab",
             WINDOW_STYLE.WS_POPUP,
-            100, 100, 900, 600,
+            100, 100, 960, 760,
             HWND.Null,
             null,
             hInstance,

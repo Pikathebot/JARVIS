@@ -41,6 +41,15 @@
                 <TextBlock x:Name="DemoButtonLabel" Text="clicks: 0" Foreground="White" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
 
+            <!-- Glass text field: a real TextBox on a glass pill; focus lifts it. -->
+            <local:GlassTextField x:Name="DemoTextField" Placeholder="Ask Jarvis..." HorizontalAlignment="Stretch" />
+
+            <!-- Segmented control: grey track, white pill that lifts into glass while it slides. -->
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <local:GlassSegmented x:Name="DemoSegmented" Items="Artifacts|Files|Context|Activity" Width="360" SelectionChanged="DemoSegmented_SelectionChanged" />
+                <TextBlock x:Name="DemoSegmentedLabel" Text="0" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+            </StackPanel>
+
             <!-- Toggle material tuning: rows are generated in code-behind from a table. -->
             <Grid Margin="0,6,0,0">
                 <TextBlock Text="Toggle material" Foreground="#AAFFFFFF" FontSize="11" VerticalAlignment="Center" />
