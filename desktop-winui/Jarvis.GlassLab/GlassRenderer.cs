@@ -17,6 +17,9 @@ namespace Jarvis_GlassLab;
 /// When a layer carries a frosted shape, a separable Gaussian pre-pass (GaussianBlur.hlsl, H then
 /// V through two scratch textures) blurs that layer's source once at the largest frost radius on
 /// the layer, and pass 2 samples the blurred copy for frosted pixels.
+/// Text a control publishes through <see cref="GlassTextRegistry"/> is rasterised by
+/// <see cref="GlassContentSurface"/> into a per-layer texture and source-over composited onto the
+/// layer right after its rim pass (Composite.hlsl), so the layers above refract it.
 /// </summary>
 internal sealed class GlassRenderer : IDisposable
 {
@@ -28,6 +31,8 @@ internal sealed class GlassRenderer : IDisposable
     private readonly ID3D11PixelShader _refractionPs;
     private readonly ID3D11PixelShader _specularRimPs;
     private readonly ID3D11PixelShader _blurPs;
+    private readonly ID3D11PixelShader _compositePs;
+    private readonly GlassContentSurface _content;
 
     private readonly ID3D11SamplerState _pointSampler;
     private readonly ID3D11SamplerState _linearSampler;
@@ -55,6 +60,7 @@ internal sealed class GlassRenderer : IDisposable
     public float BlurSigmaPerRadius { get; set; } = 0.5f;
 
     private readonly ID3D11BlendState _screenBlendState;
+    private readonly ID3D11BlendState _overBlendState;
 
     /// <summary>Bezel profile of the panel shape (shape 0). Tunable live from ControlOverlayWindow.</summary>
     public GlassBezelProfile Profile { get; set; } = GlassBezelProfile.Lip;
@@ -86,6 +92,7 @@ internal sealed class GlassRenderer : IDisposable
         var refractionPath = Path.Combine(shaderDir, "Refraction.hlsl");
         var specularRimPath = Path.Combine(shaderDir, "SpecularRim.hlsl");
         var blurPath = Path.Combine(shaderDir, "GaussianBlur.hlsl");
+        var compositePath = Path.Combine(shaderDir, "Composite.hlsl");
 
         // All three passes draw the same full-screen triangle, so one VS compiled from
         // DisplacementField.hlsl covers all of them - the other two shader files only supply a
@@ -95,6 +102,8 @@ internal sealed class GlassRenderer : IDisposable
         _refractionPs = ShaderPipeline.CreatePixelShader(_device, refractionPath, "PSMain");
         _specularRimPs = ShaderPipeline.CreatePixelShader(_device, specularRimPath, "PSMain");
         _blurPs = ShaderPipeline.CreatePixelShader(_device, blurPath, "PSMain");
+        _compositePs = ShaderPipeline.CreatePixelShader(_device, compositePath, "PSMain");
+        _content = new GlassContentSurface(_device);
 
         var screenBlendDesc = BlendDescription.Opaque;
         screenBlendDesc.RenderTarget[0] = new RenderTargetBlendDescription
@@ -111,6 +120,21 @@ internal sealed class GlassRenderer : IDisposable
             RenderTargetWriteMask = ColorWriteEnable.All,
         };
         _screenBlendState = _device.CreateBlendState(screenBlendDesc);
+
+        // Premultiplied source-over for the text content textures.
+        var overBlendDesc = BlendDescription.Opaque;
+        overBlendDesc.RenderTarget[0] = new RenderTargetBlendDescription
+        {
+            BlendEnable = true,
+            SourceBlend = Blend.One,
+            DestinationBlend = Blend.InverseSourceAlpha,
+            BlendOperation = BlendOperation.Add,
+            SourceBlendAlpha = Blend.One,
+            DestinationBlendAlpha = Blend.InverseSourceAlpha,
+            BlendOperationAlpha = BlendOperation.Add,
+            RenderTargetWriteMask = ColorWriteEnable.All,
+        };
+        _overBlendState = _device.CreateBlendState(overBlendDesc);
 
         _pointSampler = _device.CreateSamplerState(new SamplerDescription
         {
@@ -210,14 +234,18 @@ internal sealed class GlassRenderer : IDisposable
         _displacementSrv = _device.CreateShaderResourceView(_displacementTexture);
     }
 
-    public void Draw(ID3D11RenderTargetView backBufferRtv, ID3D11ShaderResourceView captureSrv, Vector4 uvRect, int width, int height, ReadOnlySpan<GlassShape> shapes)
+    public void Draw(ID3D11RenderTargetView backBufferRtv, ID3D11ShaderResourceView captureSrv, Vector4 uvRect, int width, int height, ReadOnlySpan<GlassShape> shapes, ReadOnlySpan<GlassText> texts)
     {
+        // D2D first: it clobbers pipeline state, and the content textures must be finished before
+        // any layer composites them.
+        _content.Draw(width, height, texts);
+
         // EnsureLayerTargets keys off the same size fields EnsureDisplacementTarget updates, so it
         // must run first.
         EnsureLayerTargets(width, height);
         EnsureDisplacementTarget(width, height);
 
-        var layerCount = 1;
+        var layerCount = Math.Max(1, _content.MaxLayer + 1);
         foreach (var shape in shapes)
         {
             layerCount = Math.Max(layerCount, (int)shape.Params2.Y + 1);
@@ -295,6 +323,17 @@ internal sealed class GlassRenderer : IDisposable
             _context.PSSetConstantBuffer(1, _shapeConstants);
             _context.Draw(3, 0);
             _context.OMSetBlendState(null);
+
+            // Pass 4 (only if a control put text on this layer): source-over the content texture.
+            if (_content.HasContent(layer))
+            {
+                _context.OMSetBlendState(_overBlendState);
+                _context.PSSetShader(_compositePs);
+                _context.PSSetShaderResource(1, _content.Srv(layer));
+                _context.Draw(3, 0);
+                _context.OMSetBlendState(null);
+                _context.PSSetShaderResource(1, null);
+            }
 
             // The layer target becomes the next layer's source; release it as a render target.
             _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
@@ -395,6 +434,9 @@ internal sealed class GlassRenderer : IDisposable
             _blurRtvs[i]?.Dispose();
             _blurTextures[i]?.Dispose();
         }
+        _content.Dispose();
+        _overBlendState.Dispose();
+        _compositePs.Dispose();
         _screenBlendState.Dispose();
         _blurConstants.Dispose();
         _shapeConstants.Dispose();

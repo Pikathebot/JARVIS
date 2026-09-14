@@ -6,22 +6,8 @@
     MinWidth="96"
     Height="40">
     <!--
-        The glass slab is a renderer shape (see GlassToggle.xaml); only the label lives in XAML,
-        sitting above the glass. It scales with the press lift so it reads as part of the slab.
+        Slab and caption are both drawn by the renderer (the caption as GlassText on the slab's
+        layer); this is only the transparent hit-test surface for the pointer handlers.
     -->
-    <Grid x:Name="Root" Background="Transparent" Padding="18,0">
-        <TextBlock x:Name="Label"
-                   Foreground="White"
-                   FontSize="14"
-                   FontWeight="SemiBold"
-                   TextLineBounds="Tight"
-                   Margin="0,1,0,0"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   RenderTransformOrigin="0.5,0.5">
-            <TextBlock.RenderTransform>
-                <ScaleTransform x:Name="LabelScale" />
-            </TextBlock.RenderTransform>
-        </TextBlock>
-    </Grid>
+    <Grid x:Name="Root" Background="Transparent" />
 </UserControl>

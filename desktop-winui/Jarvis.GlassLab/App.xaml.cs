@@ -392,7 +392,7 @@ public partial class App : Application
         var shapes = new GlassShape[1 + controlShapes.Length];
         shapes[0] = _renderer.PanelShape(_d3d.Width, _d3d.Height);
         controlShapes.CopyTo(shapes, 1);
-        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes);
+        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes, GlassTextRegistry.Snapshot());
 
         // Debug hooks, checked every ~half second, not every tick: "dump.txt" next to the exe
         // requests one raw frame dump (see D3D11Context.DumpBackBuffer); "dimprobe.txt" runs the

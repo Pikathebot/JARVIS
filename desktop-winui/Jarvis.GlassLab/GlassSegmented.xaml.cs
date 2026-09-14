@@ -11,8 +11,10 @@ namespace Jarvis_GlassLab;
 /// The iOS 26 segmented control: an opaque light-grey capsule track (layer 2) with the selected
 /// segment marked by a white pill (layer 3) that is the toggle's thumb material stretched to a
 /// segment -- opaque with a soft shadow at rest, lifting into a clear glass lens while pressed or
-/// travelling, so it refracts the labels and track it slides across. Tap a segment to select it;
-/// press and drag to carry the pill along, release snaps to the nearest segment.
+/// travelling, so it refracts the labels and track it slides across. The labels are drawn by the
+/// renderer (<see cref="GlassText"/> on the track's layer, beneath the pill) rather than by XAML,
+/// which is what lets the lens bend them. Tap a segment to select it; press and drag to carry the
+/// pill along, release snaps to the nearest segment.
 /// </summary>
 public sealed partial class GlassSegmented : UserControl
 {
@@ -25,11 +27,12 @@ public sealed partial class GlassSegmented : UserControl
         public static float TrackBezel = 3f;
         public static float TrackRefraction = 1.5f;
         public static float TrackSpecular = 0.2f;
-        /// <summary>The selected pill grows by this factor when lifted. Note the lens has nothing
-        /// to visibly bend yet: the track is flat opaque grey and the labels are XAML drawn above
-        /// the renderer. The port renders labels into a glass-layer content texture (DirectWrite)
-        /// so the lens distorts the text as iOS does -- not done in the lab.</summary>
+        /// <summary>The selected pill grows by this factor when lifted.</summary>
         public static float LiftScale = 1.12f;
+        public static float LabelSize = 13f;
+        /// <summary>Label grey on the track and near-black under the pill.</summary>
+        public static float LabelRestValue = 0.42f;
+        public static float LabelSelectedValue = 0.10f;
         public static float LiftRefraction = 10f;
         public static float LiftBezelFraction = 0.5f;
     }
@@ -48,7 +51,7 @@ public sealed partial class GlassSegmented : UserControl
     private const float Stiffness = 600f;
     private const float Damping = 30f;
 
-    private readonly List<TextBlock> _labels = new();
+    private string[] _labels = Array.Empty<string>();
     private float _travel;        // continuous selected index
     private float _travelVelocity;
     private float _lift, _liftVelocity;
@@ -80,7 +83,7 @@ public sealed partial class GlassSegmented : UserControl
 
     public event RoutedEventHandler? SelectionChanged;
 
-    private int Count => Math.Max(1, _labels.Count);
+    private int Count => Math.Max(1, _labels.Length);
 
     public GlassSegmented()
     {
@@ -90,7 +93,7 @@ public sealed partial class GlassSegmented : UserControl
         Instances.Add(new WeakReference<GlassSegmented>(this));
 
         Loaded += (_, _) => { PublishShapes(); StartAnimating(); };
-        Unloaded += (_, _) => { StopAnimating(); GlassShapeRegistry.Remove(this); };
+        Unloaded += (_, _) => { StopAnimating(); GlassShapeRegistry.Remove(this); GlassTextRegistry.Remove(this); };
         LayoutUpdated += (_, _) => PublishShapes();
 
         PointerPressed += OnPointerPressed;
@@ -102,42 +105,8 @@ public sealed partial class GlassSegmented : UserControl
 
     private void RebuildLabels()
     {
-        Root.Children.Clear();
-        Root.ColumnDefinitions.Clear();
-        _labels.Clear();
-        var items = (Items ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < items.Length; i++)
-        {
-            Root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var label = new TextBlock
-            {
-                Text = items[i].Trim(),
-                FontSize = 13,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                TextLineBounds = TextLineBounds.Tight,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                IsHitTestVisible = false,
-            };
-            Grid.SetColumn(label, i);
-            Root.Children.Add(label);
-            _labels.Add(label);
-        }
-        UpdateLabelColors();
-    }
-
-    /// <summary>Selected label reads dark on the white pill, the rest a muted grey on the track;
-    /// blended by how close the pill currently is to each segment so the swap happens as the pill
-    /// arrives rather than snapping ahead of it.</summary>
-    private void UpdateLabelColors()
-    {
-        for (var i = 0; i < _labels.Count; i++)
-        {
-            var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
-            var v = 0.42f - 0.32f * near; // 0.42 grey -> 0.10 near-black
-            var b = (byte)(v * 255);
-            _labels[i].Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, b, b, b));
-        }
+        _labels = (Items ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToArray();
+        PublishShapes();
     }
 
     private void OnSelectedIndexChanged()
@@ -220,7 +189,6 @@ public sealed partial class GlassSegmented : UserControl
         Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.SpringStiffness, GlassToggle.SpringDamping);
 
         PublishShapes();
-        UpdateLabelColors();
 
         var settled = !_pressed
                    && Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
@@ -230,7 +198,6 @@ public sealed partial class GlassSegmented : UserControl
             _travel = travelTarget; _travelVelocity = 0f;
             _lift = liftTarget; _liftVelocity = 0f;
             PublishShapes();
-            UpdateLabelColors();
             StopAnimating();
         }
     }
@@ -289,5 +256,28 @@ public sealed partial class GlassSegmented : UserControl
                 shadowStrength: T.RestShadow + (T.LiftShadow - T.RestShadow) * m,
                 shadowRadius: (T.RestShadowRadius + (T.LiftShadowRadius - T.RestShadowRadius) * m) * scale,
                 shadowOffsetY: T.ShadowOffsetY * scale));
+
+        // Labels on the track's layer so the pill (one layer up) refracts them. The selected
+        // label reads dark on the white pill, the rest a muted grey on the track, blended by how
+        // close the pill currently is to each segment so the swap happens as the pill arrives
+        // rather than snapping ahead of it. At rest the pill is opaque, so the label beneath it
+        // would vanish: a dark copy is drawn on the pill's own layer (on top of it) and fades out
+        // as the pill lifts into clear glass, handing over to the refracted copy underneath.
+        var texts = new List<GlassText>(_labels.Length * 2);
+        for (var i = 0; i < _labels.Length; i++)
+        {
+            var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
+            var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
+            var at = new Vector2(left + segW * (i + 0.5f), centerY);
+            var size = Material.LabelSize * scale;
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: 2));
+            var onPill = near * (1f - m);
+            if (onPill > 0.002f)
+            {
+                var d = Material.LabelSelectedValue;
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: 3));
+            }
+        }
+        GlassTextRegistry.Publish(this, texts.ToArray());
     }
 }

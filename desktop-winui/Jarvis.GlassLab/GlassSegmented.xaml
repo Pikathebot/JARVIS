@@ -5,8 +5,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Height="36">
     <!--
-        Track and selected pill are renderer shapes; only the labels live here, one equal column
-        per segment (built in code-behind from Items). Background="Transparent" so it hit-tests.
+        Track, selected pill AND the labels are all drawn by the renderer (the labels as GlassText
+        under the pill so the lens bends them); nothing lives here but a transparent hit-test
+        surface for the pointer handlers.
     -->
     <Grid x:Name="Root" Background="Transparent" />
 </UserControl>

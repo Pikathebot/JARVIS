@@ -49,6 +49,9 @@ public sealed partial class GlassButton : UserControl
         public static float LiftShadowRadius = 14f;
 
         public static float ShadowOffsetY = 2f;
+
+        public static float LabelSize = 14f;
+        public static Vector4 LabelColor = Vector4.One;
     }
 
     private static readonly List<WeakReference<GlassButton>> Instances = new();
@@ -74,7 +77,7 @@ public sealed partial class GlassButton : UserControl
     private long _lastTick;
 
     public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
-        nameof(Text), typeof(string), typeof(GlassButton), new PropertyMetadata("Button", (d, e) => ((GlassButton)d).Label.Text = (string)e.NewValue));
+        nameof(Text), typeof(string), typeof(GlassButton), new PropertyMetadata("Button", (d, _) => ((GlassButton)d).PublishShape()));
 
     public string Text
     {
@@ -98,11 +101,10 @@ public sealed partial class GlassButton : UserControl
     public GlassButton()
     {
         InitializeComponent();
-        Label.Text = Text;
         Instances.Add(new WeakReference<GlassButton>(this));
 
         Loaded += (_, _) => { PublishShape(); StartAnimating(); };
-        Unloaded += (_, _) => { StopAnimating(); GlassShapeRegistry.Remove(this); };
+        Unloaded += (_, _) => { StopAnimating(); GlassShapeRegistry.Remove(this); GlassTextRegistry.Remove(this); };
         LayoutUpdated += (_, _) => PublishShape();
 
         PointerEntered += (_, _) => { _pointerOver = true; StartAnimating(); };
@@ -207,7 +209,6 @@ public sealed partial class GlassButton : UserControl
 
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift); // rest -> lift blend
         var grow = 1f + (Material.LiftScale - 1f) * m;
-        LabelScale.ScaleX = LabelScale.ScaleY = grow;
 
         var center = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
         var half = new Vector2((float)bounds.Width * 0.5f, PillHeight * 0.5f) * scale * grow;
@@ -229,5 +230,10 @@ public sealed partial class GlassButton : UserControl
                 shadowStrength: Material.RestShadow + (Material.LiftShadow - Material.RestShadow) * m,
                 shadowRadius: (Material.RestShadowRadius + (Material.LiftShadowRadius - Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: Material.ShadowOffsetY * scale));
+
+        // Caption on the button's own layer: composited after the slab, so it sits on the glass
+        // (not bent by it) and scales with the lift like part of the slab.
+        GlassTextRegistry.Publish(this,
+            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: 2));
     }
 }
