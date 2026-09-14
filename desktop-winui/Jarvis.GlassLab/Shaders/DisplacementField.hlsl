@@ -151,6 +151,15 @@ float RefractionMagnitude(float t, float profile)
 
 // The shape on the active layer this pixel belongs to: the one it is deepest inside of (smallest
 // signed distance), so overlapping shapes on one layer resolve to the innermost. -1 if none.
+
+// 1px anti-aliased coverage from the signed distance: 1 inside, 0 half a pixel outside the
+// outline, linear across the edge pixel. The hard sdf <= 0 test drew every puck and pill with
+// stair-stepped edges (the slider thumb read as an octagon).
+float Coverage(float sdf)
+{
+    return saturate(0.5 - sdf);
+}
+
 int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR)
 {
     int count = (int)Header.x;
@@ -168,7 +177,7 @@ int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
         float sdf = RoundRectSdf(p, halfSize, r);
-        if (sdf <= 0.0 && sdf < bestSdf)
+        if (sdf <= 0.5 && sdf < bestSdf) // half a pixel outside too: see Coverage()
         {
             bestSdf = sdf; best = s; outSdf = sdf; outP = p; outR = r;
         }
@@ -188,6 +197,7 @@ float4 PSMain(VSOutput i) : SV_TARGET
     }
 
     float blur = Shapes[s].Params2.w;
+    float coverage = Coverage(sdf);
     float bezel = max(1.0, min(Shapes[s].Params.y, r));
     if (sdf < -bezel)
     {
@@ -202,5 +212,5 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float u = saturate((-sdf) / bezel);
     float mag = RefractionMagnitude(u, Shapes[s].Params.z) / Shapes[s].Params2.z;
     float2 normal = SdfGradient(p, Shapes[s].CenterHalfSize.zw, r);
-    return float4(-normal * mag * Shapes[s].Params.w, 1.0, blur);
+    return float4(-normal * mag * Shapes[s].Params.w, coverage, blur);
 }

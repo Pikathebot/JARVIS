@@ -67,11 +67,11 @@ public sealed partial class GlassToggle : UserControl
         // Refraction is sized so the outer edge pulls the rail's edge just to the lens edge
         // (half-height minus rail half-thickness); more than that wraps the rail into a loop
         // inside the lens that reads as a second outline.
-        public static float LiftBezelFraction = 0.27f;
+        public static float LiftBezelFraction = 0.48f;
         /// <summary>Toggle thumb: no refracting rim at all (the shaders clamp the band to 1px),
         /// so the lifted thumb is a clear flat window onto the track.</summary>
         public static float ToggleLiftBezelFraction = 0f;
-        public static float LiftRefraction = 19.2f;
+        public static float LiftRefraction = 14.8f;
         public static float LiftChromatic = 0.04f;
         public static float LiftBlur = 0f;
 

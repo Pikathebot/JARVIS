@@ -94,6 +94,15 @@ float2 SdfGradient(float2 p, float2 halfSize, float r)
     return len > 1e-6 ? g / len : float2(0.0, -1.0);
 }
 
+
+// 1px anti-aliased coverage from the signed distance: 1 inside, 0 half a pixel outside the
+// outline, linear across the edge pixel. The hard sdf <= 0 test drew every puck and pill with
+// stair-stepped edges (the slider thumb read as an octagon).
+float Coverage(float sdf)
+{
+    return saturate(0.5 - sdf);
+}
+
 int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR)
 {
     int count = (int)Header.x;
@@ -111,7 +120,7 @@ int FindShape(float2 pixelPos, out float outSdf, out float2 outP, out float outR
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
         float sdf = RoundRectSdf(p, halfSize, r);
-        if (sdf <= 0.0 && sdf < bestSdf)
+        if (sdf <= 0.5 && sdf < bestSdf) // half a pixel outside too: see Coverage()
         {
             bestSdf = sdf; best = s; outSdf = sdf; outP = p; outR = r;
         }
@@ -168,6 +177,6 @@ float4 PSMain(VSOutput i) : SV_TARGET
     rim *= saturate(tilt * 3.0);
     float edgeFalloff = pow(t, 8.0);
 
-    float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x;
+    float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x * Coverage(sdf);
     return float4(saturate(rimColor), 0.0);
 }

@@ -83,7 +83,7 @@ int FindShape(float2 pixelPos, out float outSdf)
         float2 p = pixelPos - Shapes[s].CenterHalfSize.xy;
         float r = min(Shapes[s].Params.x, min(halfSize.x, halfSize.y));
         float sdf = RoundRectSdf(p, halfSize, r);
-        if (sdf <= 0.0 && sdf < bestSdf)
+        if (sdf <= 0.5 && sdf < bestSdf) // half a pixel outside too: see Coverage()
         {
             bestSdf = sdf; best = s; outSdf = sdf;
         }
@@ -143,16 +143,18 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float4 field = DisplacementTexture.SampleLevel(PointSampler, i.Uv, 0);
     float2 pixelPos = i.Uv * WindowSize;
 
-    if (field.z < 0.5)
+    // field.z is the shape's anti-aliased coverage (see DisplacementField.hlsl Coverage): the
+    // passthrough is what shows through the fractional edge pixel, so it's computed whenever
+    // coverage is less than 1, not only for fully uncovered pixels.
+    float coverage = field.z;
+    float4 through = float4(0.0, 0.0, 0.0, 0.0);
+    if (coverage < 1.0 && SourceIsCapture < 0.5)
     {
-        // Uncovered on this layer.
-        if (SourceIsCapture > 0.5)
-        {
-            return float4(0.0, 0.0, 0.0, 0.0);
-        }
-        float4 through = SourceTexture.SampleLevel(LinearSampler, i.Uv, 0);
-        float shade = ShadowAt(pixelPos);
-        through.rgb *= 1.0 - shade;
+        through = SourceTexture.SampleLevel(LinearSampler, i.Uv, 0);
+        through.rgb *= 1.0 - ShadowAt(pixelPos);
+    }
+    if (coverage <= 0.0)
+    {
         return through;
     }
 
@@ -186,6 +188,8 @@ float4 PSMain(VSOutput i) : SV_TARGET
 
     // Force alpha=1: a covered pixel fully replaces what's behind it -- and capture textures
     // typically carry alpha=0, which under this swapchain's premultiplied mode would otherwise
-    // composite as invisible.
-    return float4(color, 1.0);
+    // composite as invisible. Blending by coverage against the (premultiplied) passthrough is
+    // what anti-aliases the outline; on layer 0 the passthrough is transparent, so edge pixels
+    // come out as premultiplied partial alpha.
+    return lerp(through, float4(color, 1.0), coverage);
 }

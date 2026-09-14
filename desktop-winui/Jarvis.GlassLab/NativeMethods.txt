@@ -34,3 +34,7 @@ WM_WINDOWPOSCHANGED
 WM_DISPLAYCHANGE
 SetWindowLongPtr
 CallWindowProc
+// Phase 8: empty blur region for the WinUI overlay (see ControlOverlayWindow ctor).
+CreateRectRgn
+DeleteObject
+DWM_BB_BLURREGION

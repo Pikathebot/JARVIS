@@ -117,12 +117,23 @@ internal sealed class LiveCaptureSource : IDisposable
     /// (WDA_EXCLUDEFROMCAPTURE on this same window) is painting its own region black.</summary>
     public void LogRegionPixel(int x, int y, string label, bool frozen = false)
     {
+        var px = ReadPixel(x, y, frozen);
+        if (px is { } v)
+        {
+            Diag($"LogRegionPixel[{label}]{(frozen ? " (frozen)" : " (live)")}: at capture-px ({x},{y}) (B,G,R,A)=({v.B},{v.G},{v.R},{v.A})");
+        }
+    }
+
+    /// <summary>Reads one pixel of the live (or frozen) capture texture. A GPU->CPU readback, so
+    /// diagnostics only -- never on the render path.</summary>
+    public (byte B, byte G, byte R, byte A)? ReadPixel(int x, int y, bool frozen = false)
+    {
         ID3D11Texture2D? snapshot;
         lock (_gate)
         {
             snapshot = frozen ? _frozenTexture : _sharedTexture;
         }
-        if (snapshot is null) return;
+        if (snapshot is null) return null;
 
         try
         {
@@ -146,7 +157,7 @@ internal sealed class LiveCaptureSource : IDisposable
             lock (_gate)
             {
                 var source = frozen ? _frozenTexture : _sharedTexture;
-                if (source is null) return;
+                if (source is null) return null;
                 srcBox = new Vortice.Mathematics.Box((int)cx, (int)cy, 0, (int)(cx + size), (int)(cy + size), 1);
                 _d3d.ImmediateContext.CopySubresourceRegion(staging, 0, 0, 0, 0, source, 0, srcBox);
             }
@@ -157,11 +168,7 @@ internal sealed class LiveCaptureSource : IDisposable
                 unsafe
                 {
                     var row = (byte*)mapped.DataPointer;
-                    var b = row[0];
-                    var g = row[1];
-                    var r = row[2];
-                    var a = row[3];
-                    Diag($"LogRegionPixel[{label}]{(frozen ? " (frozen)" : " (live)")}: at capture-px ({cx},{cy}) (B,G,R,A)=({b},{g},{r},{a})");
+                    return (row[0], row[1], row[2], row[3]);
                 }
             }
             finally
@@ -171,7 +178,8 @@ internal sealed class LiveCaptureSource : IDisposable
         }
         catch (Exception ex)
         {
-            Diag($"LogRegionPixel[{label}] threw: {ex}");
+            Diag($"ReadPixel threw: {ex}");
+            return null;
         }
     }
 

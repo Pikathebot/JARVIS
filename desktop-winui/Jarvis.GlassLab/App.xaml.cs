@@ -312,6 +312,73 @@ public partial class App : Application
 
     private int _loggedFrameCount = -1;
     private int _dumpPollCounter;
+    private bool _dimProbeInFlight;
+
+    /// <summary>
+    /// Instrument for the "faint global dim" (2026-09-14): the panel interior is meant to be an
+    /// identity copy of the backdrop, so at interior points away from the bezel and the card,
+    /// composite-on-screen minus clean-backdrop is the total dim, and the same reading with the
+    /// overlay hidden attributes it between the glass renderer and the WinUI overlay. The only
+    /// way to read the composite is to briefly un-exclude both windows from capture (so the live
+    /// frame includes them); the render timer is paused meanwhile so the glass can't feed back
+    /// on itself and compound whatever dim there is. ~0.5s, logged, then everything restored.
+    /// </summary>
+    private async Task MeasureDimAsync()
+    {
+        if (_window is null || _overlay is null || _capture is null || _d3d is null || !_captureReady) return;
+        _dimProbeInFlight = true;
+        try
+        {
+            var itemSize = _capture.ItemSize;
+            var originX = (int)(_uvRect.X * itemSize.Width);
+            var originY = (int)(_uvRect.Y * itemSize.Height);
+            // Right-hand third of the window, clear of the card (which sits at the left) and well
+            // inside the 16px bezel.
+            var points = new (int X, int Y)[]
+            {
+                (originX + (int)(_d3d.Width * 0.85), originY + (int)(_d3d.Height * 0.30)),
+                (originX + (int)(_d3d.Width * 0.85), originY + (int)(_d3d.Height * 0.50)),
+                (originX + (int)(_d3d.Width * 0.85), originY + (int)(_d3d.Height * 0.70)),
+                (originX + (int)(_d3d.Width * 0.70), originY + (int)(_d3d.Height * 0.90)),
+            };
+
+            _window.StopRenderTimer();
+            var clean = points.Select(p => _capture.ReadPixel(p.X, p.Y)).ToArray();
+
+            WindowCaptureExclusion.SetExcluded(_window.Handle, false);
+            WindowCaptureExclusion.SetExcluded(_overlay.Handle, false);
+            await Task.Delay(200);
+            var composite = points.Select(p => _capture.ReadPixel(p.X, p.Y)).ToArray();
+
+            _overlay.SetVisible(false);
+            await Task.Delay(200);
+            var glassOnly = points.Select(p => _capture.ReadPixel(p.X, p.Y)).ToArray();
+
+            _overlay.SetVisible(true);
+            WindowCaptureExclusion.SetExcluded(_window.Handle, true);
+            WindowCaptureExclusion.SetExcluded(_overlay.Handle, true);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"[{DateTimeOffset.Now:O}] [dimprobe] clean backdrop vs composite (glass+overlay) vs glass alone, (B,G,R):");
+            for (var i = 0; i < points.Length; i++)
+            {
+                static string F((byte B, byte G, byte R, byte A)? p) => p is { } v ? $"({v.B},{v.G},{v.R})" : "n/a";
+                static string D((byte B, byte G, byte R, byte A)? a, (byte B, byte G, byte R, byte A)? b) =>
+                    a is { } x && b is { } y ? $"({y.B - x.B:+0;-0;0},{y.G - x.G:+0;-0;0},{y.R - x.R:+0;-0;0})" : "n/a";
+                sb.AppendLine($"  pt{i} @({points[i].X},{points[i].Y}): clean={F(clean[i])} composite={F(composite[i])} d={D(clean[i], composite[i])}  glassOnly={F(glassOnly[i])} d={D(clean[i], glassOnly[i])}");
+            }
+            File.AppendAllText(_logPath, sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(_logPath, $"[{DateTimeOffset.Now:O}] [dimprobe] threw: {ex}\n");
+        }
+        finally
+        {
+            _window?.StartRenderTimer(16);
+            _dimProbeInFlight = false;
+        }
+    }
 
     private void RenderTick()
     {
@@ -327,8 +394,9 @@ public partial class App : Application
         controlShapes.CopyTo(shapes, 1);
         _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes);
 
-        // Debug hook: a "dump.txt" next to the exe requests one raw frame dump (see
-        // D3D11Context.DumpBackBuffer); checked every ~half second, not every tick.
+        // Debug hooks, checked every ~half second, not every tick: "dump.txt" next to the exe
+        // requests one raw frame dump (see D3D11Context.DumpBackBuffer); "dimprobe.txt" runs the
+        // global-dim measurement (see MeasureDimAsync).
         if (++_dumpPollCounter % 30 == 0)
         {
             var trigger = Path.Combine(AppContext.BaseDirectory, "dump.txt");
@@ -336,6 +404,12 @@ public partial class App : Application
             {
                 File.Delete(trigger);
                 _d3d.DumpBackBuffer(Path.Combine(AppContext.BaseDirectory, $"frame-{_d3d.Width}x{_d3d.Height}.bgra"));
+            }
+            var probe = Path.Combine(AppContext.BaseDirectory, "dimprobe.txt");
+            if (File.Exists(probe) && !_dimProbeInFlight)
+            {
+                File.Delete(probe);
+                _ = MeasureDimAsync();
             }
         }
 

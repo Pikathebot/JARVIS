@@ -212,6 +212,10 @@ public sealed partial class GlassSlider : UserControl
         var fillW = Math.Max(2f * railHalfH, fillEnd - left);
         var fillCenter = new Vector2(left + fillW * 0.5f, centerY);
         var fillHalf = new Vector2(fillW * 0.5f, railHalfH);
+        // At 0% there is nothing to fill: the rail-height minimum above exists so the capsule
+        // keeps its round cap while shrinking, but published at zero it left a blue dot under
+        // the thumb's left edge.
+        var hasFill = fillEnd - left > 0.5f;
 
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
         var thumbRadius = ThumbRadius * (GlassToggle.Material.RestScale + (GlassToggle.Material.LiftScale - GlassToggle.Material.RestScale) * m) * scale;
@@ -219,12 +223,17 @@ public sealed partial class GlassSlider : UserControl
         var thumbHalf = new Vector2(thumbRadius * Material.ThumbAspect * (1f + stretch), thumbRadius);
         var thumbCenter = new Vector2(thumbX, centerY);
 
-        GlassShapeRegistry.Publish(this,
+        var shapes = new List<GlassShape>(3)
+        {
             GlassShape.Create(railCenter, railHalf, railHalfH, Material.RailBezel * scale, GlassBezelProfile.Lip,
                 2f * scale, Material.RailSpecular, layer: 2, Material.RailColor, 1f),
-            GlassShape.Create(fillCenter, fillHalf, railHalfH, Material.RailBezel * scale, GlassBezelProfile.Lip,
-                2f * scale, Material.RailSpecular, layer: 3, Material.FillColor, 1f),
-            GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * GlassToggle.Material.LiftBezelFraction, GlassBezelProfile.Lens,
+        };
+        if (hasFill)
+        {
+            shapes.Add(GlassShape.Create(fillCenter, fillHalf, railHalfH, Material.RailBezel * scale, GlassBezelProfile.Lip,
+                2f * scale, Material.RailSpecular, layer: 3, Material.FillColor, 1f));
+        }
+        shapes.Add(GlassShape.Create(thumbCenter, thumbHalf, thumbRadius, thumbRadius * GlassToggle.Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: GlassToggle.Material.LiftRefraction * m * scale,
                 specularIntensity: GlassToggle.Material.RestSpecular + (GlassToggle.Material.LiftSpecular - GlassToggle.Material.RestSpecular) * m,
                 layer: 4,
@@ -235,5 +244,6 @@ public sealed partial class GlassSlider : UserControl
                 shadowStrength: GlassToggle.Material.RestShadow + (GlassToggle.Material.LiftShadow - GlassToggle.Material.RestShadow) * m,
                 shadowRadius: (GlassToggle.Material.RestShadowRadius + (GlassToggle.Material.LiftShadowRadius - GlassToggle.Material.RestShadowRadius) * m) * scale,
                 shadowOffsetY: GlassToggle.Material.ShadowOffsetY * scale));
+        GlassShapeRegistry.Publish(this, shapes.ToArray());
     }
 }

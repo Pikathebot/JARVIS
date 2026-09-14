@@ -161,18 +161,24 @@ public sealed partial class ControlOverlayWindow : Window
         // without making this a child window (which would clip it to the parent's bounds).
         PInvoke.SetWindowLongPtr(_hwnd, WINDOW_LONG_PTR_INDEX.GWLP_HWNDPARENT, ownerHwndValue);
 
-        // Same DWM trick GlassWindow uses for its raw HWND: enabling blur-behind with no region
-        // makes DWM honour the window's per-pixel alpha, so the areas the XAML tree leaves
-        // transparent (see TransparentBackdrop) actually show the glass window beneath instead of
-        // being filled opaque black. Without this the transparent backdrop brush alone does
-        // nothing visible.
+        // Same DWM trick GlassWindow uses for its raw HWND: enabling blur-behind makes DWM honour
+        // the window's per-pixel alpha, so the areas the XAML tree leaves transparent (see
+        // TransparentBackdrop) actually show the glass window beneath instead of being filled
+        // opaque black. Without this the transparent backdrop brush alone does nothing visible.
+        //
+        // The region must be EMPTY, not null (2026-09-14): a null region means "the whole
+        // window", and since Windows 8 DWM draws the blur region as a translucent dark tint
+        // rather than a blur -- measured here as a uniform x0.75 veil over the glass (the
+        // "faint global dim"). An empty rect region keeps the alpha handling and tints nothing.
+        var emptyRegion = PInvoke.CreateRectRgn(0, 0, -1, -1);
         var blurBehind = new Windows.Win32.Graphics.Dwm.DWM_BLURBEHIND
         {
-            dwFlags = PInvoke.DWM_BB_ENABLE,
+            dwFlags = PInvoke.DWM_BB_ENABLE | PInvoke.DWM_BB_BLURREGION,
             fEnable = true,
-            hRgnBlur = Windows.Win32.Graphics.Gdi.HRGN.Null,
+            hRgnBlur = emptyRegion,
         };
         PInvoke.DwmEnableBlurBehindWindow(_hwnd, in blurBehind);
+        PInvoke.DeleteObject(emptyRegion);
 
         SubclassWndProc();
     }
