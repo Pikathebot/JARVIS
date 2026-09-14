@@ -199,7 +199,7 @@ public sealed partial class GlassTextField : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
 
         var m = Math.Max(_focus, GlassToggle.Material.ForceLift);
         var grow = 1f + (Material.FocusScale - 1f) * m;

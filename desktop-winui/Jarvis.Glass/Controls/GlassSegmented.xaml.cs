@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using B = Jarvis_Glass.GlassButton.Material;
 using T = Jarvis_Glass.GlassToggle.Material;
 
 namespace Jarvis_Glass;
@@ -23,16 +24,17 @@ public sealed partial class GlassSegmented : UserControl
 
     public static class Material
     {
-        public static Vector3 TrackColor = new(0.914f, 0.914f, 0.922f);
-        public static float TrackBezel = 3f;
-        public static float TrackRefraction = 1.5f;
-        public static float TrackSpecular = 0.2f;
+        // Jarvis's dark shell: the track is the clear-glass button slab and the selected pill the
+        // accent button's fill (both from GlassButton.Material), labels white -- not iOS's opaque
+        // light-grey capsule the lab reproduced.
+        public static float PillRestTintAmount => B.AccentTintAmount;
+        public static float PillLiftTintAmount => B.AccentTintAmount * 0.8f;
         /// <summary>The selected pill grows by this factor when lifted.</summary>
         public static float LiftScale = 1.12f;
         public static float LabelSize = 13f;
         /// <summary>Label grey on the track and near-black under the pill.</summary>
-        public static float LabelRestValue = 0.42f;
-        public static float LabelSelectedValue = 0.10f;
+        public static float LabelRestValue = 0.72f;
+        public static float LabelSelectedValue = 1.0f;
         public static float LiftRefraction = 10f;
         public static float LiftBezelFraction = 0.5f;
     }
@@ -227,7 +229,7 @@ public sealed partial class GlassSegmented : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
 
         var left = (float)bounds.X * scale;
         var width = (float)bounds.Width * scale;
@@ -247,14 +249,16 @@ public sealed partial class GlassSegmented : UserControl
         var pillRadius = pillHalf.Y;
 
         _scene.Publish(this,
-            GlassShape.Create(trackCenter, trackHalf, trackRadius, Material.TrackBezel * scale, GlassBezelProfile.Lip,
-                Material.TrackRefraction * scale, Material.TrackSpecular, layer: 2, Material.TrackColor, 1f),
+            GlassShape.Create(trackCenter, trackHalf, trackRadius, trackRadius * B.BezelFraction, GlassBezelProfile.Lens,
+                B.RestRefraction * scale, B.RestSpecular, layer: 2, B.ClearTint, B.RestTint,
+                shadowStrength: B.RestShadow, shadowRadius: B.RestShadowRadius * scale, shadowOffsetY: B.ShadowOffsetY * scale,
+                edgeRing: B.RestEdgeRing, secondLight: T.SecondLight),
             GlassShape.Create(pillCenter, pillHalf, pillRadius, pillRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.LiftRefraction * m * scale,
                 specularIntensity: T.RestSpecular + (T.LiftSpecular - T.RestSpecular) * m,
                 layer: 3,
-                tintColor: Vector3.One,
-                tintAmount: T.RestTint + (T.LiftTint - T.RestTint) * m,
+                tintColor: B.AccentTint,
+                tintAmount: Material.PillRestTintAmount + (Material.PillLiftTintAmount - Material.PillRestTintAmount) * m,
                 chromatic: T.LiftChromatic * m,
                 shadowStrength: T.RestShadow + (T.LiftShadow - T.RestShadow) * m,
                 shadowRadius: (T.RestShadowRadius + (T.LiftShadowRadius - T.RestShadowRadius) * m) * scale,

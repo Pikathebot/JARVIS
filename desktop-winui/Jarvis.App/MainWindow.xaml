@@ -127,17 +127,17 @@
                                             <TextBlock x:Name="GovernorBackendRow" Text="Backend: —" FontSize="12" Foreground="#CBD5E1" />
                                             <TextBlock x:Name="GovernorModelRow" Text="Model: —" FontSize="12" Foreground="#CBD5E1" />
                                             <TextBlock x:Name="GovernorStatusRow" Text="Status: —" FontSize="12" Foreground="#CBD5E1" />
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Button x:Name="GovernorPauseButton" Content="Pause Governor" Click="GovernorPause_Click" />
-                                                <Button Content="Resume Governor" Click="GovernorResume_Click" />
-                                            </StackPanel>
                                         </StackPanel>
                                     </Flyout>
                                 </Button.Flyout>
                             </Button>
                             <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="MicButton" Content="🎙" FontSize="14" Padding="8,4" Click="MicButton_Click" />
+                                <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). -->
+                                <TextBlock Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                                <glass:GlassToggle x:Name="GovernorToggle" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
+                                <TextBlock Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <glass:GlassToggle x:Name="MicToggle" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
                                 <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
                                 <glass:GlassButton Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>
@@ -239,8 +239,23 @@
                 Margin="8,0,0,0"
                 SlabCornerRadius="18"
                 Visibility="Collapsed">
-                    <TabView IsAddTabButtonVisible="False" Background="Transparent">
-                        <TabViewItem Header="Artifacts" IsClosable="False">
+                    <!--
+                        Tabs are a GlassSegmented (labels rendered inside the glass, the pill
+                        refracts them as it slides); the pages below are plain grids switched
+                        by SelectedIndex in code-behind.
+                    -->
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="12,12,12,0">
+                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Reasoning|Context|Activity" SelectionChanged="RightPanelTabs_SelectionChanged" />
+                            <!-- Reasoning-is-streaming badge, top-right of the tab strip. -->
+                            <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="#06B6D4" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0" Visibility="Collapsed" />
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <Grid x:Name="ArtifactsPage" Visibility="Visible">
                             <Grid Padding="12">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -278,8 +293,8 @@
                                         IsTextSelectionEnabled="True" />
                                 </ScrollViewer>
                             </Grid>
-                        </TabViewItem>
-                        <TabViewItem Header="Files" IsClosable="False">
+                            </Grid>
+                            <Grid x:Name="FilesPage" Visibility="Collapsed">
                             <Grid Padding="12">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -298,22 +313,15 @@
                                     </ListView.ItemTemplate>
                                 </ListView>
                             </Grid>
-                        </TabViewItem>
-                        <TabViewItem IsClosable="False">
-                            <TabViewItem.Header>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock Text="Reasoning" />
-                                    <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="#06B6D4"
-                                             VerticalAlignment="Center" Visibility="Collapsed" />
-                                </StackPanel>
-                            </TabViewItem.Header>
+                            </Grid>
+                            <Grid x:Name="ReasoningPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <TextBlock x:Name="ReasoningText" Text="No reasoning for this turn yet."
                                            TextWrapping="Wrap" FontSize="12" Foreground="#94A3B8"
                                            FontFamily="Cascadia Mono, Consolas, monospace" />
                             </ScrollViewer>
-                        </TabViewItem>
-                        <TabViewItem Header="Context" IsClosable="False">
+                            </Grid>
+                            <Grid x:Name="ContextPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <StackPanel Spacing="10">
                                     <TextBlock x:Name="ContextBudgetHeader" Text="No turn yet" Foreground="White" FontSize="13" FontWeight="SemiBold" />
@@ -341,8 +349,8 @@
                                     </ItemsControl>
                                 </StackPanel>
                             </ScrollViewer>
-                        </TabViewItem>
-                        <TabViewItem Header="Activity" IsClosable="False">
+                            </Grid>
+                            <Grid x:Name="ActivityPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <ItemsControl x:Name="ActivityStepsList">
                                     <ItemsControl.ItemsPanel>
@@ -352,8 +360,9 @@
                                     </ItemsControl.ItemsPanel>
                                 </ItemsControl>
                             </ScrollViewer>
-                        </TabViewItem>
-                    </TabView>
+                            </Grid>
+                        </Grid>
+                    </Grid>
             </glass:GlassSlab>
         </Grid>
     </Grid>

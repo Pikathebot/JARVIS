@@ -191,7 +191,7 @@ public sealed partial class GlassSlider : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
 
         var centerY = (float)(bounds.Y + bounds.Height * 0.5) * scale;
         var left = (float)bounds.X * scale;

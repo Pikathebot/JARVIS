@@ -196,11 +196,12 @@ public sealed partial class MainWindow : Window
         GovernorStatusRow.Text = $"Status: {GovernorPillText.Text}" + (GovernorViewModel.Throttled ? " (high load)" : "");
     }
 
-    private async void GovernorPause_Click(object sender, RoutedEventArgs e) =>
-        await GovernorViewModel.PauseAsync("User requested manual pause");
-
-    private async void GovernorResume_Click(object sender, RoutedEventArgs e) =>
-        await GovernorViewModel.ResumeAsync();
+    private async void GovernorToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (GovernorViewModel is null) return; // IsOn="True" in XAML fires this inside InitializeComponent
+        if (GovernorToggle.IsOn) await GovernorViewModel.ResumeAsync();
+        else await GovernorViewModel.PauseAsync("User requested manual pause");
+    }
 
     private void RefreshActivityList()
     {
@@ -270,6 +271,15 @@ public sealed partial class MainWindow : Window
     {
         var text = _boundReasoningMessage?.ReasoningContent;
         ReasoningText.Text = string.IsNullOrEmpty(text) ? "No reasoning for this turn yet." : text;
+    }
+
+    private void RightPanelTabs_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        var pages = new[] { ArtifactsPage, FilesPage, ReasoningPage, ContextPage, ActivityPage };
+        for (var i = 0; i < pages.Length; i++)
+        {
+            pages[i].Visibility = i == RightPanelTabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void UpdateReasoningBadge()
@@ -377,15 +387,20 @@ public sealed partial class MainWindow : Window
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();
 
-    private async void MicButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Set while the switch is being synced FROM the view model, so the Toggled it
+    /// raises doesn't start/stop the mic a second time.</summary>
+    private bool _syncingMicToggle;
+
+    private async void MicToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (VoiceViewModel.IsActive)
-        {
-            VoiceViewModel.Stop();
-        }
-        else
+        if (_syncingMicToggle) return;
+        if (MicToggle.IsOn && !VoiceViewModel.IsActive)
         {
             await VoiceViewModel.StartAsync();
+        }
+        else if (!MicToggle.IsOn && VoiceViewModel.IsActive)
+        {
+            VoiceViewModel.Stop();
         }
         UpdateVoiceStateText();
     }
@@ -395,11 +410,13 @@ public sealed partial class MainWindow : Window
         if (!VoiceViewModel.IsSupported && !string.IsNullOrEmpty(VoiceViewModel.ErrorMessage))
         {
             VoiceStateText.Text = "Mic unavailable";
-            MicButton.Content = "🚫";
+            MicToggle.IsEnabled = false;
             return;
         }
 
-        MicButton.Content = VoiceViewModel.IsActive ? "🔴" : "🎙";
+        _syncingMicToggle = true;
+        MicToggle.IsOn = VoiceViewModel.IsActive;
+        _syncingMicToggle = false;
         VoiceStateText.Text = VoiceViewModel.IsActive ? VoiceViewModel.State switch
         {
             Jarvis.Core.Models.VoiceState.Listening => "Listening",

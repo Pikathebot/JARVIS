@@ -304,7 +304,7 @@ public sealed partial class GlassToggle : UserControl
         {
             return; // not in the tree yet
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
 
         var trackCenter = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
         var trackHalf = new Vector2(TrackWidth * 0.5f, TrackHeight * 0.5f) * scale;
