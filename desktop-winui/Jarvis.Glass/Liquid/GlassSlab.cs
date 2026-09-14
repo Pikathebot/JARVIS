@@ -35,7 +35,7 @@ public sealed class GlassSlab : Grid
     }
 
     public static readonly DependencyProperty TintAmountProperty = DependencyProperty.Register(
-        nameof(TintAmount), typeof(double), typeof(GlassSlab), new PropertyMetadata(0.45, OnMaterialChanged));
+        nameof(TintAmount), typeof(double), typeof(GlassSlab), new PropertyMetadata(0.2, OnMaterialChanged));
 
     /// <summary>0 = clear glass, 1 = opaque fill.</summary>
     public double TintAmount

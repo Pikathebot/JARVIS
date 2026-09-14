@@ -23,34 +23,9 @@
         </Grid.RowDefinitions>
 
         <!--
-            Ambient ground. The acrylic behind this window resolves to a flat grey whenever the
-            desktop behind it has no detail to sample (a solid-colour desktop, or a live-wallpaper
-            tool painting a placeholder), which leaves the gaps between panels looking dead and
-            makes the glass slabs read as cards pasted on cardboard. These two layers give the
-            shell its own depth: a void gradient falling away toward the bottom right, and a cool
-            light source in the top-left corner - the same corner every panel's bevel is lit from,
-            so the whole shell agrees about where the light comes from.
+            Nothing is painted behind the panels: the window is fully transparent and the
+            GlassHost's slabs are the only surfaces, over the live desktop.
         -->
-        <Grid Grid.Row="0" Grid.RowSpan="2" IsHitTestVisible="False">
-            <Border>
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                        <GradientStop Offset="0" Color="#BF0B1220" />
-                        <GradientStop Offset="0.55" Color="#D9070A12" />
-                        <GradientStop Offset="1" Color="#E604060B" />
-                    </LinearGradientBrush>
-                </Border.Background>
-            </Border>
-            <Border>
-                <Border.Background>
-                    <RadialGradientBrush Center="0.12,0.04" GradientOrigin="0.12,0.04" RadiusX="0.85" RadiusY="0.85">
-                        <GradientStop Offset="0" Color="#2606B6D4" />
-                        <GradientStop Offset="0.45" Color="#0F1E90A8" />
-                        <GradientStop Offset="1" Color="#0006B6D4" />
-                    </RadialGradientBrush>
-                </Border.Background>
-            </Border>
-        </Grid>
 
         <!-- Custom title bar: draggable region, app name left, window controls handled by AppWindow. -->
         <Grid x:Name="TitleBarRow" Grid.Row="0" Background="Transparent">
@@ -89,7 +64,7 @@
                             </ComboBox.ItemTemplate>
                         </ComboBox>
 
-                        <Button Content="+ New Chat" HorizontalAlignment="Stretch" Click="NewChat_Click" />
+                        <glass:GlassButton Text="+ New Chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
                         <TextBlock Text="Recent Sessions" Foreground="#94A3B8" FontSize="12" Margin="0,12,0,0" />
                         <ListView
                             x:Name="SessionsList"
@@ -121,8 +96,8 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        <Button Content="Free VRAM" HorizontalAlignment="Stretch" Click="FreeVram_Click" />
-                        <Button Content="Settings" HorizontalAlignment="Stretch" Click="Settings_Click" />
+                        <glass:GlassButton Text="Free VRAM" HorizontalAlignment="Stretch" Click="FreeVram_Click" />
+                        <glass:GlassButton Text="Settings" HorizontalAlignment="Stretch" Click="Settings_Click" />
                     </StackPanel>
             </glass:GlassSlab>
 
@@ -160,11 +135,11 @@
                                     </Flyout>
                                 </Button.Flyout>
                             </Button>
-                            <Button x:Name="HudButton" Grid.Column="2" Content="HUD" Margin="0,0,8,0" Click="HudButton_Click" />
+                            <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
                                 <Button x:Name="MicButton" Content="🎙" FontSize="14" Padding="8,4" Click="MicButton_Click" />
                                 <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
-                                <Button Content="Panel" Click="ToggleRightPanel_Click" />
+                                <glass:GlassButton Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>
                         </Grid>
                 </glass:GlassSlab>
@@ -227,21 +202,21 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Button Content="📎" FontSize="14" Padding="8,4" Click="AttachFile_Click" />
-                                <TextBox
+                                <glass:GlassTextField
                                     x:Name="ComposerBox"
                                     Grid.Column="1"
                                     Margin="8,0"
-                                    PlaceholderText="Message Jarvis..."
+                                    VerticalAlignment="Center"
+                                    Placeholder="Message Jarvis..."
                                     AcceptsReturn="True"
-                                    TextWrapping="Wrap"
-                                    MaxHeight="160"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    KeyDown="ComposerBox_KeyDown" />
-                                <Button
+                                    InputMaxHeight="160"
+                                    InputKeyDown="ComposerBox_KeyDown" />
+                                <glass:GlassButton
                                     x:Name="SendButton"
                                     Grid.Column="2"
-                                    Content="Send"
+                                    VerticalAlignment="Center"
+                                    Text="Send"
+                                    IsAccent="True"
                                     Click="SendButton_Click" />
                             </Grid>
                         </StackPanel>

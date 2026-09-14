@@ -210,7 +210,21 @@ public sealed class GlassHost : IDisposable
         if (_disposed) return;
         var srv = _capture.TryGetLiveFrameSrv();
         if (srv is null) return;
-        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, Scene.SnapshotShapes(), Scene.SnapshotTexts());
+
+        // Layer 0 is a flat, invisible pane over the whole window: no bezel, tint or rim, just an
+        // identity copy of the capture. Every layer refracts the layer below it, so without this
+        // the slabs on layer 1 would be bending layer 0's transparent nothing and come out black
+        // (in the lab the whole-window panel played this role). It also means the gaps between
+        // slabs show the live capture rather than DWM's own passthrough -- indistinguishable,
+        // bar a frame of latency while the window is being dragged.
+        var scene = Scene.SnapshotShapes();
+        var shapes = new GlassShape[Math.Min(GlassScene.MaxShapes, scene.Length + 1)];
+        shapes[0] = GlassShape.Create(
+            new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f), new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f),
+            cornerRadius: 0f, bezelWidth: 0f, GlassBezelProfile.Squircle, refractionScale: 0f, specularIntensity: 0f,
+            layer: 0, tintColor: Vector3.One, tintAmount: 0f);
+        scene.AsSpan(0, shapes.Length - 1).CopyTo(shapes.AsSpan(1));
+        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
         _d3d.Present();
     }
 

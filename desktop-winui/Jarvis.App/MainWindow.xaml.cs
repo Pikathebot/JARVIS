@@ -466,7 +466,7 @@ public sealed partial class MainWindow : Window
         if (paths.Count > 0)
         {
             SendButton.IsEnabled = false;
-            ComposerBox.PlaceholderText = "Uploading attachments…";
+            ComposerBox.Placeholder = "Uploading attachments…";
             uploaded = new List<Attachment>();
             foreach (var path in paths)
             {
@@ -480,7 +480,7 @@ public sealed partial class MainWindow : Window
                 }
             }
             SendButton.IsEnabled = true;
-            ComposerBox.PlaceholderText = "Message Jarvis...";
+            ComposerBox.Placeholder = "Message Jarvis...";
         }
 
         await ChatViewModel.SendMessageAsync(text, uploaded);
