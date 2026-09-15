@@ -192,7 +192,7 @@ public sealed partial class GlassSlider : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        if (bounds.Width <= 0 || bounds.Height <= 0 || GlassSlab.IsCollapsedInTree(this)) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
         var clip = GlassSlab.ClipFor(this, scale);
 
         var centerY = (float)(bounds.Y + bounds.Height * 0.5) * scale;

@@ -5,10 +5,9 @@ using Vortice.DXGI;
 namespace Jarvis_Glass;
 
 /// <summary>
-/// Owns the D3D11 device/context and a DXGI swapchain created for DirectComposition (not for an
-/// HWND directly - CreateSwapChainForComposition is what lets the swapchain's content be handed
-/// to an IDCompositionVisual instead of being bound to a window's own redirection surface, which
-/// doesn't exist here since the window was created with WS_EX_NOREDIRECTIONBITMAP).
+/// Owns the D3D11 device/context and a DXGI swapchain created for composition (not for an HWND
+/// directly - CreateSwapChainForComposition is what lets the swapchain be handed to a XAML
+/// SwapChainPanel, which composites it inside the window's own visual tree).
 /// </summary>
 internal sealed class D3D11Context : IDisposable
 {
@@ -101,8 +100,7 @@ internal sealed class D3D11Context : IDisposable
         };
 
         // CreateSwapChainForComposition (not CreateSwapChainForHwnd) - this swapchain has no
-        // window of its own; DirectComposition attaches it to a visual instead (see
-        // CompositionContext).
+        // window of its own; GlassHost hands it to a SwapChainPanel instead.
         SwapChain = factory.CreateSwapChainForComposition(Device, swapChainDesc);
 
         CreateRenderTargetView();
@@ -140,7 +138,7 @@ internal sealed class D3D11Context : IDisposable
     /// back buffer must be released first - the render target view and the backing texture both
     /// hold a reference that would otherwise make ResizeBuffers fail (DXGI_ERROR_INVALID_CALL).
     /// No-ops if the size hasn't actually changed, since resize handlers can fire redundantly
-    /// (e.g. WM_WINDOWPOSCHANGED on a pure move).
+    /// (e.g. AppWindow.Changed on a pure move).
     /// </summary>
     public void ResizeBuffers(int width, int height)
     {

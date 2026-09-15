@@ -22,6 +22,12 @@ public sealed class GlassScene
     private GlassShape[] _shapeSnapshot = Array.Empty<GlassShape>();
     private GlassText[] _textSnapshot = Array.Empty<GlassText>();
     private bool _shapesDirty, _textsDirty;
+    private int _version;
+
+    /// <summary>Bumped on every publish/remove. The host renders only when this, the capture
+    /// frame, or the window geometry changed since its last frame -- a static scene over a
+    /// static desktop costs no GPU.</summary>
+    public int Version => Volatile.Read(ref _version);
 
     /// <summary>Per-window budget. The main window alone is pane + 5 slabs + ~7 pills + 2 toggles + a
     /// segmented (2 shapes each) -- 16 truncated the top layer (thumbs) off. Shapes are 96 bytes
@@ -50,14 +56,28 @@ public sealed class GlassScene
         lock (RegistryGate) ByWindowId.Remove(windowId);
     }
 
+    /// <summary>A publish identical to the owner's current shapes is a no-op: controls publish
+    /// on every LayoutUpdated, and a bumped version would re-render the window for nothing.</summary>
     public void Publish(object owner, params GlassShape[] shapes)
     {
-        lock (_gate) { _shapes[owner] = shapes; _shapesDirty = true; }
+        lock (_gate)
+        {
+            if (_shapes.TryGetValue(owner, out var old)
+                && System.Runtime.InteropServices.MemoryMarshal.AsBytes(old.AsSpan()).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(shapes.AsSpan())))
+            {
+                return;
+            }
+            _shapes[owner] = shapes; _shapesDirty = true; _version++;
+        }
     }
 
     public void PublishText(object owner, params GlassText[] texts)
     {
-        lock (_gate) { _texts[owner] = texts; _textsDirty = true; }
+        lock (_gate)
+        {
+            if (_texts.TryGetValue(owner, out var old) && old.AsSpan().SequenceEqual(texts)) return;
+            _texts[owner] = texts; _textsDirty = true; _version++;
+        }
     }
 
     /// <summary>Drops both the owner's shapes and its text.</summary>
@@ -65,8 +85,8 @@ public sealed class GlassScene
     {
         lock (_gate)
         {
-            if (_shapes.Remove(owner)) _shapesDirty = true;
-            if (_texts.Remove(owner)) _textsDirty = true;
+            if (_shapes.Remove(owner)) { _shapesDirty = true; _version++; }
+            if (_texts.Remove(owner)) { _textsDirty = true; _version++; }
         }
     }
 

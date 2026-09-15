@@ -46,14 +46,35 @@ internal sealed class GlassRenderer : IDisposable
     /// <summary>float4 header + MaxShapes * GlassShape.Size.</summary>
     private const int ShapeConstantsSize = 16 + GlassScene.MaxShapes * GlassShape.Size;
 
-    private readonly ID3D11Texture2D?[] _layerTextures = new ID3D11Texture2D?[2];
-    private readonly ID3D11RenderTargetView?[] _layerRtvs = new ID3D11RenderTargetView?[2];
-    private readonly ID3D11ShaderResourceView?[] _layerSrvs = new ID3D11ShaderResourceView?[2];
+    // One finished output texture per layer, kept between frames: a layer is only re-rendered
+    // when its own shapes/text changed or the layer beneath it was re-rendered, so a thumb
+    // animating on layer 4 costs layer 4 alone, not the pane and slabs under it.
+    private readonly List<ID3D11Texture2D?> _layerTextures = new();
+    private readonly List<ID3D11RenderTargetView?> _layerRtvs = new();
+    private readonly List<ID3D11ShaderResourceView?> _layerSrvs = new();
+    private readonly List<LayerCache> _layerCache = new();
+    private GlassText[] _lastTexts = Array.Empty<GlassText>();
+    private int _lastCaptureVersion = -1;
+    private Vector4 _lastUvRect;
 
-    // [0] = horizontal pass output (scratch), [1] = final blurred source for the refraction pass.
-    private readonly ID3D11Texture2D?[] _blurTextures = new ID3D11Texture2D?[2];
-    private readonly ID3D11RenderTargetView?[] _blurRtvs = new ID3D11RenderTargetView?[2];
-    private readonly ID3D11ShaderResourceView?[] _blurSrvs = new ID3D11ShaderResourceView?[2];
+    private sealed class LayerCache
+    {
+        public GlassShape[] Shapes = Array.Empty<GlassShape>();
+        public GlassText[] Texts = Array.Empty<GlassText>();
+        public bool Valid;
+    }
+
+    // Frost scratch textures, one pair per downscale factor (layers pick 1x/2x/4x by sigma, so
+    // keying by factor keeps them from being rebuilt every frame): [0] = horizontal pass output,
+    // [1] = final blurred source for the refraction pass.
+    private sealed class BlurTargets
+    {
+        public readonly ID3D11Texture2D?[] Textures = new ID3D11Texture2D?[2];
+        public readonly ID3D11RenderTargetView?[] Rtvs = new ID3D11RenderTargetView?[2];
+        public readonly ID3D11ShaderResourceView?[] Srvs = new ID3D11ShaderResourceView?[2];
+        public int Width, Height;
+    }
+    private readonly Dictionary<int, BlurTargets> _blur = new();
 
     /// <summary>Gaussian sigma as a fraction of a shape's blur radius. 0.5 puts the kernel's 2-sigma
     /// extent at the radius, so "blur 10" spreads about as far as the old 10px Poisson disc did.</summary>
@@ -61,6 +82,7 @@ internal sealed class GlassRenderer : IDisposable
 
     private readonly ID3D11BlendState _screenBlendState;
     private readonly ID3D11BlendState _overBlendState;
+    private readonly ID3D11RasterizerState _scissorRasterizer;
 
     /// <summary>Bezel profile of the panel shape (shape 0). Tunable live from ControlOverlayWindow.</summary>
     public GlassBezelProfile Profile { get; set; } = GlassBezelProfile.Lip;
@@ -136,6 +158,15 @@ internal sealed class GlassRenderer : IDisposable
         };
         _overBlendState = _device.CreateBlendState(overBlendDesc);
 
+        // Every pass is a full-screen triangle; the scissor is what confines a control layer's
+        // passes to the pixels its shapes can actually touch (see LayerScissor).
+        var rasterizerDesc = new RasterizerDescription(CullMode.None, FillMode.Solid)
+        {
+            ScissorEnable = true,
+            DepthClipEnable = true,
+        };
+        _scissorRasterizer = _device.CreateRasterizerState(rasterizerDesc);
+
         _pointSampler = _device.CreateSamplerState(new SamplerDescription
         {
             Filter = Filter.MinMagMipPoint,
@@ -171,18 +202,53 @@ internal sealed class GlassRenderer : IDisposable
         CornerRadius, BezelWidth, Profile, RefractionScale, SpecularIntensity, layer: 0,
         tintColor: Vector3.One, tintAmount: 0f, secondLight: 0.33f); // the card keeps its old one-sided sheen
 
-    private void EnsureLayerTargets(int width, int height)
+    private void EnsureLayerTargets(int width, int height, int layerCount)
     {
-        if (_layerTextures[0] is not null && _fieldWidth == width && _fieldHeight == height)
+        var resized = _fieldWidth != width || _fieldHeight != height;
+        if (resized)
         {
-            return;
+            foreach (var c in _layerCache) c.Valid = false;
         }
+        while (_layerTextures.Count < layerCount)
+        {
+            _layerTextures.Add(null); _layerRtvs.Add(null); _layerSrvs.Add(null); _layerCache.Add(new LayerCache());
+        }
+        for (var i = 0; i < layerCount; i++)
+        {
+            if (resized || _layerTextures[i] is null)
+            {
+                ID3D11Texture2D? t = _layerTextures[i]; ID3D11RenderTargetView? r = _layerRtvs[i]; ID3D11ShaderResourceView? v = _layerSrvs[i];
+                CreateWindowTexture(width, height, ref t, ref r, ref v);
+                _layerTextures[i] = t; _layerRtvs[i] = r; _layerSrvs[i] = v;
+                _layerCache[i].Valid = false;
+            }
+        }
+        // Layers that dropped out (a lifted thumb's layer once it settles) must re-render if
+        // they come back.
+        for (var i = layerCount; i < _layerCache.Count; i++) _layerCache[i].Valid = false;
+    }
 
+    private int BlurDownscale(float maxBlur)
+    {
+        var sigma = Math.Max(0.25f, maxBlur * BlurSigmaPerRadius);
+        return sigma >= 8f ? 4 : sigma >= 4f ? 2 : 1;
+    }
+
+    private BlurTargets EnsureBlurTargets(int ds, int width, int height)
+    {
+        if (!_blur.TryGetValue(ds, out var set))
+        {
+            set = new BlurTargets();
+            _blur[ds] = set;
+        }
+        if (set.Textures[0] is not null && set.Width == width && set.Height == height) return set;
         for (var i = 0; i < 2; i++)
         {
-            CreateWindowTexture(width, height, ref _layerTextures[i], ref _layerRtvs[i], ref _layerSrvs[i]);
-            CreateWindowTexture(width, height, ref _blurTextures[i], ref _blurRtvs[i], ref _blurSrvs[i]);
+            CreateWindowTexture(width, height, ref set.Textures[i], ref set.Rtvs[i], ref set.Srvs[i]);
         }
+        set.Width = width;
+        set.Height = height;
+        return set;
     }
 
     private void CreateWindowTexture(int width, int height, ref ID3D11Texture2D? texture, ref ID3D11RenderTargetView? rtv, ref ID3D11ShaderResourceView? srv)
@@ -234,16 +300,18 @@ internal sealed class GlassRenderer : IDisposable
         _displacementSrv = _device.CreateShaderResourceView(_displacementTexture);
     }
 
-    public void Draw(ID3D11RenderTargetView backBufferRtv, ID3D11ShaderResourceView captureSrv, Vector4 uvRect, int width, int height, ReadOnlySpan<GlassShape> shapes, ReadOnlySpan<GlassText> texts)
+    /// <param name="captureVersion">Changes whenever <paramref name="captureSrv"/>'s content did;
+    /// with an unchanged capture, unchanged layers are served from their cached output.</param>
+    public void Draw(ID3D11RenderTargetView backBufferRtv, ID3D11ShaderResourceView captureSrv, int captureVersion, Vector4 uvRect, int width, int height, ReadOnlySpan<GlassShape> shapes, ReadOnlySpan<GlassText> texts)
     {
         // D2D first: it clobbers pipeline state, and the content textures must be finished before
-        // any layer composites them.
-        _content.Draw(width, height, texts);
-
-        // EnsureLayerTargets keys off the same size fields EnsureDisplacementTarget updates, so it
-        // must run first.
-        EnsureLayerTargets(width, height);
-        EnsureDisplacementTarget(width, height);
+        // any layer composites them. Only when the text actually changed (or the size did).
+        var resized = _fieldWidth != width || _fieldHeight != height;
+        if (resized || !texts.SequenceEqual(_lastTexts))
+        {
+            _content.Draw(width, height, texts);
+            _lastTexts = texts.ToArray();
+        }
 
         var layerCount = Math.Max(1, _content.MaxLayer + 1);
         foreach (var shape in shapes)
@@ -251,46 +319,116 @@ internal sealed class GlassRenderer : IDisposable
             layerCount = Math.Max(layerCount, (int)shape.Params2.Y + 1);
         }
 
+        // EnsureLayerTargets keys off the same size fields EnsureDisplacementTarget updates, so it
+        // must run first.
+        EnsureLayerTargets(width, height, layerCount);
+        EnsureDisplacementTarget(width, height);
+
+        var captureChanged = captureVersion != _lastCaptureVersion || uvRect != _lastUvRect;
+        _lastCaptureVersion = captureVersion;
+        _lastUvRect = uvRect;
+
         _context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         _context.IASetInputLayout(null);
         _context.VSSetShader(_fullscreenVs);
         _context.RSSetViewport(0, 0, width, height);
+        _context.RSSetState(_scissorRasterizer);
         _context.PSSetSampler(0, _pointSampler);
         _context.PSSetSampler(1, _linearSampler);
         WriteDisplacementConstants(width, height);
         WriteSpecularRimConstants(width, height);
 
+        var belowChanged = captureChanged;
         for (var layer = 0; layer < layerCount; layer++)
         {
-            var isLast = layer == layerCount - 1;
-            var target = isLast ? backBufferRtv : _layerRtvs[layer % 2]!;
-            var source = layer == 0 ? captureSrv : _layerSrvs[(layer - 1) % 2]!;
+            var target = _layerRtvs[layer]!;
+            var source = layer == 0 ? captureSrv : _layerSrvs[layer - 1]!;
 
-            WriteShapeConstants(shapes, layer);
+            var cache = _layerCache[layer];
+            var layerShapes = ShapesOn(shapes, layer);
+            var layerTexts = TextsOn(texts, layer);
+            var same = cache.Valid && !belowChanged
+                && System.Runtime.InteropServices.MemoryMarshal.AsBytes(layerShapes.AsSpan()).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(cache.Shapes.AsSpan()))
+                && layerTexts.AsSpan().SequenceEqual(cache.Texts);
+            if (same)
+            {
+                belowChanged = false;
+                continue;
+            }
+            cache.Shapes = layerShapes;
+            cache.Texts = layerTexts;
+            cache.Valid = true;
+            belowChanged = true;
+
+            WriteShapeConstants(layerShapes, layer);
             _context.OMSetBlendState(null);
+
+            // Layer 0 (the whole-window pane) is full-screen. Any layer above it only differs
+            // from its source inside its shapes' footprints (plus bezel, refraction reach,
+            // shadow and frost), so the source is copied across as-is and every pass on this
+            // layer is scissored to that footprint -- a thumb layer is a few thousand pixels,
+            // not the whole window, and the shaders loop over the layer's shapes per pixel.
+            var maxBlur = MaxBlurOnLayer(layerShapes);
+            if (layer == 0)
+            {
+                _context.RSSetScissorRect(0, 0, width, height);
+            }
+            else
+            {
+                var scissor = LayerScissor(layerShapes, layerTexts, maxBlur, width, height);
+                using (var targetResource = target.Resource)
+                using (var sourceResource = source.Resource)
+                {
+                    _context.CopyResource(targetResource, sourceResource);
+                }
+                if (scissor.Width <= 0 || scissor.Height <= 0) continue; // nothing on this layer
+                _context.RSSetScissorRect(scissor.X, scissor.Y, scissor.Width, scissor.Height);
+            }
 
             // Pass 0 (only if something on this layer is frosted): separable Gaussian of the
             // source at the layer's largest blur radius, H into scratch then V into the blurred
             // texture. Pass 2 lerps toward it per shape.
-            var maxBlur = MaxBlurOnLayer(shapes, layer);
-            if (maxBlur > 0f)
+            if (maxBlur > 0f && layerShapes.Length > 0)
             {
                 var sigma = Math.Max(0.25f, maxBlur * BlurSigmaPerRadius);
+                // Frost is low-frequency by definition, so the Gaussian runs at reduced
+                // resolution: a wide sigma at full res is 2x47 taps over every pixel per capture
+                // frame, the same blur at 1/4 res and sigma/4 is 2x12 taps over 1/16 the pixels,
+                // and the linear upsample in the refraction pass hides the difference.
+                var ds = BlurDownscale(maxBlur);
+                var bw = Math.Max(1, (width + ds - 1) / ds);
+                var bh = Math.Max(1, (height + ds - 1) / ds);
+                var blur = EnsureBlurTargets(ds, bw, bh);
+                _context.RSSetViewport(0, 0, bw, bh);
+                if (layer == 0) _context.RSSetScissorRect(0, 0, bw, bh);
+                else
+                {
+                    var sc = LayerScissor(layerShapes, layerTexts, maxBlur, width, height);
+                    _context.RSSetScissorRect(sc.X / ds, sc.Y / ds, Math.Min(bw, sc.Width / ds + 2), Math.Min(bh, sc.Height / ds + 2));
+                }
                 _context.PSSetShader(_blurPs);
                 _context.PSSetConstantBuffer(0, _blurConstants);
                 _context.PSSetShaderResource(0, null);
                 _context.PSSetShaderResource(2, null);
 
-                WriteBlurConstants(uvRect, width, height, sourceIsCapture: layer == 0, sigma, horizontal: true);
-                _context.OMSetRenderTargets(_blurRtvs[0]!);
+                WriteBlurConstants(uvRect, bw, bh, sourceIsCapture: layer == 0, sigma / ds, horizontal: true);
+                _context.OMSetRenderTargets(blur.Rtvs[0]!);
                 _context.PSSetShaderResource(1, source);
                 _context.Draw(3, 0);
 
-                WriteBlurConstants(uvRect, width, height, sourceIsCapture: false, sigma, horizontal: false);
-                _context.OMSetRenderTargets(_blurRtvs[1]!);
-                _context.PSSetShaderResource(1, _blurSrvs[0]!);
+                WriteBlurConstants(uvRect, bw, bh, sourceIsCapture: false, sigma / ds, horizontal: false);
+                _context.OMSetRenderTargets(blur.Rtvs[1]!);
+                _context.PSSetShaderResource(1, blur.Srvs[0]!);
                 _context.Draw(3, 0);
                 _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
+
+                _context.RSSetViewport(0, 0, width, height);
+                if (layer == 0) _context.RSSetScissorRect(0, 0, width, height);
+                else
+                {
+                    var sc = LayerScissor(layerShapes, layerTexts, maxBlur, width, height);
+                    _context.RSSetScissorRect(sc.X, sc.Y, sc.Width, sc.Height);
+                }
             }
 
             // Pass 1: displacement field for this layer's shapes. Unbind the SRVs first so the
@@ -312,7 +450,7 @@ internal sealed class GlassRenderer : IDisposable
             _context.PSSetConstantBuffer(1, _shapeConstants);
             _context.PSSetShaderResource(0, _displacementSrv!);
             _context.PSSetShaderResource(1, source);
-            _context.PSSetShaderResource(2, maxBlur > 0f ? _blurSrvs[1] : null);
+            _context.PSSetShaderResource(2, maxBlur > 0f ? _blur[BlurDownscale(maxBlur)].Srvs[1] : null);
             _context.Draw(3, 0);
             _context.PSSetShaderResource(2, null);
 
@@ -338,6 +476,35 @@ internal sealed class GlassRenderer : IDisposable
             // The layer target becomes the next layer's source; release it as a render target.
             _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
         }
+
+        // The top layer's output is the frame; the swapchain's back buffer changes every present
+        // so it is always filled from the kept texture (a copy, not a re-render).
+        using (var backBuffer = backBufferRtv.Resource)
+        {
+            _context.CopyResource(backBuffer, _layerTextures[layerCount - 1]!);
+        }
+    }
+
+    private static GlassShape[] ShapesOn(ReadOnlySpan<GlassShape> shapes, int layer)
+    {
+        var count = 0;
+        foreach (var shape in shapes) if ((int)shape.Params2.Y == layer) count++;
+        if (count == 0) return Array.Empty<GlassShape>();
+        var result = new GlassShape[count];
+        var i = 0;
+        foreach (var shape in shapes) if ((int)shape.Params2.Y == layer) result[i++] = shape;
+        return result;
+    }
+
+    private static GlassText[] TextsOn(ReadOnlySpan<GlassText> texts, int layer)
+    {
+        var count = 0;
+        foreach (var text in texts) if (text.Layer == layer) count++;
+        if (count == 0) return Array.Empty<GlassText>();
+        var result = new GlassText[count];
+        var i = 0;
+        foreach (var text in texts) if (text.Layer == layer) result[i++] = text;
+        return result;
     }
 
     private void WriteDisplacementConstants(int width, int height)
@@ -378,13 +545,10 @@ internal sealed class GlassRenderer : IDisposable
         WriteConstantBuffer(_blurConstants, data);
     }
 
-    private static float MaxBlurOnLayer(ReadOnlySpan<GlassShape> shapes, int layer)
+    private static float MaxBlurOnLayer(ReadOnlySpan<GlassShape> layerShapes)
     {
         var max = 0f;
-        foreach (var shape in shapes)
-        {
-            if ((int)shape.Params2.Y == layer) max = Math.Max(max, shape.Params2.W);
-        }
+        foreach (var shape in layerShapes) max = Math.Max(max, shape.Params2.W);
         return max;
     }
 
@@ -399,18 +563,64 @@ internal sealed class GlassRenderer : IDisposable
         WriteConstantBuffer(_specularRimConstants, data);
     }
 
-    private unsafe void WriteShapeConstants(ReadOnlySpan<GlassShape> shapes, int activeLayer)
+    /// <summary>Uploads one layer's shapes (the shaders' per-pixel loops run to the uploaded
+    /// count, so a thumb layer costs two iterations, not 48).</summary>
+    private unsafe void WriteShapeConstants(ReadOnlySpan<GlassShape> layerShapes, int activeLayer)
     {
-        var count = Math.Min(shapes.Length, GlassScene.MaxShapes);
+        var count = Math.Min(layerShapes.Length, GlassScene.MaxShapes);
         var mapped = _context.Map(_shapeConstants, MapMode.WriteDiscard);
         var header = (float*)mapped.DataPointer;
         header[0] = count;
         header[1] = activeLayer;
         header[2] = 0f;
         header[3] = 0f;
-        var dest = new Span<GlassShape>((byte*)mapped.DataPointer + 16, count);
-        shapes[..count].CopyTo(dest);
+        layerShapes[..count].CopyTo(new Span<GlassShape>((byte*)mapped.DataPointer + 16, count));
         _context.Unmap(_shapeConstants, 0);
+    }
+
+    /// <summary>Union of everything a control layer can write, in window pixels: each shape's
+    /// rect (cut to its clip) padded by its bezel, refraction reach, shadow and frost, plus a
+    /// generous box around each text run on the layer. Empty when the layer has nothing.</summary>
+    private static (int X, int Y, int Width, int Height) LayerScissor(ReadOnlySpan<GlassShape> shapes, ReadOnlySpan<GlassText> texts, float maxBlur, int width, int height)
+    {
+        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+        var any = false;
+
+        static void Include(ref float minX, ref float minY, ref float maxX, ref float maxY, float x0, float y0, float x1, float y1)
+        {
+            minX = Math.Min(minX, x0); minY = Math.Min(minY, y0);
+            maxX = Math.Max(maxX, x1); maxY = Math.Max(maxY, y1);
+        }
+
+        foreach (var shape in shapes)
+        {
+            var c = shape.CenterHalfSize;
+            var x0 = c.X - c.Z; var y0 = c.Y - c.W; var x1 = c.X + c.Z; var y1 = c.Y + c.W;
+            if (shape.Clip.Z > 0f)
+            {
+                x0 = Math.Max(x0, shape.Clip.X); y0 = Math.Max(y0, shape.Clip.Y);
+                x1 = Math.Min(x1, shape.Clip.X + shape.Clip.Z); y1 = Math.Min(y1, shape.Clip.Y + shape.Clip.W);
+                if (x1 <= x0 || y1 <= y0) continue;
+            }
+            // Bezel + displacement reach + shadow radius and offset + frost kernel, and slack.
+            var pad = shape.Params.Y + shape.Params.W + shape.Extra.Z + Math.Abs(shape.Extra.W) + 3f * maxBlur + 8f;
+            Include(ref minX, ref minY, ref maxX, ref maxY, x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+            any = true;
+        }
+        foreach (var text in texts)
+        {
+            var halfW = text.Text.Length * text.FontSize * 0.75f + 8f;
+            var halfH = text.FontSize * 1.5f + 8f;
+            Include(ref minX, ref minY, ref maxX, ref maxY, text.Center.X - halfW, text.Center.Y - halfH, text.Center.X + halfW, text.Center.Y + halfH);
+            any = true;
+        }
+        if (!any) return (0, 0, 0, 0);
+
+        var ix0 = Math.Clamp((int)MathF.Floor(minX), 0, width);
+        var iy0 = Math.Clamp((int)MathF.Floor(minY), 0, height);
+        var ix1 = Math.Clamp((int)MathF.Ceiling(maxX), 0, width);
+        var iy1 = Math.Clamp((int)MathF.Ceiling(maxY), 0, height);
+        return (ix0, iy0, ix1 - ix0, iy1 - iy0);
     }
 
     private unsafe void WriteConstantBuffer(ID3D11Buffer buffer, ReadOnlySpan<float> data)
@@ -422,17 +632,24 @@ internal sealed class GlassRenderer : IDisposable
 
     public void Dispose()
     {
+        _scissorRasterizer.Dispose();
         _displacementSrv?.Dispose();
         _displacementRtv?.Dispose();
         _displacementTexture?.Dispose();
-        for (var i = 0; i < 2; i++)
+        for (var i = 0; i < _layerTextures.Count; i++)
         {
             _layerSrvs[i]?.Dispose();
             _layerRtvs[i]?.Dispose();
             _layerTextures[i]?.Dispose();
-            _blurSrvs[i]?.Dispose();
-            _blurRtvs[i]?.Dispose();
-            _blurTextures[i]?.Dispose();
+        }
+        foreach (var set in _blur.Values)
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                set.Srvs[i]?.Dispose();
+                set.Rtvs[i]?.Dispose();
+                set.Textures[i]?.Dispose();
+            }
         }
         _content.Dispose();
         _overBlendState.Dispose();

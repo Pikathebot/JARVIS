@@ -128,6 +128,20 @@ public sealed class GlassSlab : Grid
     /// <summary>The layer a control inside <paramref name="element"/>'s slab should publish its
     /// lowest shape on: one above the nearest ancestor GlassSlab (so a control in a layer-2
     /// settings sheet refracts the sheet, not the panel beneath it), or 2 when there is none.</summary>
+    /// <summary>True when the element or any ancestor is Collapsed. Collapsing a panel does not
+    /// unload or re-layout its children, so their bounds stay stale and non-empty -- a control
+    /// has to check this itself or its glass outlives the panel it was in.</summary>
+    public static bool IsCollapsedInTree(UIElement element)
+    {
+        DependencyObject? node = element;
+        while (node is not null)
+        {
+            if (node is UIElement ui && ui.Visibility == Visibility.Collapsed) return true;
+            node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+        }
+        return false;
+    }
+
     public static int BaseLayerFor(UIElement element)
     {
         DependencyObject? node = element;
@@ -181,7 +195,7 @@ public sealed class GlassSlab : Grid
         if (!IsLoaded || XamlRoot is null) return;
         _scene ??= GlassScene.Find(this);
         if (_scene is null) return;
-        if (Visibility == Visibility.Collapsed || ActualWidth <= 0 || ActualHeight <= 0)
+        if (IsCollapsedInTree(this) || ActualWidth <= 0 || ActualHeight <= 0)
         {
             // A collapsed panel (the right sheet) must take its slab with it.
             _scene.Remove(this);

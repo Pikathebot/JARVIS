@@ -200,7 +200,7 @@ public sealed partial class GlassTextField : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        if (bounds.Width <= 0 || bounds.Height <= 0 || GlassSlab.IsCollapsedInTree(this)) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
         var clip = GlassSlab.ClipFor(this, scale);
 
         var m = Math.Max(_focus, GlassToggle.Material.ForceLift);

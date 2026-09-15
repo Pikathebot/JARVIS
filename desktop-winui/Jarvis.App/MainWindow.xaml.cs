@@ -134,8 +134,8 @@ public sealed partial class MainWindow : Window
         _ = SessionsViewModel.RefreshAsync();
 
         ExtendTitleBar();
-        // Liquid glass behind this window: normal z-band, and it must stay a taskbar window.
-        Glass = new Jarvis_Glass.GlassHost(this, topmost: false, showInTaskbar: true);
+        // Liquid glass under this window's XAML tree.
+        Glass = new Jarvis_Glass.GlassHost(this);
 
         _hotkey = new GlobalHotkeyService();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);

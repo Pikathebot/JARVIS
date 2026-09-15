@@ -136,10 +136,50 @@ public sealed partial class GlassSegmented : UserControl
         StartAnimating();
     }
 
+    /// <summary>Segment left edges and widths in DIPs. Segments are not equal: each takes a share
+    /// of the track proportional to its label plus the pill's padding, so the pill at rest (which
+    /// hugs its label) is what the user sees as "the selected segment" -- equal fifths of a
+    /// 340px track left "Reasoning" clipped and "Files" swimming in space.</summary>
+    private (float[] Left, float[] Width) SegmentLayout(float totalWidth)
+    {
+        var n = Count;
+        var left = new float[n];
+        var width = new float[n];
+        if (_labelWidths.Length != n || totalWidth <= 0f)
+        {
+            for (var i = 0; i < n; i++) { width[i] = totalWidth / n; left[i] = i * width[i]; }
+            return (left, width);
+        }
+        var sum = 0f;
+        for (var i = 0; i < n; i++) sum += _labelWidths[i] + 2f * PillPadX;
+        var k = sum > 0f ? totalWidth / sum : 0f;
+        var x = 0f;
+        for (var i = 0; i < n; i++)
+        {
+            width[i] = (_labelWidths[i] + 2f * PillPadX) * k;
+            left[i] = x;
+            x += width[i];
+        }
+        return (left, width);
+    }
+
+    /// <summary>Continuous segment index under a pointer x (DIPs): the segment centres are the
+    /// integer positions, linear in between, so a drag carries the pill at the pointer's pace.</summary>
     private float IndexFromPointer(double x)
     {
-        var w = (float)ActualWidth / Count;
-        return w <= 0 ? 0f : Math.Clamp((float)x / w - 0.5f, 0f, Count - 1);
+        var (left, width) = SegmentLayout((float)ActualWidth);
+        var n = Count;
+        if (n == 1 || width[0] <= 0f) return 0f;
+        var px = (float)x;
+        var c0 = left[0] + width[0] * 0.5f;
+        if (px <= c0) return 0f;
+        for (var i = 0; i < n - 1; i++)
+        {
+            var ca = left[i] + width[i] * 0.5f;
+            var cb = left[i + 1] + width[i + 1] * 0.5f;
+            if (px <= cb) return i + (px - ca) / Math.Max(1e-3f, cb - ca);
+        }
+        return n - 1;
     }
 
     private const float DragThresholdDip = 4f;
@@ -248,7 +288,7 @@ public sealed partial class GlassSegmented : UserControl
         {
             return;
         }
-        if (bounds.Width <= 0 || bounds.Height <= 0 || Visibility == Visibility.Collapsed) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
+        if (bounds.Width <= 0 || bounds.Height <= 0 || GlassSlab.IsCollapsedInTree(this)) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
         var clip = GlassSlab.ClipFor(this, scale);
 
         var left = (float)bounds.X * scale;
@@ -258,21 +298,23 @@ public sealed partial class GlassSegmented : UserControl
         var trackCenter = new Vector2(left + width * 0.5f, centerY);
         var trackRadius = trackHalf.Y;
 
-        var segW = width / Count;
+        var (segLeft, segWidth) = SegmentLayout((float)bounds.Width);
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
         var grow = 1f + (Material.LiftScale - 1f) * m;
-        // Pill width follows the label under it: between segments it eases from one label's
-        // width to the next's along with the travel.
+        // Pill width and position follow the label under it: between segments they ease from one
+        // segment's to the next's along with the travel.
         var lo = Math.Clamp((int)MathF.Floor(_travel), 0, Count - 1);
         var hi = Math.Clamp(lo + 1, 0, Count - 1);
         var f = Math.Clamp(_travel - lo, 0f, 1f);
-        var labelW = _labelWidths.Length == Count ? _labelWidths[lo] + (_labelWidths[hi] - _labelWidths[lo]) * f : segW / scale;
-        var pillW = Math.Min(segW - 2f * PillInset * scale, (labelW + 2f * PillPadX) * scale);
+        var labelW = _labelWidths.Length == Count ? _labelWidths[lo] + (_labelWidths[hi] - _labelWidths[lo]) * f : segWidth[lo];
+        var segWDip = segWidth[lo] + (segWidth[hi] - segWidth[lo]) * f;
+        var segCenterDip = (segLeft[lo] + segWidth[lo] * 0.5f) + ((segLeft[hi] + segWidth[hi] * 0.5f) - (segLeft[lo] + segWidth[lo] * 0.5f)) * f;
+        var pillW = Math.Min(segWDip - 2f * PillInset, labelW + 2f * PillPadX) * scale;
         var pillHalf = new Vector2(pillW * 0.5f, (TrackHeight * 0.5f - PillInset) * scale) * grow;
         // Stretch along the travel with velocity, like the toggle thumb.
         var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch * 2f) * m;
         pillHalf.X *= 1f + stretch;
-        var pillCenter = new Vector2(left + segW * (_travel + 0.5f), centerY);
+        var pillCenter = new Vector2(left + segCenterDip * scale, centerY);
         var pillRadius = pillHalf.Y;
 
         _scene.Publish(this,
@@ -303,7 +345,7 @@ public sealed partial class GlassSegmented : UserControl
         {
             var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
             var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
-            var at = new Vector2(left + segW * (i + 0.5f), centerY);
+            var at = new Vector2(left + (segLeft[i] + segWidth[i] * 0.5f) * scale, centerY);
             var size = Material.LabelSize * scale;
             texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer, Clip: clip));
             var onPill = near * (1f - m);

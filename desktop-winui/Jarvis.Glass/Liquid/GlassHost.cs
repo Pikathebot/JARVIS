@@ -3,23 +3,27 @@ using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Vortice.DXGI;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Dwm;
-using Windows.Win32.UI.WindowsAndMessaging;
+using Windows.Win32.UI.Shell;
 
 namespace Jarvis_Glass;
 
 /// <summary>
-/// Puts a WinUI window on the liquid-glass stack. The window itself becomes the "overlay role"
-/// from the GlassLab: its XAML tree draws only the controls' chrome and text over a transparent
-/// backdrop, while everything glass -- panel slabs, control tracks, thumbs, refracted labels --
-/// is rendered by <see cref="GlassRenderer"/> into a <see cref="GlassBackdropWindow"/> that sits
-/// directly behind it. The WinUI window is owner-linked to that HWND so the pair stack and
-/// z-order together (an owned window is always above its owner), and this host keeps the glass
-/// HWND pixel-locked to the WinUI window's client rect and hidden with it. Controls publish
-/// geometry through the window's <see cref="Scene"/>; the render tick runs on the glass HWND's
-/// WM_TIMER, pumped by the WinUI thread's own message loop.
+/// Puts a WinUI window on the liquid-glass stack. The window's XAML tree draws only the
+/// controls' chrome and text over a transparent backdrop, while everything glass -- panel slabs,
+/// control tracks, thumbs, refracted labels -- is rendered by <see cref="GlassRenderer"/> into a
+/// premultiplied-alpha DXGI swapchain that a <see cref="SwapChainPanel"/> at the very bottom of
+/// the window's content composites under the rest of the tree. Because the glass lives in the
+/// window's own composition tree it moves with the window in the same DWM frame; the earlier
+/// design (a separate owner-linked HWND repositioned from <c>AppWindow.Changed</c>) always
+/// lagged the chrome by a frame while dragging. Controls publish geometry through the window's
+/// <see cref="Scene"/>; the render tick is <see cref="CompositionTarget.Rendering"/>, so it runs
+/// on the XAML thread once per display frame.
 ///
 /// The two DWM details that took the lab days to find are both here: the WinUI window needs a
 /// zero-alpha system-compositor backdrop brush (<see cref="TransparentBackdrop"/>) AND
@@ -30,56 +34,62 @@ public sealed class GlassHost : IDisposable
     private readonly AppWindow _appWindow;
     private readonly HWND _windowHwnd;
     private readonly ulong _windowId;
-    private readonly GlassBackdropWindow _glass;
+    private readonly SwapChainPanel _panel;
     private readonly D3D11Context _d3d;
-    private readonly CompositionContext _composition;
+    private readonly IDXGISwapChain2 _swapChain2;
     private readonly LiveCaptureSource _capture;
     private readonly GlassRenderer _renderer;
     private Vector4 _uvRect = new(0, 0, 1, 1);
     private bool _captureReady;
+    private bool _rendering;
+    private (int Frame, int Scene, Vector4 Uv, int W, int H) _lastRendered = (-1, -1, default, 0, 0);
     private bool _disposed;
 
     public GlassScene Scene { get; } = new();
 
     private unsafe nint WindowHandleValue => (nint)_windowHwnd.Value;
 
-    /// <summary>Render-rate interval. WM_TIMER's floor is ~15.6ms, i.e. display rate.</summary>
-    private const uint RenderIntervalMs = 16;
-
-    /// <param name="window">A constructed, not-yet-shown WinUI window.</param>
-    /// <param name="topmost">Whether the window is always-on-top (the HUD). The glass HWND must
-    /// share the z-band or the owned WinUI window would drag it up anyway.</param>
-    /// <param name="showInTaskbar">Owned windows are dropped from the taskbar unless
-    /// WS_EX_APPWINDOW says otherwise -- true for the main window.</param>
-    public GlassHost(Window window, bool topmost, bool showInTaskbar)
+    /// <param name="window">A constructed, not-yet-shown WinUI window whose <c>Content</c> is
+    /// already set -- it is re-parented under a Grid with the glass panel beneath it.</param>
+    public GlassHost(Window window)
     {
         var hwndValue = WinRT.Interop.WindowNative.GetWindowHandle(window);
         _windowHwnd = (HWND)hwndValue;
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwndValue));
         _windowId = _appWindow.Id.Value;
+        _subclassProc = SubclassProc;
 
         GlassLog.Path ??= Path.Combine(AppContext.BaseDirectory, "jarvis-glass.log");
 
         var client = ClientRectOnScreen();
         var width = Math.Max(1, client.Width);
         var height = Math.Max(1, client.Height);
-        _glass = new GlassBackdropWindow();
-        _glass.Create(topmost, width, height);
-        _glass.SetBounds(client.X, client.Y, width, height);
 
         _d3d = new D3D11Context(width, height);
-        _composition = new CompositionContext(_d3d.DxgiDevice, _glass.HandleValue, _d3d.SwapChain);
+        _swapChain2 = _d3d.SwapChain.QueryInterface<IDXGISwapChain2>();
         _capture = new LiveCaptureSource(_d3d);
         _renderer = new GlassRenderer(_d3d.Device, _d3d.ImmediateContext, Path.Combine(AppContext.BaseDirectory, "Shaders"));
 
-        // The WinUI window: transparent where XAML paints nothing, owned by the glass HWND.
-        window.SystemBackdrop = new TransparentBackdrop();
-        PInvoke.SetWindowLongPtr(_windowHwnd, WINDOW_LONG_PTR_INDEX.GWLP_HWNDPARENT, _glass.HandleValue);
-        if (showInTaskbar)
+        // The glass panel goes under the window's existing content. Hit-testing stays with the
+        // XAML above it (and falls through to nothing where there is no XAML, same as before).
+        _panel = new SwapChainPanel
         {
-            var ex = PInvoke.GetWindowLongPtr(_windowHwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
-            PInvoke.SetWindowLongPtr(_windowHwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, ex | (nint)WINDOW_EX_STYLE.WS_EX_APPWINDOW);
-        }
+            IsHitTestVisible = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        var content = window.Content as UIElement;
+        var root = new Grid { Background = null };
+        window.Content = root;
+        root.Children.Add(_panel);
+        if (content is not null) root.Children.Add(content);
+        SwapChainPanelInterop.SetSwapChain(_panel, _d3d.SwapChain);
+        ApplyCompositionScale();
+        _panel.CompositionScaleChanged += (_, _) => ApplyCompositionScale();
+        _panel.SizeChanged += (_, _) => SyncToWindow();
+
+        // The WinUI window: transparent where XAML paints nothing.
+        window.SystemBackdrop = new TransparentBackdrop();
         var emptyRegion = PInvoke.CreateRectRgn(0, 0, -1, -1);
         var blurBehind = new DWM_BLURBEHIND
         {
@@ -93,8 +103,7 @@ public sealed class GlassHost : IDisposable
         GlassScene.Register(_windowId, Scene);
 
         _appWindow.Changed += OnAppWindowChanged;
-        _glass.OnRenderTick = RenderTick;
-        _glass.OnDisplayChanged = () => { _capture.RetargetIfDisplayChanged(_glass.HandleValue); RecomputeUvRect(); };
+        InstallSubclass();
         window.Closed += (_, _) => Dispose();
 
         SyncToWindow();
@@ -120,7 +129,7 @@ public sealed class GlassHost : IDisposable
     {
         try
         {
-            var ok = await _capture.StartAsync(_glass.Handle);
+            var ok = await _capture.StartAsync(_windowHwnd);
             if (!ok || _disposed)
             {
                 GlassLog.Write("live capture failed to start (consent denied or API unavailable); glass stays empty");
@@ -128,12 +137,11 @@ public sealed class GlassHost : IDisposable
             }
             _captureReady = true;
             RecomputeUvRect();
-            // Both HWNDs out of every capture pipeline (ours included) so the glass reads the
-            // real backdrop under itself rather than its own last frame.
-            WindowCaptureExclusion.Register(_glass.HandleValue);
+            // Out of every capture pipeline (ours included) so the glass reads the real backdrop
+            // under the window rather than its own last frame.
             WindowCaptureExclusion.Register(WindowHandleValue);
             WindowCaptureExclusion.SetExcluded(true);
-            _glass.StartRenderTimer(RenderIntervalMs);
+            CompositionTarget.Rendering += OnRendering;
         }
         catch (Exception ex)
         {
@@ -141,12 +149,37 @@ public sealed class GlassHost : IDisposable
         }
     }
 
+    private void OnRendering(object? sender, object e) => RenderTick();
+
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
         if (args.DidPositionChange || args.DidSizeChange || args.DidVisibilityChange || args.DidPresenterChange)
         {
             SyncToWindow();
         }
+    }
+
+    // ---- WM_DISPLAYCHANGE via a comctl32 subclass of the WinUI HWND ------------------------
+    // A monitor being added/removed/reconfigured can leave the window on a different display
+    // without it moving, and the capture item is per-display. The delegate is kept in a field
+    // so its thunk outlives the call.
+
+    private readonly SUBCLASSPROC _subclassProc;
+    private const nuint SubclassId = 0x4A47; // 'JG'
+
+    private void InstallSubclass()
+    {
+        PInvoke.SetWindowSubclass(_windowHwnd, _subclassProc, SubclassId, 0);
+    }
+
+    private LRESULT SubclassProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, nuint id, nuint refData)
+    {
+        if (msg == PInvoke.WM_DISPLAYCHANGE && !_disposed)
+        {
+            _capture.RetargetIfDisplayChanged(WindowHandleValue);
+            RecomputeUvRect();
+        }
+        return PInvoke.DefSubclassProc(hwnd, msg, wParam, lParam);
     }
 
     /// <summary>Client rect of the WinUI window in screen pixels -- the glass covers exactly what
@@ -159,49 +192,55 @@ public sealed class GlassHost : IDisposable
         return (origin.X, origin.Y, rc.right - rc.left, rc.bottom - rc.top);
     }
 
+    /// <summary>The swapchain is sized in physical pixels but a SwapChainPanel maps buffer pixels
+    /// to DIPs 1:1 by default, so the inverse composition scale has to be applied or the glass
+    /// renders at (scale)x the window on a HiDPI display.</summary>
+    private void ApplyCompositionScale()
+    {
+        var sx = _panel.CompositionScaleX;
+        var sy = _panel.CompositionScaleY;
+        if (sx <= 0 || sy <= 0) return;
+        _swapChain2.MatrixTransform = Matrix3x2.CreateScale(1f / sx, 1f / sy);
+    }
+
     private void SyncToWindow()
     {
         if (_disposed) return;
         var visible = PInvoke.IsWindowVisible(_windowHwnd) && !PInvoke.IsIconic(_windowHwnd);
         if (!visible)
         {
-            _glass.SetVisible(false);
-            _glassVisible = false;
+            _visible = false;
             return;
         }
 
         var client = ClientRectOnScreen();
         if (client.Width <= 0 || client.Height <= 0)
         {
-            _glass.SetVisible(false);
-            _glassVisible = false;
+            _visible = false;
             return;
         }
 
-        _glass.SetBounds(client.X, client.Y, client.Width, client.Height);
         var resized = client.Width != _d3d.Width || client.Height != _d3d.Height;
         if (resized)
         {
-            _composition.AroundResize(() => _d3d.ResizeBuffers(client.Width, client.Height));
+            _d3d.ResizeBuffers(client.Width, client.Height);
         }
-        _capture.RetargetIfDisplayChanged(_glass.HandleValue);
+        _capture.RetargetIfDisplayChanged(WindowHandleValue);
         RecomputeUvRect();
-        var wasVisible = _glassVisible;
-        _glass.SetVisible(true);
-        _glassVisible = true;
+        var wasVisible = _visible;
+        _visible = true;
         if (_captureReady && (resized || !wasVisible))
         {
             // A resize or first show needs a fresh frame now, not a tick later, or the resized
             // buffers show up stale/black. A pure move does NOT render here: AppWindow.Changed
             // fires per mouse-move during a drag, and a vsync-bound Present on every one fills
-            // the present queue and blocks the UI thread -- the WinUI window itself then
-            // stutters along behind the glass. The 16ms timer re-renders the shifted UV crop
-            // within a frame, which is the latency the capture already has while dragging.
+            // the present queue and blocks the UI thread. The next Rendering tick re-renders
+            // the shifted UV crop within a frame, which is the latency the capture already has.
             RenderTick();
         }
     }
 
-    private bool _glassVisible;
+    private bool _visible;
 
     private void RecomputeUvRect()
     {
@@ -209,62 +248,128 @@ public sealed class GlassHost : IDisposable
         var item = _capture.ItemSize;
         if (item.Width <= 0 || item.Height <= 0) return;
 
-        // The capture is of the display the glass is on and its item is that display's pixels,
-        // so the window rect is taken relative to that display's origin, not the virtual
+        // The capture is of the display the window is on and its item is that display's pixels,
+        // so the client rect is taken relative to that display's origin, not the virtual
         // desktop's.
-        var rect = _glass.GetScreenRect();
+        var rect = ClientRectOnScreen();
         var originX = 0;
         var originY = 0;
         try
         {
-            var area = DisplayArea.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_glass.HandleValue), DisplayAreaFallback.Nearest);
+            var area = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
             originX = area.OuterBounds.X;
             originY = area.OuterBounds.Y;
         }
         catch { }
 
         _uvRect = new Vector4(
-            (float)(rect.left - originX) / item.Width,
-            (float)(rect.top - originY) / item.Height,
-            (float)(rect.right - rect.left) / item.Width,
-            (float)(rect.bottom - rect.top) / item.Height);
+            (float)(rect.X - originX) / item.Width,
+            (float)(rect.Y - originY) / item.Height,
+            (float)rect.Width / item.Width,
+            (float)rect.Height / item.Height);
     }
 
     private void RenderTick()
     {
-        if (_disposed) return;
+        if (_disposed || !_visible || _rendering) return;
         var srv = _capture.TryGetLiveFrameSrv();
         if (srv is null) return;
-
-        // Layer 0 is a flat, invisible pane over the whole window: no bezel, tint or rim, just an
-        // identity copy of the capture. Every layer refracts the layer below it, so without this
-        // the slabs on layer 1 would be bending layer 0's transparent nothing and come out black
-        // (in the lab the whole-window panel played this role). It also means the gaps between
-        // slabs show the live capture rather than DWM's own passthrough -- indistinguishable,
-        // bar a frame of latency while the window is being dragged.
-        var scene = Scene.SnapshotShapes();
-        var shapes = new GlassShape[Math.Min(GlassScene.MaxShapes, scene.Length + 1)];
-        shapes[0] = GlassShape.Create(
-            new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f), new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f),
-            cornerRadius: 0f, bezelWidth: 0f, GlassBezelProfile.Squircle, refractionScale: 0f, specularIntensity: 0f,
-            layer: 0, tintColor: Vector3.One, tintAmount: 0f);
-        scene.AsSpan(0, shapes.Length - 1).CopyTo(shapes.AsSpan(1));
-        _renderer.Draw(_d3d.RenderTargetView, srv, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
-        _d3d.Present();
+        // Rendering fires every display frame, but the inputs only change when the desktop under
+        // the window changed (a new capture frame), a control published, or the window moved or
+        // resized. Re-rendering an identical frame is pure GPU heat -- the full pipeline is
+        // several passes per layer over every pixel -- so skip it.
+        var key = (_capture.FrameCount, Scene.Version, _uvRect, _d3d.Width, _d3d.Height);
+        if (key == _lastRendered) return;
+        _lastRendered = key;
+        _rendering = true;
+        try
+        {
+            // Layer 0 is a flat, invisible pane over the whole window: no bezel, tint or rim,
+            // just an identity copy of the capture. Every layer refracts the layer below it, so
+            // without this the slabs on layer 1 would be bending layer 0's transparent nothing
+            // and come out black (in the lab the whole-window panel played this role). It also
+            // means the gaps between slabs show the live capture rather than DWM's own
+            // passthrough -- indistinguishable, bar a frame of latency while the window is
+            // being dragged.
+            var scene = Scene.SnapshotShapes();
+            var shapes = new GlassShape[Math.Min(GlassScene.MaxShapes, scene.Length + 1)];
+            shapes[0] = GlassShape.Create(
+                new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f), new Vector2(_d3d.Width * 0.5f, _d3d.Height * 0.5f),
+                cornerRadius: 0f, bezelWidth: 0f, GlassBezelProfile.Squircle, refractionScale: 0f, specularIntensity: 0f,
+                layer: 0, tintColor: Vector3.One, tintAmount: 0f);
+            scene.AsSpan(0, shapes.Length - 1).CopyTo(shapes.AsSpan(1));
+            _renderer.Draw(_d3d.RenderTargetView, srv, _capture.FrameCount, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
+            _d3d.Present();
+        }
+        finally
+        {
+            _rendering = false;
+        }
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        CompositionTarget.Rendering -= OnRendering;
         _appWindow.Changed -= OnAppWindowChanged;
+        PInvoke.RemoveWindowSubclass(_windowHwnd, _subclassProc, SubclassId);
         GlassScene.Unregister(_windowId);
-        _glass.StopRenderTimer();
         _capture.Dispose();
         _renderer.Dispose();
-        _composition.Dispose();
+        _swapChain2.Dispose();
         _d3d.Dispose();
-        _glass.Destroy();
+    }
+}
+
+/// <summary>DWM chrome tweaks for hosted windows.</summary>
+public static class GlassWindowChrome
+{
+    private const uint DWMWA_BORDER_COLOR = 34;
+    private const uint DWMWA_COLOR_NONE = 0xFFFFFFFE;
+
+    /// <summary>Removes the 1px DWM outline Windows 11 draws around a top-level window. The glass
+    /// panel paints the whole client rect (layer 0 is a copy of the desktop behind it), so DWM
+    /// treats the window as opaque and outlines it -- on a borderless card like the HUD that
+    /// reads as a rectangle around the pill.</summary>
+    public static unsafe void HideBorder(Window window)
+    {
+        var hwnd = (HWND)WinRT.Interop.WindowNative.GetWindowHandle(window);
+        var color = DWMWA_COLOR_NONE;
+        PInvoke.DwmSetWindowAttribute(hwnd, (DWMWINDOWATTRIBUTE)DWMWA_BORDER_COLOR, &color, sizeof(uint));
+    }
+}
+
+/// <summary>ISwapChainPanelNative (microsoft.ui.xaml.media.dxinterop.h) by raw vtable: the
+/// interface isn't projected, and a bare QueryInterface + slot call avoids depending on how
+/// CsWinRT marshals ComImport interfaces.</summary>
+internal static unsafe class SwapChainPanelInterop
+{
+    // {63aad0b8-7c24-40ff-85a8-640d944cc325}
+    private static readonly Guid IID_ISwapChainPanelNative = new(0x63aad0b8, 0x7c24, 0x40ff, 0x85, 0xa8, 0x64, 0x0d, 0x94, 0x4c, 0xc3, 0x25);
+
+    public static void SetSwapChain(SwapChainPanel panel, IDXGISwapChain1 swapChain)
+    {
+        var unknown = WinRT.MarshalInspectable<object>.FromManaged(panel);
+        try
+        {
+            Marshal.ThrowExceptionForHR(Marshal.QueryInterface(unknown, in IID_ISwapChainPanelNative, out var native));
+            try
+            {
+                // IUnknown: QueryInterface/AddRef/Release = slots 0..2; SetSwapChain = slot 3.
+                var vtbl = *(void***)native;
+                var setSwapChain = (delegate* unmanaged[Stdcall]<nint, nint, int>)vtbl[3];
+                Marshal.ThrowExceptionForHR(setSwapChain(native, swapChain.NativePointer));
+            }
+            finally
+            {
+                Marshal.Release(native);
+            }
+        }
+        finally
+        {
+            Marshal.Release(unknown);
+        }
     }
 }
 

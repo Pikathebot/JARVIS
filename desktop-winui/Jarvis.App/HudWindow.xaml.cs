@@ -64,8 +64,9 @@ public sealed partial class HudWindow : Window
 
         _appWindow.Hide();
 
-        // Always-on-top glass behind an always-on-top HUD; not a taskbar window.
-        Glass = new Jarvis_Glass.GlassHost(this, topmost: true, showInTaskbar: false);
+        // Liquid glass under the card's XAML tree.
+        Glass = new Jarvis_Glass.GlassHost(this);
+        Jarvis_Glass.GlassWindowChrome.HideBorder(this);
     }
 
     public void ToggleVisible()

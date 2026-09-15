@@ -47,3 +47,8 @@ GetWindowLongPtr
 WS_EX_APPWINDOW
 GetWindowLongPtr
 GWL_EXSTYLE
+// GlassHost: WM_DISPLAYCHANGE on the WinUI HWND itself (the glass is now inside it).
+SetWindowSubclass
+RemoveWindowSubclass
+DefSubclassProc
+DwmSetWindowAttribute
