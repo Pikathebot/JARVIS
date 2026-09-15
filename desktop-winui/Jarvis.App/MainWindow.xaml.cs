@@ -126,13 +126,19 @@ public sealed partial class MainWindow : Window
             SessionsViewModel.ProjectId = project?.Id;
             RightPanelViewModel.ProjectId = project?.Id;
             SessionLabel.Text = project?.Name ?? "Default Workspace";
+            UpdateWorkspaceHighlight();
             _ = SessionsViewModel.RefreshAsync();
         };
         ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() => _ = SessionsViewModel.RefreshAsync());
+        ChatViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ViewModels.ChatViewModel.ActiveSessionId)) DispatcherQueue.TryEnqueue(UpdateSessionHighlight);
+        };
 
         _ = ProjectsViewModel.RefreshAsync();
         _ = SessionsViewModel.RefreshAsync();
 
+        RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(RootGrid_PointerPressedForDropdown), handledEventsToo: true);
         ExtendTitleBar();
         // Liquid glass under this window's XAML tree.
         Glass = new Jarvis_Glass.GlassHost(this);
@@ -341,11 +347,75 @@ public sealed partial class MainWindow : Window
 
     private void NewChat_Click(object sender, RoutedEventArgs e) => ChatViewModel.NewChat();
 
-    private async void ProjectSwitcher_SelectionChanged(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)
+    private void WorkspaceButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ProjectSwitcher.SelectedItem is Project project && project.Id != ProjectsViewModel.ActiveProject?.Id)
+        if (WorkspaceDropdown.Visibility == Visibility.Visible)
+        {
+            WorkspaceDropdown.Visibility = Visibility.Collapsed;
+            return;
+        }
+        // Float the card just under the button, matching its width.
+        var origin = WorkspaceButton.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, WorkspaceButton.ActualHeight + 6));
+        WorkspaceDropdown.Margin = new Thickness(origin.X, origin.Y, 0, 0);
+        WorkspaceDropdown.MinWidth = WorkspaceButton.ActualWidth;
+        WorkspaceDropdown.Visibility = Visibility.Visible;
+        UpdateWorkspaceHighlight();
+    }
+
+    /// <summary>Light dismiss: any press outside the card (or its button) closes it. Registered
+    /// with handledEventsToo so presses swallowed by controls still count.</summary>
+    private void RootGrid_PointerPressedForDropdown(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (WorkspaceDropdown.Visibility != Visibility.Visible) return;
+        if (e.OriginalSource is DependencyObject source && (IsInside(source, WorkspaceDropdown) || IsInside(source, WorkspaceButton))) return;
+        WorkspaceDropdown.Visibility = Visibility.Collapsed;
+    }
+
+    private static bool IsInside(DependencyObject node, DependencyObject ancestor)
+    {
+        DependencyObject? n = node;
+        while (n is not null)
+        {
+            if (ReferenceEquals(n, ancestor)) return true;
+            n = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(n);
+        }
+        return false;
+    }
+
+    private bool _syncingWorkspaceMenu;
+
+    private async void WorkspaceMenu_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncingWorkspaceMenu) return;
+        var index = WorkspaceMenu.SelectedIndex;
+        if (index < 0 || index >= ProjectsViewModel.Projects.Count) return;
+        var project = ProjectsViewModel.Projects[index];
+        // Let the puck land before the card folds away.
+        await Task.Delay(180);
+        WorkspaceDropdown.Visibility = Visibility.Collapsed;
+        if (project.Id != ProjectsViewModel.ActiveProject?.Id)
         {
             await ProjectsViewModel.ActivateAsync(project);
+        }
+    }
+
+    /// <summary>Rebuilds the menu's rows from the project list and parks the puck on the active
+    /// one (without that counting as a user selection).</summary>
+    private void UpdateWorkspaceHighlight()
+    {
+        WorkspaceButton.Text = ProjectsViewModel.ActiveProject?.Name ?? "Default Workspace";
+        _syncingWorkspaceMenu = true;
+        try
+        {
+            var names = ProjectsViewModel.Projects.Select(p => p.Name.Replace('|', '/')).ToList();
+            var items = names.Count > 0 ? string.Join("|", names) : "Default Workspace";
+            if (WorkspaceMenu.Items != items) WorkspaceMenu.Items = items;
+            var index = ProjectsViewModel.Projects.ToList().FindIndex(p => p.Id == ProjectsViewModel.ActiveProject?.Id);
+            WorkspaceMenu.SelectedIndex = Math.Max(0, index);
+        }
+        finally
+        {
+            _syncingWorkspaceMenu = false;
         }
     }
 
@@ -354,7 +424,42 @@ public sealed partial class MainWindow : Window
         if (sender is FrameworkElement { Tag: Session session })
         {
             await SessionsViewModel.SelectAsync(session);
+            UpdateSessionHighlight();
         }
+    }
+
+    /// <summary>x:Bind target for the session rows (the template can't call the view model's
+    /// instance-free helper with the whole item).</summary>
+    public static string SessionRowLabel(string sessionId, string? lastMessage) =>
+        SessionsViewModel.DisplayLabel(new Session { SessionId = sessionId, LastMessage = lastMessage });
+
+    private static readonly Windows.UI.Color SessionRestTint = Windows.UI.Color.FromArgb(255, 20, 23, 33);
+    private static readonly Windows.UI.Color SessionActiveTint = Windows.UI.Color.FromArgb(255, 8, 145, 178);
+
+    private void SessionRow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Jarvis_Glass.GlassSlab row) ApplySessionHighlight(row);
+    }
+
+    /// <summary>Tints the active session's row accent, the rest neutral. Called whenever the
+    /// active session or the list changes; rows realised later pick it up in SessionRow_Loaded.</summary>
+    private void UpdateSessionHighlight()
+    {
+        foreach (var item in SessionsViewModel.Sessions)
+        {
+            if (SessionsList.ContainerFromItem(item) is ListViewItem container
+                && container.ContentTemplateRoot is Jarvis_Glass.GlassSlab row)
+            {
+                ApplySessionHighlight(row);
+            }
+        }
+    }
+
+    private void ApplySessionHighlight(Jarvis_Glass.GlassSlab row)
+    {
+        var active = row.Tag is Session s && s.SessionId == ChatViewModel.ActiveSessionId;
+        row.TintColor = active ? SessionActiveTint : SessionRestTint;
+        row.TintAmount = active ? 0.6 : 0.14;
     }
 
     private async void DeleteSession_Click(object sender, RoutedEventArgs e)

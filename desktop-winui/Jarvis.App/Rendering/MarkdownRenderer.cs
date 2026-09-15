@@ -182,6 +182,7 @@ public static class MarkdownRenderer
             TextWrapping = TextWrapping.Wrap,
             FontSize = fontSize,
             Foreground = new SolidColorBrush(Color.FromArgb(255, 243, 247, 252)),
+            IsTextSelectionEnabled = true,
         };
         AppendInlines(tb.Inlines, inlines);
         return tb;

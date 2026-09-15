@@ -152,6 +152,21 @@ class MemoryStore:
                     statement = statement.where(DBSession.project_id == project_id)
                 statement = statement.order_by(col(DBSession.updated_at).desc())
                 sessions = session.exec(statement).all()
+                # The stored title is a placeholder ("Session session_") unless a caller named
+                # the session, so the sidebar shows the first thing the user said instead.
+                first_user_message: dict[str, str] = {}
+                if sessions:
+                    ids = [s.session_id for s in sessions]
+                    msg_statement = (
+                        select(Message.session_id, Message.content)
+                        .where(col(Message.session_id).in_(ids))
+                        .where(Message.role == "user")
+                        .where(Message.is_summary == 0)
+                        .order_by(col(Message.id).asc())
+                    )
+                    for session_id, content in session.exec(msg_statement).all():
+                        if session_id not in first_user_message and content:
+                            first_user_message[session_id] = content.strip().splitlines()[0][:80] if content.strip() else ""
                 return [
                     {
                         "session_id": s.session_id,
@@ -160,6 +175,7 @@ class MemoryStore:
                         "chat_mode": s.chat_mode,
                         "created_at": s.created_at,
                         "updated_at": s.updated_at,
+                        "last_message": first_user_message.get(s.session_id),
                     }
                     for s in sessions
                 ]

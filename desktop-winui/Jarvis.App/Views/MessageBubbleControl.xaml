@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:glass="using:Jarvis_Glass"
     HorizontalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
     mc:Ignorable="d">
@@ -21,15 +22,32 @@
             <TextBlock x:Name="SystemText" Foreground="#94A3B8" FontSize="12" />
         </Border>
 
-        <!-- User message: right-aligned filled bubble -->
+        <!--
+            User message: right-aligned accent glass bubble. Bubbles are GlassSlabs nested in the
+            chat panel's slab, so they auto-publish one layer above it, clipped to the list's
+            viewport; XAML here draws only the text.
+        -->
         <StackPanel x:Name="UserRow" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Border
-                Background="#0891B2"
-                CornerRadius="16,16,4,16"
+            <glass:GlassSlab
+                SlabCornerRadius="16"
+                TintColor="#0891B2"
+                TintAmount="0.42"
+                Frost="8"
+                BezelWidth="6"
+                Refraction="4"
+                Specular="0.45"
+                Shadow="0.22"
+                ShadowRadius="14"
+                ShadowOffsetY="4"
                 Padding="14,10"
                 MaxWidth="640">
+                <glass:GlassSlab.ContextFlyout>
+                    <MenuFlyout>
+                        <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
+                    </MenuFlyout>
+                </glass:GlassSlab.ContextFlyout>
                 <TextBlock x:Name="UserText" Foreground="White" FontSize="14" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-            </Border>
+            </glass:GlassSlab>
             <Border Width="28" Height="28" CornerRadius="14" Background="#334155" VerticalAlignment="Top">
                 <TextBlock Text="U" Foreground="White" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
@@ -41,7 +59,22 @@
                 <TextBlock Text="J" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
             <StackPanel MaxWidth="720" Spacing="6">
-                <Border Background="#0F111726" CornerRadius="4,16,16,16" Padding="14,10" BorderThickness="1" BorderBrush="#12FFFFFF">
+                <glass:GlassSlab
+                    SlabCornerRadius="16"
+                    TintAmount="0.3"
+                    Frost="6"
+                    BezelWidth="6"
+                    Refraction="4"
+                    Specular="0.45"
+                    Shadow="0.22"
+                    ShadowRadius="14"
+                    ShadowOffsetY="4"
+                    Padding="14,10">
+                    <glass:GlassSlab.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
+                        </MenuFlyout>
+                    </glass:GlassSlab.ContextFlyout>
                     <StackPanel Spacing="8">
                         <!-- Tool step cards -->
                         <ItemsControl x:Name="ToolStepsHost" />
@@ -72,7 +105,7 @@
                             </StackPanel>
                         </Border>
                     </StackPanel>
-                </Border>
+                </glass:GlassSlab>
 
                 <!-- Metadata footer -->
                 <TextBlock x:Name="MetadataFooter" Foreground="#64748B" FontSize="10" Visibility="Collapsed" />

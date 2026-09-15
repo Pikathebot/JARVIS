@@ -42,7 +42,7 @@
                  Background="Transparent"
                  TextWrapping="NoWrap"
                  AcceptsReturn="False"
-                 KeyDown="Input_KeyDown"
+                 PreviewKeyDown="Input_KeyDown"
                  GotFocus="Input_GotFocus"
                  LostFocus="Input_LostFocus"
                  TextChanged="Input_TextChanged" />

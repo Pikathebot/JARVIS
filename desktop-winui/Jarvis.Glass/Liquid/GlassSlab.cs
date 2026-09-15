@@ -117,12 +117,24 @@ public sealed class GlassSlab : Grid
     public static readonly DependencyProperty LayerProperty = DependencyProperty.Register(
         nameof(Layer), typeof(int), typeof(GlassSlab), new PropertyMetadata(1, OnMaterialChanged));
 
-    /// <summary>Glass layer index. Panels are 1; nest higher for a slab that should refract
-    /// another slab beneath it.</summary>
+    /// <summary>Layer the slab publishes on. Unset, it is 1 for a top-level panel and one above
+    /// the nearest ancestor slab for a nested one (a message bubble inside the chat panel is
+    /// layer 2), so nesting just works; set it explicitly to override.</summary>
     public int Layer
     {
-        get => (int)GetValue(LayerProperty);
+        get => ReadLocalValue(LayerProperty) == DependencyProperty.UnsetValue ? AutoLayer() : (int)GetValue(LayerProperty);
         set => SetValue(LayerProperty, value);
+    }
+
+    private int AutoLayer()
+    {
+        DependencyObject? node = this;
+        while (node is not null)
+        {
+            node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+            if (node is GlassSlab slab) return slab.Layer + 1;
+        }
+        return 1;
     }
 
     /// <summary>The layer a control inside <paramref name="element"/>'s slab should publish its
@@ -224,6 +236,7 @@ public sealed class GlassSlab : Grid
             refractionScale: (float)Refraction * scale,
             specularIntensity: (float)Specular,
             layer: Layer,
+            clip: ClipFor(this, scale),
             tintColor: new Vector3(tint.R / 255f, tint.G / 255f, tint.B / 255f),
             tintAmount: (float)Math.Clamp(TintAmount, 0, 1),
             blurRadius: (float)Frost * scale,

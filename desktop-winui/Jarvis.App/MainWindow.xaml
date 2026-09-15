@@ -50,38 +50,58 @@
                     <StackPanel Padding="16" Spacing="12">
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
 
-                        <ComboBox
-                            x:Name="ProjectSwitcher"
-                            HorizontalAlignment="Stretch"
-                            PlaceholderText="Default Workspace"
-                            ItemsSource="{x:Bind ProjectsViewModel.Projects}"
-                            SelectedItem="{x:Bind ProjectsViewModel.ActiveProject, Mode=OneWay}"
-                            SelectionChanged="ProjectSwitcher_SelectionChanged">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate x:DataType="models:Project">
-                                    <TextBlock Text="{x:Bind Name}" />
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                        <!--
+                            Workspace picker: a glass button that drops a floating glass card
+                            (WorkspaceDropdown, at the root so it floats over the sidebar);
+                            a ComboBox's popup is painted above the window, where the glass
+                            can't reach.
+                        -->
+                        <glass:GlassButton x:Name="WorkspaceButton" Text="Default Workspace" HorizontalAlignment="Stretch" Click="WorkspaceButton_Click" />
 
                         <glass:GlassButton Text="+ New Chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
                         <TextBlock Text="Recent Sessions" Foreground="#94A3B8" FontSize="12" Margin="0,12,0,0" />
+                        <!--
+                            Each session is a small glass row nested in the sidebar slab (auto
+                            layer 2, clipped to the list). The active one is tinted accent from
+                            code-behind (UpdateSessionHighlight) since the template can't see
+                            ChatViewModel.
+                        -->
                         <ListView
                             x:Name="SessionsList"
                             Background="Transparent"
                             SelectionMode="None"
                             ItemsSource="{x:Bind SessionsViewModel.Sessions}">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="MinHeight" Value="0" />
+                                    <Setter Property="Margin" Value="0,0,0,6" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="models:Session">
-                                    <Grid Padding="8,6" Tapped="SessionItem_Tapped" Tag="{x:Bind}">
+                                    <glass:GlassSlab
+                                        SlabCornerRadius="10"
+                                        TintAmount="0.14"
+                                        Frost="0"
+                                        BezelWidth="4"
+                                        Refraction="2"
+                                        Specular="0.35"
+                                        Shadow="0"
+                                        Padding="10,7"
+                                        Tapped="SessionItem_Tapped"
+                                        Loaded="SessionRow_Loaded"
+                                        Tag="{x:Bind}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
-                                            Text="{x:Bind SessionId}"
+                                            Text="{x:Bind local:MainWindow.SessionRowLabel(SessionId, LastMessage)}"
                                             Foreground="#CBD5E1"
                                             FontSize="12"
+                                            VerticalAlignment="Center"
                                             TextTrimming="CharacterEllipsis" />
                                         <Button
                                             Grid.Column="1"
@@ -92,7 +112,7 @@
                                             BorderThickness="0"
                                             Tag="{x:Bind}"
                                             Click="DeleteSession_Click" />
-                                    </Grid>
+                                    </glass:GlassSlab>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
@@ -163,6 +183,7 @@
                             Grid.Row="1"
                             Padding="16"
                             SelectionMode="None"
+                            IsSwipeEnabled="False"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
@@ -365,6 +386,34 @@
                     </Grid>
             </glass:GlassSlab>
         </Grid>
+
+        <!--
+            Workspace dropdown: one frosted glass card (iOS search-suggestions style) floated
+            under the workspace button; rows are plain text on the card, the active one lit.
+            Positioned from code-behind when opened; light-dismissed by any press outside it.
+        -->
+        <glass:GlassSlab
+            x:Name="WorkspaceDropdown"
+            Grid.Row="0"
+            Grid.RowSpan="2"
+            Visibility="Collapsed"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Layer="3"
+            SlabCornerRadius="14"
+            TintAmount="0.55"
+            Frost="16"
+            BezelWidth="8"
+            Refraction="5"
+            Specular="0.5"
+            Shadow="0.4"
+            ShadowRadius="24"
+            ShadowOffsetY="8"
+            Padding="6"
+            MinWidth="220">
+            <!-- Rows + the sliding puck are the vertical segmented control; Items set from code. -->
+            <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" />
+        </glass:GlassSlab>
 
         <!-- Settings sheet overlay (see Views/SettingsPane.xaml); filled on demand by Settings_Click. -->
         <Grid x:Name="SettingsHost" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed" />

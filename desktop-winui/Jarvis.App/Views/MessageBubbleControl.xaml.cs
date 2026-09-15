@@ -160,6 +160,16 @@ public sealed partial class MessageBubbleControl : UserControl
         }
     }
 
+    /// <summary>Right-click / long-press "Copy message" on either bubble: the whole message as
+    /// plain text, for when drag-selecting inside a bubble is more fiddly than wanted.</summary>
+    private void CopyMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ChatMessage message || string.IsNullOrEmpty(message.Content)) return;
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(message.Content);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+    }
+
     private void RenderAssistant(ChatMessage message)
     {
         if (message.IsStreaming)
@@ -173,6 +183,7 @@ public sealed partial class MessageBubbleControl : UserControl
                     TextWrapping = TextWrapping.Wrap,
                     FontSize = 14,
                     Foreground = new SolidColorBrush(Color.FromArgb(255, 243, 247, 252)),
+                    IsTextSelectionEnabled = true,
                 };
                 ContentHost.Content = _streamingText;
             }

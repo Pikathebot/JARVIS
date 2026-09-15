@@ -100,7 +100,9 @@ public sealed partial class GlassTextField : UserControl
         Input.TextWrapping = AcceptsReturn ? TextWrapping.Wrap : TextWrapping.NoWrap;
     }
 
-    /// <summary>The inner TextBox's KeyDown, for Enter-to-send handling by the host.</summary>
+    /// <summary>The inner TextBox's PreviewKeyDown (tunnelling), for Enter-to-send handling by
+    /// the host: with AcceptsReturn on, the TextBox consumes Enter into a newline before a
+    /// bubbling KeyDown handler ever sees it.</summary>
     public event KeyEventHandler? InputKeyDown;
 
     private void Input_KeyDown(object sender, KeyRoutedEventArgs e) => InputKeyDown?.Invoke(sender, e);
@@ -207,7 +209,12 @@ public sealed partial class GlassTextField : UserControl
         var grow = 1f + (Material.FocusScale - 1f) * m;
 
         var center = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
-        var half = new Vector2((float)bounds.Width * 0.5f, (float)bounds.Height * 0.5f) * scale * grow;
+        var half = new Vector2((float)bounds.Width * 0.5f, (float)bounds.Height * 0.5f) * scale;
+        // Lift grows the pill by the same few pixels on every side (scaled off its height), not
+        // by a fraction of its width: a composer-wide field at 3% would swell 25px into the
+        // attach and send buttons beside it.
+        var liftPx = half.Y * (grow - 1f);
+        half += new Vector2(liftPx, liftPx);
         var radius = half.Y;
 
         var tintColor = Vector3.Lerp(Material.ClearTint, Material.FocusTint, m);

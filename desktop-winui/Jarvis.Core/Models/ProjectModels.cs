@@ -33,14 +33,19 @@ public sealed class Session
     [JsonPropertyName("project_id")]
     public string? ProjectId { get; set; }
 
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
     [JsonPropertyName("chat_mode")]
     public string? ChatMode { get; set; }
 
+    // Unix timestamps (float seconds) on the wire -- typed as strings these failed to
+    // deserialize and the sidebar's session list silently stayed empty.
     [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; set; }
+    public double? CreatedAt { get; set; }
 
     [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; set; }
+    public double? UpdatedAt { get; set; }
 
     [JsonPropertyName("message_count")]
     public int? MessageCount { get; set; }

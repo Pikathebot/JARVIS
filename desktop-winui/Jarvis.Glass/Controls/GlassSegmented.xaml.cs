@@ -89,6 +89,30 @@ public sealed partial class GlassSegmented : UserControl
 
     public event RoutedEventHandler? SelectionChanged;
 
+    public static readonly DependencyProperty OrientationProperty = DependencyProperty.Register(
+        nameof(Orientation), typeof(Orientation), typeof(GlassSegmented), new PropertyMetadata(Orientation.Horizontal, (d, _) => ((GlassSegmented)d).ApplyOrientation()));
+
+    /// <summary>Vertical = a menu: rows of <see cref="RowHeight"/> stacked in the control, the
+    /// selected one marked by the same lifting pill sliding up and down, labels left-aligned.
+    /// No track is drawn -- the card the menu sits in is the track -- so the pill publishes on
+    /// the control's base layer and the labels on the card's layer beneath it.</summary>
+    public Orientation Orientation
+    {
+        get => (Orientation)GetValue(OrientationProperty);
+        set => SetValue(OrientationProperty, value);
+    }
+
+    /// <summary>Row height in DIPs when vertical.</summary>
+    public double RowHeight { get; set; } = 36;
+
+    private bool IsVertical => Orientation == Orientation.Vertical;
+
+    private void ApplyOrientation()
+    {
+        Height = IsVertical ? RowHeight * Count : TrackHeight;
+        PublishShapes();
+    }
+
     private int Count => Math.Max(1, _labels.Length);
 
     public GlassSegmented()
@@ -127,6 +151,7 @@ public sealed partial class GlassSegmented : UserControl
             probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
             return (float)probe.DesiredSize.Width;
         }).ToArray();
+        if (IsVertical) Height = RowHeight * Count;
         PublishShapes();
     }
 
@@ -145,6 +170,12 @@ public sealed partial class GlassSegmented : UserControl
         var n = Count;
         var left = new float[n];
         var width = new float[n];
+        if (IsVertical)
+        {
+            // Equal rows down the control: "left" is the row's top, "width" its height.
+            for (var i = 0; i < n; i++) { width[i] = (float)RowHeight; left[i] = i * (float)RowHeight; }
+            return (left, width);
+        }
         if (_labelWidths.Length != n || totalWidth <= 0f)
         {
             for (var i = 0; i < n; i++) { width[i] = totalWidth / n; left[i] = i * width[i]; }
@@ -167,7 +198,7 @@ public sealed partial class GlassSegmented : UserControl
     /// integer positions, linear in between, so a drag carries the pill at the pointer's pace.</summary>
     private float IndexFromPointer(double x)
     {
-        var (left, width) = SegmentLayout((float)ActualWidth);
+        var (left, width) = SegmentLayout((float)(IsVertical ? ActualHeight : ActualWidth));
         var n = Count;
         if (n == 1 || width[0] <= 0f) return 0f;
         var px = (float)x;
@@ -184,11 +215,13 @@ public sealed partial class GlassSegmented : UserControl
 
     private const float DragThresholdDip = 4f;
 
+    private float MainAxis(Windows.Foundation.Point p) => (float)(IsVertical ? p.Y : p.X);
+
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressed = true;
         _dragging = false;
-        _dragStartX = (float)e.GetCurrentPoint(this).Position.X;
+        _dragStartX = MainAxis(e.GetCurrentPoint(this).Position);
         _dragTarget = SelectedIndex;
         CapturePointer(e.Pointer);
         StartAnimating();
@@ -198,7 +231,7 @@ public sealed partial class GlassSegmented : UserControl
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (!_pressed) return;
-        var x = (float)e.GetCurrentPoint(this).Position.X;
+        var x = MainAxis(e.GetCurrentPoint(this).Position);
         if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
         _dragging = true;
         _dragTarget = IndexFromPointer(x);
@@ -211,7 +244,7 @@ public sealed partial class GlassSegmented : UserControl
         {
             _pressed = false;
             ReleasePointerCapture(e.Pointer);
-            var x = e.GetCurrentPoint(this).Position.X;
+            var x = MainAxis(e.GetCurrentPoint(this).Position);
             var index = _dragging ? (int)MathF.Round(_dragTarget) : (int)MathF.Round(IndexFromPointer(x));
             _dragging = false;
             if (index == SelectedIndex) StartAnimating();
@@ -263,6 +296,67 @@ public sealed partial class GlassSegmented : UserControl
         }
     }
 
+    /// <summary>Vertical (menu) publish: a pill the row's size sliding between rows, no track,
+    /// labels left-aligned under it on the layer beneath.</summary>
+    private void PublishVertical(Windows.Foundation.Rect bounds, float scale, Vector4 clip, int baseLayer)
+    {
+        var left = (float)bounds.X * scale;
+        var top = (float)bounds.Y * scale;
+        var width = (float)bounds.Width * scale;
+        var rowH = (float)RowHeight * scale;
+        var (rowTop, rowHeight) = SegmentLayout((float)bounds.Height);
+
+        var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
+        var grow = 1f + (Material.LiftScale - 1f) * m;
+        var lo = Math.Clamp((int)MathF.Floor(_travel), 0, Count - 1);
+        var hi = Math.Clamp(lo + 1, 0, Count - 1);
+        var f = Math.Clamp(_travel - lo, 0f, 1f);
+        var rowCenterDip = (rowTop[lo] + rowHeight[lo] * 0.5f) + ((rowTop[hi] + rowHeight[hi] * 0.5f) - (rowTop[lo] + rowHeight[lo] * 0.5f)) * f;
+
+        // The pill is the row minus the inset; lift grows it by a few px, not a fraction of
+        // its width (a menu row is wide).
+        var pillHalf = new Vector2(width * 0.5f - PillInset * scale, rowH * 0.5f - PillInset * scale);
+        var liftPx = pillHalf.Y * (grow - 1f);
+        pillHalf += new Vector2(liftPx, liftPx);
+        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch * 2f) * m;
+        pillHalf.Y *= 1f + stretch;
+        var pillCenter = new Vector2(left + width * 0.5f, top + rowCenterDip * scale);
+        var pillRadius = Math.Min(pillHalf.Y, 10f * scale);
+
+        _scene.Publish(this,
+            GlassShape.Create(pillCenter, pillHalf, pillRadius, pillRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
+                refractionScale: Material.LiftRefraction * m * scale,
+                specularIntensity: T.RestSpecular + (T.LiftSpecular - T.RestSpecular) * m,
+                layer: baseLayer,
+                tintColor: B.AccentTint,
+                tintAmount: Material.PillRestTintAmount + (Material.PillLiftTintAmount - Material.PillRestTintAmount) * m,
+                chromatic: T.LiftChromatic * m,
+                shadowStrength: T.RestShadow + (T.LiftShadow - T.RestShadow) * m,
+                shadowRadius: (T.RestShadowRadius + (T.LiftShadowRadius - T.RestShadowRadius) * m) * scale,
+                shadowOffsetY: T.ShadowOffsetY * scale,
+                edgeRing: T.LiftEdgeRing * m, clip: clip, secondLight: T.SecondLight));
+
+        // Labels left-aligned (the renderer centres text, so centre each run on its own measured
+        // width) on the card's layer beneath the pill; a dark copy rides the pill at rest.
+        var texts = new List<GlassText>(_labels.Length * 2);
+        for (var i = 0; i < _labels.Length; i++)
+        {
+            var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
+            var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
+            var labelW = _labelWidths.Length == Count ? _labelWidths[i] : 0f;
+            var at = new Vector2(left + (PillInset + PillPadX + labelW * 0.5f) * scale, top + (rowTop[i] + rowHeight[i] * 0.5f) * scale);
+            var size = Material.LabelSize * scale;
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer - 1, Clip: clip));
+            var onPill = near * (1f - m);
+            if (onPill > 0.002f)
+            {
+                var d = Material.LabelSelectedValue;
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer, Clip: clip));
+            }
+        }
+        _scene.PublishText(this, texts.ToArray());
+    }
+
     private static void Spring(ref float value, ref float velocity, float target, float dt, float stiffness, float damping)
     {
         var accel = (target - value) * stiffness - velocity * damping;
@@ -290,6 +384,12 @@ public sealed partial class GlassSegmented : UserControl
         }
         if (bounds.Width <= 0 || bounds.Height <= 0 || GlassSlab.IsCollapsedInTree(this)) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
         var clip = GlassSlab.ClipFor(this, scale);
+
+        if (IsVertical)
+        {
+            PublishVertical(bounds, scale, clip, baseLayer);
+            return;
+        }
 
         var left = (float)bounds.X * scale;
         var width = (float)bounds.Width * scale;
