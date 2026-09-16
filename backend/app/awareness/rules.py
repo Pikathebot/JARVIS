@@ -30,6 +30,9 @@ class Thresholds:
     disk_critical_gb: float = 5.0
     battery_warning_percent: float = 20.0
     battery_critical_percent: float = 10.0
+    # A heavy external app that stays open this long gets a nudge with numbers
+    # rather than the initial "I am yielding the GPU" notice.
+    heavy_app_nudge_seconds: float = 600.0
 
 
 def _gb(mb: float) -> float:
@@ -199,18 +202,78 @@ def model_evicted(snapshot: SystemSnapshot, t: Thresholds) -> Optional[Observati
     )
 
 
+def _minutes(seconds: float) -> str:
+    minutes = max(1, int(round(seconds / 60.0)))
+    return "a minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def _heavy_app_nudge(snapshot: SystemSnapshot, label: str, details: dict[str, float]) -> str:
+    """
+    One sentence with the numbers that matter: what the app is holding, for how long, and
+    what that leaves Jarvis. Only the figures that could actually be read are mentioned.
+    """
+    held = []
+    vram = details.get("vram_mb", 0.0)
+    ram = details.get("ram_mb", 0.0)
+    cpu = details.get("cpu_percent", 0.0)
+    if vram >= 256:
+        held.append(f"{_gb(vram)} gigabytes of VRAM")
+    if ram >= 1024:
+        held.append(f"{_gb(ram)} gigabytes of RAM")
+    if cpu >= 25:
+        held.append(f"{cpu:.0f} percent of the CPU")
+    for_how_long = _minutes(details.get("seconds", 0.0))
+    if held:
+        first = f"{label} has held {' and '.join(held)} for {for_how_long}"
+    else:
+        first = f"{label} has been running for {for_how_long}"
+
+    if snapshot.gpu_available and snapshot.vram_total_mb > 0:
+        free_gb = _gb(snapshot.vram_free_mb)
+        if snapshot.model_unloaded:
+            effect = f"the GPU has {free_gb} gigabytes free and my model stays unloaded until it closes"
+        elif free_gb < 1.5:
+            effect = f"the GPU has only {free_gb} gigabytes free, so my model has little headroom"
+        else:
+            effect = f"the GPU has {free_gb} gigabytes free"
+    else:
+        effect = "I am yielding the GPU while it runs"
+    return f"{first}; {effect}. Closing it would give that back{{address}}."
+
+
 def heavy_external_app(snapshot: SystemSnapshot, t: Thresholds) -> Optional[Observation]:
     if not snapshot.heavy_apps:
         return None
 
     apps = ", ".join(snapshot.heavy_apps)
+    data = {"heavy_apps": list(snapshot.heavy_apps), "details": snapshot.heavy_app_details}
+
+    # Sustained: the app that has been open longest gets the nudge. Escalating to WARNING
+    # is what makes the monitor announce (and speak) it after the initial notice.
+    sustained = [
+        (label, details)
+        for label, details in snapshot.heavy_app_details.items()
+        if label in snapshot.heavy_apps and details.get("seconds", 0.0) >= t.heavy_app_nudge_seconds
+    ]
+    if sustained:
+        label, details = max(sustained, key=lambda item: item[1].get("seconds", 0.0))
+        nudge = _heavy_app_nudge(snapshot, label, details)
+        return Observation(
+            kind="heavy_external_app",
+            severity=Severity.WARNING,
+            title=f"{label} has been running for {_minutes(details.get('seconds', 0.0))}",
+            detail=nudge.replace("{address}", ""),
+            spoken=nudge,
+            data=data,
+        )
+
     return Observation(
         kind="heavy_external_app",
         severity=Severity.NOTICE,
         title=f"Heavy application running: {apps}",
         detail="Jarvis is yielding GPU resources while it runs.",
         spoken=f"{apps} is running, so I am yielding the GPU.",
-        data={"heavy_apps": list(snapshot.heavy_apps)},
+        data=data,
     )
 
 

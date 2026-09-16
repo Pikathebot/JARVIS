@@ -88,6 +88,9 @@ class SystemSnapshot:
     throttle_reasons: list[str] = field(default_factory=list)
     model_unloaded: bool = False
     heavy_apps: list[str] = field(default_factory=list)
+    # Per heavy app, how long it has been running and what it is holding:
+    # {"Blender": {"seconds": 640.0, "vram_mb": 2100.0, "ram_mb": 3400.0, "cpu_percent": 35.0}}
+    heavy_app_details: dict[str, dict[str, float]] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,5 +117,6 @@ class SystemSnapshot:
             "throttle_reasons": list(self.throttle_reasons),
             "model_unloaded": self.model_unloaded,
             "heavy_apps": list(self.heavy_apps),
+            "heavy_app_details": {k: dict(v) for k, v in self.heavy_app_details.items()},
             "timestamp": self.timestamp,
         }

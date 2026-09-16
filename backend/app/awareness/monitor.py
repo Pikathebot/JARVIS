@@ -41,8 +41,13 @@ class AwarenessMonitor:
         min_speak_severity: Severity = Severity.WARNING,
         actions: Optional[dict[str, ActionFn]] = None,
         action_min_severity: Severity = Severity.CRITICAL,
+        process_watchlist: Optional[Iterable[Any]] = None,
     ):
         self.governor = governor
+        # The process watcher's rules, so a heavy app's own processes can be measured.
+        self.process_watchlist = list(process_watchlist) if process_watchlist else []
+        # label -> first time this monitor saw it, for "has been running for N minutes".
+        self._heavy_since: dict[str, float] = {}
         self.rules = tuple(rules) if rules is not None else DEFAULT_RULES
         self.thresholds = thresholds or Thresholds()
         self.poll_seconds = poll_seconds
@@ -125,9 +130,37 @@ class AwarenessMonitor:
             for reason in snapshot.throttle_reasons
             if reason.lower().startswith("external app")
         ]
+        snapshot.heavy_app_details = self._heavy_app_details(
+            snapshot.heavy_apps, snapshot.timestamp, vram_total_mb=snapshot.vram_total_mb
+        )
 
         self._last_snapshot = snapshot
         return snapshot
+
+    def _heavy_app_details(
+        self, labels: list[str], now: float, vram_total_mb: Optional[float] = None
+    ) -> dict[str, dict[str, float]]:
+        """How long each heavy app has been around, plus what it holds when that can be read."""
+        for label in list(self._heavy_since):
+            if label not in labels:
+                del self._heavy_since[label]
+        for label in labels:
+            self._heavy_since.setdefault(label, now)
+        if not labels:
+            return {}
+
+        stats: dict[str, dict[str, float]] = {}
+        if self.process_watchlist:
+            try:
+                from app.awareness.actions import heavy_app_stats
+
+                stats = heavy_app_stats(labels, self.process_watchlist, vram_total_mb=vram_total_mb)
+            except Exception as e:
+                logger.debug("Heavy app stats failed: %s", e)
+        return {
+            label: {"seconds": now - self._heavy_since[label], **stats.get(label, {})}
+            for label in labels
+        }
 
     # ---------------------------------------------------------- evaluation
 

@@ -224,7 +224,29 @@ async def _evict_on_vram_critical(observation) -> Optional[str]:
     return "VRAM was critical, so I evicted the model before it ran out."
 
 
-awareness_monitor.actions = {"vram_pressure": _evict_on_vram_critical}
+async def _name_disk_offenders(observation) -> Optional[str]:
+    """
+    Proactive action for a CRITICAL disk_space observation: say what is actually taking the
+    space among the things Jarvis manages (project workspaces and the model files), so the
+    warning comes with somewhere to look rather than just a number.
+    """
+    from app.awareness.actions import describe_disk_offenders
+
+    from app.agent.model_catalog import get_model_catalog
+
+    roots = [Path(settings.workspace_path), get_model_catalog().models_dir]
+    try:
+        return await asyncio.to_thread(describe_disk_offenders, roots)
+    except Exception as e:
+        logger.warning("Disk offender scan failed: %s", e)
+        return None
+
+
+awareness_monitor.actions = {
+    "vram_pressure": _evict_on_vram_critical,
+    "disk_space": _name_disk_offenders,
+}
+awareness_monitor.process_watchlist = list(getattr(process_watcher, "watchlist", []) or [])
 awareness_monitor.actions_enabled = settings.proactive_actions_enabled
 
 # Scheduled routines: time-triggered briefings/messages, delivered through
