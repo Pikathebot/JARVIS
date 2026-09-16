@@ -172,19 +172,26 @@ public partial class ChatViewModel : ObservableObject
         try
         {
             var raw = await _api.FetchSessionMessagesAsync(sessionId).ConfigureAwait(false);
-            foreach (var entry in raw)
+            // ConfigureAwait(false) leaves us on a worker thread; Messages is bound to the
+            // ListView, and WinUI refuses ObservableCollection changes off the UI thread. Doing
+            // the adds inline here threw a COMException that only surfaced as an empty chat.
+            Post(() =>
             {
-                var msg = MapRawMessage(entry);
-                Messages.Add(msg);
-                if (msg.Role == MessageRole.Assistant)
+                if (ActiveSessionId != sessionId) return; // user already switched again
+                foreach (var entry in raw)
                 {
-                    ActiveReasoningMessage = msg;
+                    var msg = MapRawMessage(entry);
+                    Messages.Add(msg);
+                    if (msg.Role == MessageRole.Assistant)
+                    {
+                        ActiveReasoningMessage = msg;
+                    }
                 }
-            }
+            });
         }
         catch (Exception ex)
         {
-            Error = ex.Message;
+            Post(() => Error = ex.Message);
         }
     }
 

@@ -113,13 +113,17 @@ public sealed partial class MainWindow : Window
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     var open = RightPanelViewModel.IsOpen;
-                    RightPanelColumn.Width = new GridLength(open ? 368 : 0);
                     RightPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+                    ApplyResponsiveLayout(RootGrid.ActualWidth); // column vs overlay depends on width
                 });
             }
         };
 
-        SessionsViewModel.SessionSelected += async sessionId => await ChatViewModel.LoadSessionAsync(sessionId);
+        SessionsViewModel.SessionSelected += async sessionId =>
+        {
+            CloseSidebarOverlay();
+            await ChatViewModel.LoadSessionAsync(sessionId);
+        };
         ProjectsViewModel.ActiveProjectChanged += project =>
         {
             ChatViewModel.ProjectId = project?.Id;
@@ -172,6 +176,114 @@ public sealed partial class MainWindow : Window
         }
 
         appWindow.Resize(new Windows.Graphics.SizeInt32(1280, 800));
+        // Below this the composer and one message column stop being usable; the layout adapts
+        // down to here and the window refuses to go smaller.
+        if (appWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.PreferredMinimumWidth = 420;
+            presenter.PreferredMinimumHeight = 480;
+        }
+
+        RootGrid.SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
+    }
+
+    // ------------------------------------------------------------------ responsive layout
+    //
+    // Breakpoints on the window's content width. The glass slabs need real layout changes (they
+    // publish their bounds to the scene on LayoutUpdated), so this is code, not visual states.
+    //   >= 1000  sidebar docked; right panel takes its own column
+    //   <  1000  right panel overlays the chat instead of shrinking it
+    //   <   860  sidebar hidden behind ☰ and floats over the chat when opened
+    //   <   700  header drops the toggle captions and the voice-state text
+    //   <   560  header drops the HUD button and the session label
+    private const double SidebarBreakpoint = 860;
+    private const double RightPanelOverlayBreakpoint = 1000;
+    private bool _compactSidebar;
+    private bool _sidebarOverlayOpen;
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        var compact = width < SidebarBreakpoint;
+        if (compact != _compactSidebar)
+        {
+            _compactSidebar = compact;
+            _sidebarOverlayOpen = false;
+            SidebarToggleButton.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+            if (compact)
+            {
+                // Out of the column, floating over the chat at the sidebar's natural width.
+                SidebarColumn.Width = new GridLength(0);
+                Grid.SetColumn(SidebarSlab, 1);
+                SidebarSlab.HorizontalAlignment = HorizontalAlignment.Left;
+                SidebarSlab.Width = 240;
+                SidebarSlab.Margin = new Thickness(0, 0, 0, 0);
+                Canvas.SetZIndex(SidebarSlab, 20);
+                SidebarSlab.Layer = 3; // above the chat slab it now overlaps, like the dropdown
+                SidebarSlab.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                SidebarColumn.Width = new GridLength(240);
+                Grid.SetColumn(SidebarSlab, 0);
+                SidebarSlab.HorizontalAlignment = HorizontalAlignment.Stretch;
+                SidebarSlab.Width = double.NaN;
+                SidebarSlab.Margin = new Thickness(0, 0, 8, 0);
+                Canvas.SetZIndex(SidebarSlab, 0);
+                SidebarSlab.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
+                SidebarSlab.Visibility = Visibility.Visible;
+            }
+        }
+
+        // Right panel: a column when there is room, an overlay on the chat when there is not.
+        var overlayPanel = width < RightPanelOverlayBreakpoint;
+        var panelOpen = RightPanelViewModel.IsOpen;
+        if (overlayPanel)
+        {
+            RightPanelColumn.Width = new GridLength(0);
+            Grid.SetColumn(RightPanel, 1);
+            RightPanel.HorizontalAlignment = HorizontalAlignment.Right;
+            RightPanel.Width = Math.Min(368, Math.Max(240, width - 48));
+            RightPanel.Margin = new Thickness(0);
+            Canvas.SetZIndex(RightPanel, 10);
+            RightPanel.Layer = 3;
+        }
+        else
+        {
+            RightPanelColumn.Width = new GridLength(panelOpen ? 368 : 0);
+            Grid.SetColumn(RightPanel, 2);
+            RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+            RightPanel.Width = double.NaN;
+            RightPanel.Margin = new Thickness(8, 0, 0, 0);
+            Canvas.SetZIndex(RightPanel, 0);
+            RightPanel.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
+        }
+
+        // Header: shed the least important things first.
+        var showCaptions = width >= 700;
+        GovernorLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
+        MicLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
+        VoiceStateText.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
+        var showExtras = width >= 560;
+        HudButton.Visibility = showExtras ? Visibility.Visible : Visibility.Collapsed;
+        SessionLabel.Visibility = showExtras ? Visibility.Visible : Visibility.Collapsed;
+        PanelButton.MinWidth = showExtras ? 80 : 56;
+    }
+
+    private void SidebarToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_compactSidebar) return;
+        _sidebarOverlayOpen = !_sidebarOverlayOpen;
+        SidebarSlab.Visibility = _sidebarOverlayOpen ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>In compact mode the floating sidebar closes once a session is picked.</summary>
+    private void CloseSidebarOverlay()
+    {
+        if (_compactSidebar && _sidebarOverlayOpen)
+        {
+            _sidebarOverlayOpen = false;
+            SidebarSlab.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void UpdateGovernorPill()
@@ -356,6 +468,7 @@ public sealed partial class MainWindow : Window
         }
         // Float the card just under the button, matching its width.
         var origin = WorkspaceButton.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, WorkspaceButton.ActualHeight + 6));
+        _workspaceDropdownOrigin = origin;
         WorkspaceDropdown.Margin = new Thickness(origin.X, origin.Y, 0, 0);
         WorkspaceDropdown.MinWidth = WorkspaceButton.ActualWidth;
         WorkspaceDropdown.Visibility = Visibility.Visible;
@@ -383,6 +496,26 @@ public sealed partial class MainWindow : Window
     }
 
     private bool _syncingWorkspaceMenu;
+
+    /// <summary>
+    /// The dropdown leans with the puck: while the pill is dragged, the card translates by a
+    /// damped fraction of the pull (more when pushed past the last row, a little mid-list), and
+    /// springs back with it on release. The puck reports the pull; this just applies it.
+    /// </summary>
+    private void WorkspaceMenu_DragPullChanged(object? sender, float pull)
+    {
+        // Rubber-band: the further you pull, the less the card gives.
+        var sign = MathF.Sign(pull);
+        var magnitude = MathF.Abs(pull);
+        var eased = 28f * (1f - MathF.Exp(-magnitude / 28f)); // asymptote at 28 DIPs
+        var offset = sign * eased * 0.6f;
+        // Through layout, not a RenderTransform: the glass slab publishes its bounds to the
+        // scene on LayoutUpdated, and a render transform would move the XAML without the glass.
+        var m = _workspaceDropdownOrigin;
+        WorkspaceDropdown.Margin = new Thickness(m.X, m.Y + offset, 0, 0);
+    }
+
+    private Windows.Foundation.Point _workspaceDropdownOrigin;
 
     private async void WorkspaceMenu_SelectionChanged(object sender, RoutedEventArgs e)
     {

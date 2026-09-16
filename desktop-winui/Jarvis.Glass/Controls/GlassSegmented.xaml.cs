@@ -64,6 +64,11 @@ public sealed partial class GlassSegmented : UserControl
     private bool _dragging;
     private float _dragStartX;
     private float _dragTarget;
+    private float _dragStartIndex;
+    // How far the pointer has pulled beyond where the pill could follow (DIPs along the main
+    // axis, signed), plus a little of the in-range motion. Springs back to zero on release. The
+    // host uses it to let the card the menu sits in lean with the drag.
+    private float _pull, _pullVelocity, _pullTarget;
     private GlassScene? _scene;
     private bool _rendering;
     private long _lastTick;
@@ -88,6 +93,14 @@ public sealed partial class GlassSegmented : UserControl
     }
 
     public event RoutedEventHandler? SelectionChanged;
+
+    /// <summary>Raised every animation frame while the pill is being dragged or springing home
+    /// with the current <see cref="DragPull"/>: the pointer's displacement beyond what the pill
+    /// itself moved (DIPs along the main axis, signed), so a host can let the surrounding card
+    /// lean in the drag direction and snap back.</summary>
+    public event EventHandler<float>? DragPullChanged;
+
+    public float DragPull => _pull;
 
     public static readonly DependencyProperty OrientationProperty = DependencyProperty.Register(
         nameof(Orientation), typeof(Orientation), typeof(GlassSegmented), new PropertyMetadata(Orientation.Horizontal, (d, _) => ((GlassSegmented)d).ApplyOrientation()));
@@ -217,12 +230,29 @@ public sealed partial class GlassSegmented : UserControl
 
     private float MainAxis(Windows.Foundation.Point p) => (float)(IsVertical ? p.Y : p.X);
 
+    /// <summary>Main-axis centre (DIPs) of a continuous index, for measuring how far the pill
+    /// actually moved against how far the pointer did.</summary>
+    private float CenterForIndex(float index)
+    {
+        var (left, width) = SegmentLayout((float)(IsVertical ? ActualHeight : ActualWidth));
+        var n = Count;
+        if (n == 0 || width.Length == 0) return 0f;
+        var i = Math.Clamp((int)MathF.Floor(index), 0, n - 1);
+        var j = Math.Min(i + 1, n - 1);
+        var t = Math.Clamp(index - i, 0f, 1f);
+        var ca = left[i] + width[i] * 0.5f;
+        var cb = left[j] + width[j] * 0.5f;
+        return ca + (cb - ca) * t;
+    }
+
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressed = true;
         _dragging = false;
         _dragStartX = MainAxis(e.GetCurrentPoint(this).Position);
         _dragTarget = SelectedIndex;
+        _dragStartIndex = SelectedIndex;
+        _pullTarget = 0f;
         CapturePointer(e.Pointer);
         StartAnimating();
         e.Handled = true;
@@ -235,6 +265,12 @@ public sealed partial class GlassSegmented : UserControl
         if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
         _dragging = true;
         _dragTarget = IndexFromPointer(x);
+
+        // Whatever the pointer moved that the pill did not (it stops at the last row) is pull
+        // on the card, with a touch of the in-range motion so the card leans even mid-list.
+        var pointerDelta = x - _dragStartX;
+        var pillDelta = CenterForIndex(_dragTarget) - CenterForIndex(_dragStartIndex);
+        _pullTarget = (pointerDelta - pillDelta) + pillDelta * 0.15f;
         e.Handled = true;
     }
 
@@ -282,15 +318,25 @@ public sealed partial class GlassSegmented : UserControl
         Spring(ref _travel, ref _travelVelocity, travelTarget, dt, Stiffness, Damping);
         Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.SpringStiffness, GlassToggle.SpringDamping);
 
+        var pullTarget = _dragging ? _pullTarget : 0f;
+        var pullBefore = _pull;
+        Spring(ref _pull, ref _pullVelocity, pullTarget, dt, Stiffness, Damping);
+        if (Math.Abs(_pull - pullBefore) > 0.01f || (Math.Abs(_pull) > 0.01f && !_dragging))
+        {
+            DragPullChanged?.Invoke(this, _pull);
+        }
+
         PublishShapes();
 
         var settled = !_pressed
                    && Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
-                   && Math.Abs(_lift - liftTarget) < 0.0005f && Math.Abs(_liftVelocity) < 0.01f;
+                   && Math.Abs(_lift - liftTarget) < 0.0005f && Math.Abs(_liftVelocity) < 0.01f
+                   && Math.Abs(_pull) < 0.05f && Math.Abs(_pullVelocity) < 0.5f;
         if (settled)
         {
             _travel = travelTarget; _travelVelocity = 0f;
             _lift = liftTarget; _liftVelocity = 0f;
+            if (_pull != 0f) { _pull = 0f; _pullVelocity = 0f; DragPullChanged?.Invoke(this, 0f); }
             PublishShapes();
             StopAnimating();
         }

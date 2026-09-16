@@ -29,24 +29,29 @@
 
         <!-- Custom title bar: draggable region, app name left, window controls handled by AppWindow. -->
         <Grid x:Name="TitleBarRow" Grid.Row="0" Background="Transparent">
-            <TextBlock
-                Text="JARVIS"
-                Foreground="#06B6D4"
-                FontWeight="SemiBold"
-                FontSize="13"
-                Margin="16,0,0,0"
-                VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
+                <!-- Only at narrow widths, where the sidebar is hidden and floats on demand. -->
+                <Button x:Name="SidebarToggleButton" Content="☰" FontSize="14" Padding="8,2" Background="Transparent" BorderThickness="0"
+                        Foreground="#06B6D4" Visibility="Collapsed" Click="SidebarToggle_Click" />
+                <TextBlock
+                    Text="JARVIS"
+                    Foreground="#06B6D4"
+                    FontWeight="SemiBold"
+                    FontSize="13"
+                    VerticalAlignment="Center" />
+            </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" Padding="12,0,12,12">
+        <Grid x:Name="BodyGrid" Grid.Row="1" Padding="12,0,12,12">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240" />
+                <ColumnDefinition x:Name="SidebarColumn" Width="240" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="RightPanelColumn" Width="0" />
             </Grid.ColumnDefinitions>
 
-            <!-- Sidebar: floating glass slab. -->
-            <glass:GlassSlab Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="18">
+            <!-- Sidebar: floating glass slab. At narrow widths it leaves the grid and floats over
+                 the chat from the ☰ button (see ApplyResponsiveLayout). -->
+            <glass:GlassSlab x:Name="SidebarSlab" Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="18">
                     <StackPanel Padding="16" Spacing="12">
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
 
@@ -138,7 +143,7 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="SessionLabel" Text="Default Workspace" Foreground="White" VerticalAlignment="Center" />
+                            <TextBlock x:Name="SessionLabel" Text="Default Workspace" Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                             <Button Grid.Column="1" Margin="0,0,12,0" Padding="10,4" Background="Transparent" BorderThickness="1">
                                 <TextBlock x:Name="GovernorPillText" Text="Offline" Foreground="#F43F5E" FontSize="12" />
                                 <Button.Flyout>
@@ -154,12 +159,12 @@
                             <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
                                 <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). -->
-                                <TextBlock Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
                                 <glass:GlassToggle x:Name="GovernorToggle" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
-                                <TextBlock Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <TextBlock x:Name="MicLabel" Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
                                 <glass:GlassToggle x:Name="MicToggle" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
                                 <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
-                                <glass:GlassButton Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
+                                <glass:GlassButton x:Name="PanelButton" Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>
                         </Grid>
                 </glass:GlassSlab>
@@ -415,7 +420,7 @@
             Padding="6"
             MinWidth="220">
             <!-- Rows + the sliding puck are the vertical segmented control; Items set from code. -->
-            <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" />
+            <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" DragPullChanged="WorkspaceMenu_DragPullChanged" />
         </glass:GlassSlab>
 
         <!-- Settings sheet overlay (see Views/SettingsPane.xaml); filled on demand by Settings_Click. -->

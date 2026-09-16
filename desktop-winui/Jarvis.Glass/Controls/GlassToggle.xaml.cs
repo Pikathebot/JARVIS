@@ -179,9 +179,13 @@ public sealed partial class GlassToggle : UserControl
 
     // Drag, as on iOS: while pressed the thumb follows the pointer along the track (springing
     // after it, so it still feels like the same object), and release snaps it to whichever side
-    // it is on. A tap that never moved far enough to count as a drag just flips the state.
-    private const float DragThresholdDip = 4f;
+    // it is on. The thumb moves *relative* to where the pointer started, not to wherever the
+    // pointer is: grabbing the thumb by its edge must not make it jump, and nudging it further
+    // toward the side it already sits on must leave it there. A press that never moved is a tap
+    // and flips the state; any real movement is a drag and the state is whatever side wins.
+    private const float DragThresholdDip = 2f;
     private float _dragStartX;
+    private float _dragStartTravel;
     private bool _dragging;
     private float _dragTarget;
 
@@ -190,7 +194,8 @@ public sealed partial class GlassToggle : UserControl
         _pressed = true;
         _dragging = false;
         _dragStartX = (float)e.GetCurrentPoint(this).Position.X;
-        _dragTarget = IsOn ? 1f : 0f;
+        _dragStartTravel = IsOn ? 1f : 0f;
+        _dragTarget = _dragStartTravel;
         CapturePointer(e.Pointer);
         StartAnimating();
         e.Handled = true;
@@ -200,13 +205,13 @@ public sealed partial class GlassToggle : UserControl
     {
         if (!_pressed) return;
         var x = (float)e.GetCurrentPoint(this).Position.X;
-        if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
+        var delta = x - _dragStartX;
+        if (!_dragging && Math.Abs(delta) < DragThresholdDip) return;
         _dragging = true;
 
-        // Map the pointer to the thumb-center travel range (same geometry as PublishShapes).
-        var halfTravel = Travel * 0.5f;
-        var centerX = (float)ActualWidth * 0.5f;
-        _dragTarget = Math.Clamp((x - (centerX - halfTravel)) / (2f * halfTravel), 0f, 1f);
+        // One full Travel of pointer movement moves the thumb from one end to the other.
+        var travel = Math.Max(1f, Travel);
+        _dragTarget = Math.Clamp(_dragStartTravel + delta / travel, 0f, 1f);
         e.Handled = true;
     }
 
@@ -220,6 +225,8 @@ public sealed partial class GlassToggle : UserControl
             _dragging = false;
             if (wasDragging)
             {
+                // Settle to the nearer side. A drag that ends where it began (pushed further
+                // into the end it was already at, or pulled back) keeps the current state.
                 var on = _dragTarget >= 0.5f;
                 if (on == IsOn) StartAnimating(); // no state change; still need to settle the thumb
                 IsOn = on;
