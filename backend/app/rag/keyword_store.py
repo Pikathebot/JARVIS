@@ -165,6 +165,18 @@ class KeywordSearchService:
 
         return matched_chunks
 
+    def delete_chunks(self, project_id: str, chunk_ids: list[str]) -> None:
+        """Remove specific chunks from the FTS index (a file being un-indexed)."""
+        if not chunk_ids:
+            return
+        with self._get_session() as session:
+            for chunk_id in chunk_ids:
+                session.execute(
+                    text("DELETE FROM document_chunks_fts WHERE project_id = :project_id AND chunk_id = :chunk_id"),
+                    {"project_id": project_id, "chunk_id": chunk_id},
+                )
+            session.commit()
+
     def delete_project_index(self, project_id: str) -> None:
         """Purge all FTS5 index records for a given project."""
         try:

@@ -33,8 +33,13 @@ class TokenCounter:
             except Exception as e:
                 logger.debug("Custom tokenizer error (%s), falling back to ratio heuristic.", e)
 
-        # Standard token estimation: 1 token ≈ 3.8 characters for mixed code & English
-        return max(1, math.ceil(len(text) / self.chars_per_token))
+        # 1 token ≈ 3.8 characters holds for code and English. Anything outside ASCII --
+        # CJK, emoji, and above all the U+FFFD soup of a binary file read as text -- tokenizes
+        # at roughly one token per character, and pricing it at 3.8 let an 11k-token prompt
+        # through an 8k budget.
+        non_ascii = sum(1 for ch in text if ord(ch) > 127)
+        ascii_chars = len(text) - non_ascii
+        return max(1, math.ceil(ascii_chars / self.chars_per_token) + non_ascii)
 
     def count_messages(self, messages: list[dict[str, Any]]) -> int:
         """

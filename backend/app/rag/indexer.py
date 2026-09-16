@@ -25,6 +25,21 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
+def looks_binary(content: str, sample: int = 4096) -> bool:
+    """
+    True when text read with errors="replace" is really a binary file: NUL bytes, or a heavy
+    share of replacement/control characters in the first few KB. An image indexed as text
+    becomes thousands of chunks of garbage that retrieval then pours into every turn.
+    """
+    head = content[:sample]
+    if not head:
+        return False
+    if "\x00" in head:
+        return True
+    junk = sum(1 for ch in head if ch == "\ufffd" or (ord(ch) < 32 and ch not in "\t\n\r"))
+    return junk / len(head) > 0.05
+
+
 class ProjectIndexer:
     """
     Project Codebase & Knowledge Base Indexer complying with Build Plan Section 8.
@@ -150,6 +165,11 @@ class ProjectIndexer:
         """
         if not file_path.exists() or not file_path.is_file():
             return []
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            # Uploads call this directly, bypassing the walker's extension filter: images,
+            # PDFs and the like are stored as attachments, not chunked as text.
+            logger.info("Not indexing %s: not a text type the indexer understands.", file_path.name)
+            return []
 
         rel_path_str = str(file_path)
         current_hash = self.compute_sha256(file_path)
@@ -161,6 +181,9 @@ class ProjectIndexer:
             content = file_path.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
             logger.warning("Failed to read text from %s: %s", file_path, e)
+            return []
+        if looks_binary(content):
+            logger.info("Not indexing %s: content looks binary.", file_path.name)
             return []
 
         # 1. Parse structured syntax chunks
@@ -330,6 +353,40 @@ class ProjectIndexer:
             "indexed_files": indexed_count,
             "total_chunks": total_chunks,
         }
+
+    def purge_non_text_documents(self) -> int:
+        """
+        Remove documents (and their chunks, in the DB and both stores) whose file is not a text
+        type or whose chunks look binary -- the residue of uploads that were indexed before
+        index_file learned to refuse them. Returns how many documents were removed.
+        """
+        removed = 0
+        with SessionLocal() as session:
+            docs = session.exec(select(Document)).all()
+            for doc in docs:
+                path = Path(doc.file_path)
+                chunks = session.exec(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
+                sample = "".join((c.content or "")[:512] for c in chunks[:8])
+                if path.suffix.lower() in SUPPORTED_EXTENSIONS and not looks_binary(sample):
+                    continue
+                chunk_ids = [c.id for c in chunks]
+                for c in chunks:
+                    session.delete(c)
+                session.delete(doc)
+                session.commit()
+                removed += 1
+                if self.keyword_store:
+                    try:
+                        self.keyword_store.delete_chunks(doc.project_id, chunk_ids)
+                    except Exception as e:
+                        logger.warning("Keyword purge failed for %s: %s", doc.file_path, e)
+                if self.vector_store:
+                    try:
+                        self.vector_store.delete_chunks(doc.project_id, chunk_ids)
+                    except Exception as e:
+                        logger.warning("Vector purge failed for %s: %s", doc.file_path, e)
+                logger.info("Purged non-text document from the index: %s (%d chunks)", doc.file_path, len(chunk_ids))
+        return removed
 
     def delete_project_index(self, project_id: str) -> None:
         """

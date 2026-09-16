@@ -180,6 +180,16 @@ class VectorStoreService:
 
         return matched_chunks
 
+    def delete_chunks(self, project_id: str, chunk_ids: list[str]) -> None:
+        """Remove specific points (a file being un-indexed)."""
+        if not chunk_ids:
+            return
+        client, collection_name = self.get_client(project_id)
+        client.delete(
+            collection_name=collection_name,
+            points_selector=qmodels.PointIdsList(points=[self._ensure_valid_uuid(c) for c in chunk_ids]),
+        )
+
     def delete_project_index(self, project_id: str) -> None:
         """
         Close client and completely purge the on-disk Qdrant storage for a project.

@@ -189,21 +189,28 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ responsive layout
     //
-    // Breakpoints on the window's content width. The glass slabs need real layout changes (they
-    // publish their bounds to the scene on LayoutUpdated), so this is code, not visual states.
-    //   >= 1000  sidebar docked; right panel takes its own column
-    //   <  1000  right panel overlays the chat instead of shrinking it
-    //   <   860  sidebar hidden behind ☰ and floats over the chat when opened
-    //   <   700  header drops the toggle captions and the voice-state text
-    //   <   560  header drops the HUD button and the session label
-    private const double SidebarBreakpoint = 860;
-    private const double RightPanelOverlayBreakpoint = 1000;
+    // Rule: the sidebar and the right panel push the chat (take their own column) whenever the
+    // chat keeps at least MinChatWidth; only when it would not do they leave the grid and float
+    // over the chat. So at ordinary sizes nothing ever overlaps, and a very narrow window still
+    // has a usable chat with the sidebar behind ☰. The glass slabs need real layout changes
+    // (they publish their bounds to the scene on LayoutUpdated), so this is code, not visual
+    // states.
+    private const double MinChatWidth = 360;
+    private const double SidebarWidth = 240;
+    private const double SidebarGap = 8;
+    private const double PanelWidth = 368;
+    private const double PanelGap = 8;
     private bool _compactSidebar;
     private bool _sidebarOverlayOpen;
 
     private void ApplyResponsiveLayout(double width)
     {
-        var compact = width < SidebarBreakpoint;
+        var available = width - BodyGrid.Padding.Left - BodyGrid.Padding.Right;
+        var panelOpen = RightPanelViewModel.IsOpen;
+
+        // Sidebar docks if the chat (and an open panel, docked) still fit beside it.
+        var sidebarDocked = available - (SidebarWidth + SidebarGap) >= MinChatWidth;
+        var compact = !sidebarDocked;
         if (compact != _compactSidebar)
         {
             _compactSidebar = compact;
@@ -215,47 +222,47 @@ public sealed partial class MainWindow : Window
                 SidebarColumn.Width = new GridLength(0);
                 Grid.SetColumn(SidebarSlab, 1);
                 SidebarSlab.HorizontalAlignment = HorizontalAlignment.Left;
-                SidebarSlab.Width = 240;
-                SidebarSlab.Margin = new Thickness(0, 0, 0, 0);
+                SidebarSlab.Width = SidebarWidth;
+                SidebarSlab.Margin = new Thickness(0);
                 Canvas.SetZIndex(SidebarSlab, 20);
                 SidebarSlab.Layer = 3; // above the chat slab it now overlaps, like the dropdown
                 SidebarSlab.Visibility = Visibility.Collapsed;
             }
             else
             {
-                SidebarColumn.Width = new GridLength(240);
+                SidebarColumn.Width = new GridLength(SidebarWidth);
                 Grid.SetColumn(SidebarSlab, 0);
                 SidebarSlab.HorizontalAlignment = HorizontalAlignment.Stretch;
                 SidebarSlab.Width = double.NaN;
-                SidebarSlab.Margin = new Thickness(0, 0, 8, 0);
+                SidebarSlab.Margin = new Thickness(0, 0, SidebarGap, 0);
                 Canvas.SetZIndex(SidebarSlab, 0);
                 SidebarSlab.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
                 SidebarSlab.Visibility = Visibility.Visible;
             }
         }
 
-        // Right panel: a column when there is room, an overlay on the chat when there is not.
-        var overlayPanel = width < RightPanelOverlayBreakpoint;
-        var panelOpen = RightPanelViewModel.IsOpen;
-        if (overlayPanel)
+        // Right panel docks if the chat still fits beside it and the (docked) sidebar.
+        var usedBySidebar = sidebarDocked ? SidebarWidth + SidebarGap : 0;
+        var panelDocked = available - usedBySidebar - (PanelWidth + PanelGap) >= MinChatWidth;
+        if (panelDocked)
+        {
+            RightPanelColumn.Width = new GridLength(panelOpen ? PanelWidth : 0);
+            Grid.SetColumn(RightPanel, 2);
+            RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+            RightPanel.Width = double.NaN;
+            RightPanel.Margin = new Thickness(PanelGap, 0, 0, 0);
+            Canvas.SetZIndex(RightPanel, 0);
+            RightPanel.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
+        }
+        else
         {
             RightPanelColumn.Width = new GridLength(0);
             Grid.SetColumn(RightPanel, 1);
             RightPanel.HorizontalAlignment = HorizontalAlignment.Right;
-            RightPanel.Width = Math.Min(368, Math.Max(240, width - 48));
+            RightPanel.Width = Math.Min(PanelWidth, Math.Max(240, available - 24));
             RightPanel.Margin = new Thickness(0);
             Canvas.SetZIndex(RightPanel, 10);
             RightPanel.Layer = 3;
-        }
-        else
-        {
-            RightPanelColumn.Width = new GridLength(panelOpen ? 368 : 0);
-            Grid.SetColumn(RightPanel, 2);
-            RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
-            RightPanel.Width = double.NaN;
-            RightPanel.Margin = new Thickness(8, 0, 0, 0);
-            Canvas.SetZIndex(RightPanel, 0);
-            RightPanel.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
         }
 
         // Header: shed the least important things first.

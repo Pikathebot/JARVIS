@@ -195,6 +195,14 @@ class ContextManager:
 
         return combined_text
 
+    @staticmethod
+    def _chunk_looks_binary(chunk: dict[str, Any]) -> bool:
+        content = (chunk.get("content") or "")[:2048]
+        if not content:
+            return False
+        junk = sum(1 for ch in content if ch == "\ufffd" or ord(ch) > 0x2FFF or (ord(ch) < 32 and ch not in "\t\n\r"))
+        return junk / len(content) > 0.05
+
     def _format_rag_chunk(self, chunk: dict[str, Any]) -> str:
         """Format an individual RAG chunk into a concise Markdown code block."""
         file_path = chunk.get("file_path") or chunk.get("file_name") or "unknown"
@@ -294,6 +302,10 @@ class ContextManager:
             candidate_chunks = retrieved_chunks[:max_chunks]
 
             for chunk in candidate_chunks:
+                if self._chunk_looks_binary(chunk):
+                    # A file indexed as text that never was (an image): nothing to reason over.
+                    chunks_dropped.append(chunk)
+                    continue
                 block_str = self._format_rag_chunk(chunk)
                 block_cost = self.token_counter.count(block_str) + 2
 
