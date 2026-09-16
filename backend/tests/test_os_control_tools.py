@@ -45,9 +45,13 @@ def test_all_phase3_tools_registered():
 
 # 2. Permission Tiering & Safety Checks
 
-def test_launch_app_confirmation_required():
-    """launch_app must require confirmation (arbitrary binary execution risk)."""
+def test_launch_app_by_name_is_allowed_but_arbitrary_binaries_still_ask():
+    """Opening an installed app by name is what the user asked for; running an explicit path is not."""
     decision = evaluate_tool_permission("launch_app", {"name_or_path": "notepad"})
+    assert decision.allowed is True
+    assert decision.risk_tier == RiskTier.LOW_RISK
+
+    decision = evaluate_tool_permission("launch_app", {"name_or_path": "C:/Users/me/Downloads/installer.exe"})
     assert decision.allowed is False
     assert decision.risk_tier == RiskTier.CONFIRMATION_REQUIRED
 
