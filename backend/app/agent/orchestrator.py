@@ -22,6 +22,7 @@ from app.agent.permissions import (
 )
 from app.agent.validator import validate_tool_call, CallHistory, ValidationResult
 from app.agent.confirmations import get_confirmation_registry
+from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.provider_factory import get_model_provider
@@ -511,6 +512,18 @@ class AgentOrchestrator:
 
         sections.append("--------------------------------------------------\n")
         return "\n".join(sections)
+
+    async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
+        """
+        One path for native and MCP tools: off the event loop, under a timeout, with the
+        post-execute hooks applied. Returns a ToolOutcome; never raises.
+        """
+        pipeline = get_tool_pipeline()
+        if self.mcp_manager.is_mcp_tool(name):
+            logger.info("Executing MCP tool '%s'", name)
+            return await pipeline.run(name, args, coroutine=lambda: self.mcp_manager.call_tool(name, args))
+        logger.info("Executing Native tool '%s'", name)
+        return await pipeline.run(name, args, native=lambda: execute_tool(name, args, context=tool_ctx))
 
     async def _describe_images_if_blind(self, attachments: Optional[list[Any]], vision: bool) -> Optional[list[Any]]:
         """
@@ -1177,12 +1190,8 @@ class AgentOrchestrator:
                 total_turn_tool_calls += 1
                 tool_turn_counts[fn_name] = tool_turn_counts.get(fn_name, 0) + 1
 
-                if self.mcp_manager.is_mcp_tool(fn_name):
-                    logger.info("Executing MCP tool '%s'", fn_name)
-                    tool_output = await self.mcp_manager.call_tool(fn_name, fn_args)
-                else:
-                    logger.info("Executing Native tool '%s'", fn_name)
-                    tool_output = execute_tool(fn_name, fn_args, context=tool_ctx)
+                outcome = await self._run_tool(fn_name, fn_args, tool_ctx)
+                tool_output = outcome.result
 
                 self.memory_store.record_tool_call_audit(
                     call_id=call_id,
@@ -1201,7 +1210,9 @@ class AgentOrchestrator:
                 tools_used.append({
                     "tool": fn_name,
                     "args": fn_args,
-                    "result": tool_output
+                    "result": tool_output,
+                    "duration_ms": outcome.duration_ms,
+                    "timed_out": outcome.timed_out,
                 })
 
                 messages.append({
@@ -1568,22 +1579,20 @@ class AgentOrchestrator:
                     result_str = f"Validation Error for {t_name}: {val_result.error}"
                     is_ok = False
                 else:
-                    try:
-                        if self.mcp_manager.is_mcp_tool(t_name):
-                            result_str = await self.mcp_manager.call_tool(t_name, val_result.args or t_args)
-                        else:
-                            result_str = execute_tool(t_name, val_result.args or t_args, context=tool_ctx)
-                        is_ok = not str(result_str).startswith("Error")
-                    except Exception as ex:
-                        result_str = f"Error executing {t_name}: {ex}"
-                        is_ok = False
+                    outcome = await self._run_tool(t_name, val_result.args or t_args, tool_ctx)
+                    result_str = outcome.result
+                    is_ok = outcome.ok
 
-                tool_item = {
-                    "tool": t_name,
-                    "args": t_args,
-                    "status": "success" if is_ok else "error",
-                    "result": result_str[:2000] if isinstance(result_str, str) else result_str
-                }
+                if val_result.valid:
+                    tool_item = outcome.to_event()
+                    tool_item["args"] = t_args
+                else:
+                    tool_item = {
+                        "tool": t_name,
+                        "args": t_args,
+                        "status": "error",
+                        "result": result_str[:2000],
+                    }
                 tools_used.append(tool_item)
                 yield {"event": "tool_end", "data": tool_item}
 

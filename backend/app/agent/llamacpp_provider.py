@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import re
@@ -253,6 +254,26 @@ class LlamaCppProvider(ModelProvider):
             })
         return normalized if normalized else None
 
+    @staticmethod
+    def _offload_images_if_overflow(payload: dict[str, Any], status_code: int, body: str) -> bool:
+        """
+        If a request with image parts was rejected for not fitting the context, rewrite the
+        payload's messages with the images replaced by placeholders so the caller can retry once.
+        Returns True when the payload was changed.
+        """
+        from app.agent.image_offload import has_image_parts, looks_like_context_overflow, offload_images
+
+        messages = payload.get("messages") or []
+        if not has_image_parts(messages) or not looks_like_context_overflow(status_code, body):
+            return False
+        stripped, count = offload_images(messages)
+        payload["messages"] = stripped
+        logger.warning(
+            "llama-server rejected the request (HTTP %s); retrying with %d image(s) replaced by placeholders.",
+            status_code, count,
+        )
+        return True
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -299,6 +320,8 @@ class LlamaCppProvider(ModelProvider):
                 await self._ensure_server_ready(target_model_kind)
                 async with httpx.AsyncClient(timeout=client_timeout) as client:
                     resp = await client.post(url, json=payload, headers=self._get_headers())
+                    if resp.status_code != 200 and self._offload_images_if_overflow(payload, resp.status_code, resp.text):
+                        resp = await client.post(url, json=payload, headers=self._get_headers())
                     if resp.status_code != 200:
                         raise RuntimeError(f"llama-server returned HTTP {resp.status_code}: {resp.text}")
                     data = resp.json()
@@ -400,10 +423,21 @@ class LlamaCppProvider(ModelProvider):
 
         try:
             async with httpx.AsyncClient(timeout=client_timeout) as client:
-                async with client.stream("POST", url, json=payload, headers=self._get_headers()) as response:
+                async with contextlib.AsyncExitStack() as stack:
+                    response = await stack.enter_async_context(
+                        client.stream("POST", url, json=payload, headers=self._get_headers())
+                    )
                     if response.status_code != 200:
-                        err_body = await response.aread()
-                        err_msg = f"llama-server streaming HTTP {response.status_code}: {err_body.decode('utf-8', errors='replace')}"
+                        err_body = (await response.aread()).decode("utf-8", errors="replace")
+                        if self._offload_images_if_overflow(payload, response.status_code, err_body):
+                            await stack.aclose()
+                            response = await stack.enter_async_context(
+                                client.stream("POST", url, json=payload, headers=self._get_headers())
+                            )
+                            if response.status_code != 200:
+                                err_body = (await response.aread()).decode("utf-8", errors="replace")
+                    if response.status_code != 200:
+                        err_msg = f"llama-server streaming HTTP {response.status_code}: {err_body}"
                         yield {"event": "error", "message": err_msg}
                         return
 

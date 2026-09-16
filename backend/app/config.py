@@ -137,6 +137,10 @@ class Settings(BaseSettings):
 
     # Safety & Tool Limits Settings (Stage A)
     max_tool_calls_per_turn: int = Field(default=15, alias="MAX_TOOL_CALLS_PER_TURN")
+    # Tool execution pipeline (app/agent/tool_pipeline.py): every tool runs off the event loop
+    # under a timeout, and oversized results are trimmed (head + tail) before the model sees them.
+    tool_default_timeout_seconds: float = Field(default=60.0, alias="TOOL_DEFAULT_TIMEOUT_SECONDS")
+    tool_result_max_chars: int = Field(default=12000, alias="TOOL_RESULT_MAX_CHARS")
     confirmation_timeout_action: str = Field(default="deny", alias="CONFIRMATION_TIMEOUT_ACTION")
     # How long an unanswered CONFIRMATION_REQUIRED ask stays valid. When it lapses Jarvis says
     # so (through the awareness monitor) and a late "yes" is refused and re-asked. 0 = never.
