@@ -512,6 +512,24 @@ class AgentOrchestrator:
         sections.append("--------------------------------------------------\n")
         return "\n".join(sections)
 
+    async def _describe_images_if_blind(self, attachments: Optional[list[Any]], vision: bool) -> Optional[list[Any]]:
+        """
+        When the serving model cannot see, hand image attachments to the CPU captioner sidecar
+        so they arrive as descriptions rather than bare file paths. No-op when the model has a
+        projector, when there are no images, or when the sidecar is disabled or missing.
+        """
+        if vision or not attachments:
+            return attachments
+        try:
+            from app.agent.captioner import get_image_captioner, is_image_attachment
+
+            if not any(is_image_attachment(a) for a in attachments):
+                return attachments
+            return await get_image_captioner().annotate(attachments)
+        except Exception as exc:
+            logger.warning("Image captioning skipped: %s", exc)
+            return attachments
+
     def _slot_has_vision(self, slot: str, provider: Optional[str]) -> bool:
         """
         Whether image attachments on this turn can be sent as image parts: only the local
@@ -689,6 +707,8 @@ class AgentOrchestrator:
                 logger.warning("RAG retrieval failed during execution: %s", rag_err)
 
         # 5. Strict Tier-Based Token Budgeting
+        vision = self._slot_has_vision("fast" if is_fast else "main", decision.provider)
+        attachments = await self._describe_images_if_blind(attachments, vision)
         context_pkg = self.context_manager.build_context(
             session_id=active_session_id,
             user_message=user_message,
@@ -698,7 +718,7 @@ class AgentOrchestrator:
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
             max_context_tokens=resolved_ctx_tokens,
-            vision=self._slot_has_vision("fast" if is_fast else "main", decision.provider),
+            vision=vision,
         )
 
         # 6. Dynamic Tool Aggregation
@@ -1287,6 +1307,8 @@ class AgentOrchestrator:
                 logger.warning("RAG retrieval failed during stream setup: %s", rag_err)
 
         # 4. Strict Tier-Based Token Budgeting
+        vision = self._slot_has_vision("fast" if is_fast else "main", decision.provider)
+        attachments = await self._describe_images_if_blind(attachments, vision)
         context_pkg = self.context_manager.build_context(
             session_id=active_session_id,
             user_message=user_message,
@@ -1296,7 +1318,7 @@ class AgentOrchestrator:
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
             max_context_tokens=resolved_ctx_tokens,
-            vision=self._slot_has_vision("fast" if is_fast else "main", decision.provider),
+            vision=vision,
         )
 
         # 5. Emit retrieval_context SSE event for UI observability

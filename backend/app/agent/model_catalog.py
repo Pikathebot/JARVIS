@@ -73,6 +73,20 @@ class ModelInfo:
     sitting in the same directory), or None when the model is text-only."""
 
 
+# Folders under models/ that hold sidecar models rather than chat models. The image captioner
+# lives in its own folder with its projector beside it, exactly like a chat model would, so
+# without this it would be listed as a (tiny, useless) chat candidate.
+SIDECAR_DIRS: frozenset[str] = frozenset({"captioner"})
+
+
+def _is_sidecar(path: Path, models_dir: Path) -> bool:
+    try:
+        parts = path.resolve().relative_to(models_dir.resolve()).parts
+    except ValueError:
+        return False
+    return bool(parts) and parts[0] in SIDECAR_DIRS
+
+
 def _is_projector(path: Path) -> bool:
     lowered = path.name.lower()
     return any(lowered.startswith(prefix) for prefix in PROJECTOR_PREFIXES)
@@ -147,7 +161,7 @@ class ModelCatalog:
             return models
 
         for path in sorted(self.models_dir.rglob("*.gguf")):
-            if _is_projector(path):
+            if _is_projector(path) or _is_sidecar(path, self.models_dir):
                 continue
             models.append(self._describe(path))
 
@@ -161,7 +175,7 @@ class ModelCatalog:
         return [
             self._describe(path)
             for path in sorted(self.models_dir.rglob("*.gguf"))
-            if _is_projector(path)
+            if _is_projector(path) and not _is_sidecar(path, self.models_dir)
         ]
 
     def projector_for(self, model_path: Path) -> Optional[Path]:

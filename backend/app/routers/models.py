@@ -58,8 +58,20 @@ async def list_models():
         "selection": catalog.selection(),
         "slots": list(SLOTS),
         "loaded_slot": manager.current_model_kind,
+        "loaded_projector": str(manager.loaded_projector.name) if manager.loaded_projector else None,
         "externally_managed": manager.is_externally_managed,
+        "captioner": _captioner_status(),
     }
+
+
+def _captioner_status() -> dict:
+    """The CPU image-captioner sidecar that stands in for a projector when the chat model has none."""
+    try:
+        from app.agent.captioner import get_image_captioner
+
+        return get_image_captioner().status()
+    except Exception as e:  # pragma: no cover - defensive
+        return {"enabled": False, "available": False, "running": False, "error": str(e)}
 
 
 @router.post("/select")

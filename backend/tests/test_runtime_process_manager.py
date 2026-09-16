@@ -309,3 +309,37 @@ async def test_projector_that_fails_to_load_falls_back_to_text_only(vision_catal
     assert second == [arg for arg in first if arg not in ("--mmproj", first[first.index("--mmproj") + 1])]
     assert pm.loaded_projector is None
     assert pm.has_vision("fast") is False  # live answer, despite the projector on disk
+
+
+@pytest.mark.anyio
+async def test_reload_sweeps_a_foreign_server_it_has_not_met_yet():
+    """
+    A fresh backend has never health-checked, so _externally_managed is False even though a
+    server started elsewhere owns the port. reload() must ask the port itself; otherwise the
+    new server binds behind the old one (Windows allows it) and the switch is a silent no-op.
+    """
+    pm = RuntimeProcessManager()
+    pm._externally_managed = False
+    pm._process = None
+
+    with patch.object(pm, "health_check", new_callable=AsyncMock, return_value=True), \
+         patch.object(pm, "stop", new_callable=AsyncMock, return_value=True) as mock_stop, \
+         patch.object(pm, "ensure_running", new_callable=AsyncMock, return_value=True):
+        assert await pm.reload("fast") is True
+
+    mock_stop.assert_awaited_once_with(sweep_all=True)
+
+
+@pytest.mark.anyio
+async def test_reload_does_not_sweep_when_the_healthy_server_is_our_own_child():
+    pm = RuntimeProcessManager()
+    pm._externally_managed = False
+    pm._process = MagicMock()
+    pm._process.poll.return_value = None  # alive
+
+    with patch.object(pm, "health_check", new_callable=AsyncMock, return_value=True), \
+         patch.object(pm, "stop", new_callable=AsyncMock, return_value=True) as mock_stop, \
+         patch.object(pm, "ensure_running", new_callable=AsyncMock, return_value=True):
+        await pm.reload("fast")
+
+    mock_stop.assert_awaited_once_with(sweep_all=False)

@@ -32,6 +32,11 @@ def _reasoning_flag_from_kwargs(kwargs_json: Optional[str]) -> Optional[str]:
     return "on" if parsed["enable_thinking"] else "off"
 
 
+# llama-server processes that are ours but not the chat model -- the image captioner sidecar --
+# so an emergency sweep of "every llama-server on the machine" leaves them alone.
+PROTECTED_PIDS: set[int] = set()
+
+
 def resolve_repo_path(path_str: str) -> Path:
     """Resolve a path relative to the repo root if it's relative, otherwise return as absolute."""
     p = Path(path_str)
@@ -369,6 +374,9 @@ class RuntimeProcessManager:
         self._process = proc
         self._current_model_kind = model_kind
         self._externally_managed = False
+        # Die with the backend, so a crash cannot leave the old weights serving on the port.
+        from app.agent.process_guard import tie_to_backend
+        tie_to_backend(proc.pid)
 
         # Start background pipe drainers
         t_out = threading.Thread(target=self._drain_sync_stream, args=(proc.stdout, "stdout"), daemon=True)
@@ -443,7 +451,7 @@ class RuntimeProcessManager:
                 for p in psutil.process_iter(['pid', 'name']):
                     try:
                         p_name = (p.info.get('name') or "").lower()
-                        if "llama-server" in p_name:
+                        if "llama-server" in p_name and p.pid not in PROTECTED_PIDS:
                             logger.info("Terminating orphaned llama-server process (PID %s)...", p.pid)
                             p.terminate()
                             try:
@@ -470,7 +478,13 @@ class RuntimeProcessManager:
         changed nothing. In that case the sweep is the only way to actually free the port, so it
         is used rather than reported as success.
         """
-        sweep = self._externally_managed
+        # ``_externally_managed`` is only learned by a health check, so a backend that has not
+        # served a turn yet does not know a foreign server owns the port. Ask the port directly:
+        # anything healthy there that is not our own live child is foreign. (On Windows a second
+        # llama-server can bind an occupied port without error and sit unreachable behind the
+        # first, so skipping this makes a switch report success while the old weights keep serving.)
+        own_child_alive = self._process is not None and self._process.poll() is None
+        sweep = self._externally_managed or (not own_child_alive and await self.health_check(timeout=2.0))
         if sweep:
             logger.info(
                 "Reloading an externally-managed llama-server; sweeping llama-server processes "

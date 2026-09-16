@@ -319,6 +319,11 @@ async def lifespan(app: FastAPI):
     await awareness_monitor.stop()
     await routine_scheduler.stop()
     await confirmation_watcher.stop()
+    try:
+        from app.agent.captioner import get_image_captioner
+        await get_image_captioner().stop()
+    except Exception as e:
+        logger.debug("Captioner shutdown: %s", e)
     if settings.governor_enabled:
         await process_watcher.stop()
         await governor.stop()

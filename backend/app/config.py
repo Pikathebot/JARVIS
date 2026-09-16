@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     # projector exists (saves its VRAM); offload=False keeps the projector on the CPU.
     llama_mmproj_enabled: bool = Field(default=True, alias="LLAMA_MMPROJ_ENABLED")
     llama_mmproj_offload: bool = Field(default=True, alias="LLAMA_MMPROJ_OFFLOAD")
+    # Image captioner sidecar (app/agent/captioner.py): a small CPU-only vision model that
+    # describes image attachments for any model that cannot see them itself. Always cold;
+    # started on the first image, stopped after captioner_idle_seconds without one.
+    captioner_enabled: bool = Field(default=True, alias="CAPTIONER_ENABLED")
+    captioner_model_path: str = Field(
+        default="models/captioner/SmolVLM-500M-Instruct-Q8_0.gguf", alias="CAPTIONER_MODEL_PATH"
+    )
+    captioner_port: int = Field(default=8002, alias="CAPTIONER_PORT")
+    captioner_idle_seconds: float = Field(default=300.0, alias="CAPTIONER_IDLE_SECONDS")
+    captioner_threads: int = Field(default=0, alias="CAPTIONER_THREADS")  # 0 = llama-server default
 
     # Context Limits (Amendment 2)
     llama_ctx_size_main: int = Field(default=16384, alias="LLAMA_CTX_SIZE_MAIN")
