@@ -511,6 +511,21 @@ class AgentOrchestrator:
         sections.append("--------------------------------------------------\n")
         return "\n".join(sections)
 
+    def _slot_has_vision(self, slot: str, provider: Optional[str]) -> bool:
+        """
+        Whether image attachments on this turn can be sent as image parts: only the local
+        llama-server path knows about projectors, and only when the slot's model has one beside
+        it on disk. A cloud/OpenRouter turn or a text-only model gets the file-path description.
+        """
+        if provider and provider != "llama_cpp":
+            return False
+        try:
+            from app.agent.runtime_process_manager import get_runtime_process_manager
+            return get_runtime_process_manager().has_vision(slot)
+        except Exception as exc:
+            logger.debug("Could not determine vision capability for slot %s: %s", slot, exc)
+            return False
+
     def _synthesize_voice(self, text: str):
 
         """Synthesize and play voice output if voice is enabled and TTS engine is available."""
@@ -678,7 +693,8 @@ class AgentOrchestrator:
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
-            max_context_tokens=resolved_ctx_tokens
+            max_context_tokens=resolved_ctx_tokens,
+            vision=self._slot_has_vision("fast" if is_fast else "main", decision.provider),
         )
 
         # 6. Dynamic Tool Aggregation
@@ -1270,7 +1286,8 @@ class AgentOrchestrator:
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
-            max_context_tokens=resolved_ctx_tokens
+            max_context_tokens=resolved_ctx_tokens,
+            vision=self._slot_has_vision("fast" if is_fast else "main", decision.provider),
         )
 
         # 5. Emit retrieval_context SSE event for UI observability

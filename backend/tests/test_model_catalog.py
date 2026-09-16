@@ -16,11 +16,13 @@ def _gguf(path, size=1024):
 
 @pytest.fixture
 def models_dir(tmp_path):
-    """A models/ tree shaped like the real one: two top-level GGUFs plus a vendor download
-    subdirectory holding a duplicate and a multimodal projector."""
+    """A models/ tree shaped like the real one: the 9B sits directly in models/, the 4B in its
+    own folder next to its projector, and a vendor download tree two levels deep holds a
+    duplicate 4B with a bigger projector of its own."""
     root = tmp_path / "models"
     _gguf(root / "Qwen3.5-9B-UD-Q3_K_XL.gguf", 5000)
-    _gguf(root / "Qwen3.5-4B-UD-Q4_K_XL.gguf", 3000)
+    _gguf(root / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf", 3000)
+    _gguf(root / "qwen3.5-4b" / "mmproj-F16.gguf", 670)
     _gguf(root / "unsloth" / "Qwen3.5-4B-MTP-GGUF" / "Qwen3.5-4B-UD-Q4_K_XL.gguf", 3100)
     _gguf(root / "unsloth" / "Qwen3.5-4B-MTP-GGUF" / "mmproj-F32.gguf", 1300)
     return root
@@ -39,16 +41,34 @@ def test_discover_lists_only_chat_models(catalog):
 
 def test_projectors_are_reported_separately(catalog):
     projectors = catalog.projectors()
-    assert len(projectors) == 1
-    assert projectors[0].name == "mmproj-F32"
+    assert sorted(p.name for p in projectors) == ["mmproj-F16", "mmproj-F32"]
 
 
-def test_top_level_models_are_recommended_and_come_first(catalog):
+def test_models_at_most_one_folder_deep_are_recommended_and_come_first(catalog):
     models = catalog.discover()
 
     # Order is part of the contract: a client renders this list as-is.
     assert [m.recommended for m in models] == [True, True, False]
     assert models[-1].id.endswith("unsloth/Qwen3.5-4B-MTP-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf")
+
+
+def test_model_is_paired_with_the_projector_in_its_own_folder(catalog, models_dir):
+    by_id = {m.id: m for m in catalog.discover()}
+    four_b = next(m for m in by_id.values() if m.directory.endswith("qwen3.5-4b"))
+    nine_b = next(m for m in by_id.values() if m.name.startswith("Qwen3.5-9B"))
+    vendor = next(m for m in by_id.values() if "unsloth" in m.id)
+
+    assert four_b.projector.endswith("qwen3.5-4b/mmproj-F16.gguf")
+    assert vendor.projector.endswith("Qwen3.5-4B-MTP-GGUF/mmproj-F32.gguf")
+    assert nine_b.projector is None  # text-only: nothing beside it in models/
+
+    assert catalog.projector_for(models_dir / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf").name == "mmproj-F16.gguf"
+    assert catalog.projector_for(models_dir / "qwen3.5-4b" / "mmproj-F16.gguf") is None
+
+
+def test_smallest_projector_wins_when_a_folder_holds_several(catalog, models_dir):
+    _gguf(models_dir / "qwen3.5-4b" / "mmproj-F32.gguf", 1300)
+    assert catalog.projector_for(models_dir / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf").name == "mmproj-F16.gguf"
 
 
 def test_family_is_parsed_from_the_filename(catalog):
@@ -137,7 +157,9 @@ def test_list_endpoint_returns_recommended_first(client, catalog):
     body = client.get("/api/models").json()
 
     assert [m["recommended"] for m in body["models"]] == [True, True, False]
-    assert len(body["projectors"]) == 1
+    assert len(body["projectors"]) == 2
+    four_b = next(m for m in body["models"] if m["directory"].endswith("qwen3.5-4b"))
+    assert four_b["projector"].endswith("qwen3.5-4b/mmproj-F16.gguf")
     assert body["slots"] == ["main", "fast"]
     assert body["selection"] == {"main": None, "fast": None}
 

@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # Execution Flags (Amendment 1)
     llama_n_gpu_layers: int = Field(default=99, alias="LLAMA_N_GPU_LAYERS")
     llama_use_mmap: bool = Field(default=False, alias="LLAMA_USE_MMAP")
+    # Vision: when the selected model has an mmproj-*.gguf beside it (see model_catalog) it is
+    # passed as --mmproj so image attachments are actually seen. Off = text-only even if a
+    # projector exists (saves its VRAM); offload=False keeps the projector on the CPU.
+    llama_mmproj_enabled: bool = Field(default=True, alias="LLAMA_MMPROJ_ENABLED")
+    llama_mmproj_offload: bool = Field(default=True, alias="LLAMA_MMPROJ_OFFLOAD")
 
     # Context Limits (Amendment 2)
     llama_ctx_size_main: int = Field(default=16384, alias="LLAMA_CTX_SIZE_MAIN")

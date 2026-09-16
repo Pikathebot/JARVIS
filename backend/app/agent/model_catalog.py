@@ -11,13 +11,17 @@ so a selection survives restarts without anyone editing configuration by hand.
 
 Two discovery rules worth stating, because they encode a preference rather than a fact:
 
-* **Files sitting directly in ``models/`` are recommended; files nested in a subdirectory are
-  not.** The top level is where deliberately-installed models live. Subdirectories tend to be
-  vendor download trees (``models/unsloth/...``) holding duplicates, variants and companion files,
-  which are perfectly usable but are not what someone means by "my models".
+* **Files at most one directory deep under ``models/`` are recommended; anything deeper is
+  not.** The top level and its immediate per-model folders (``models/qwen3.5-9b/``) are where
+  deliberately-installed models live. Deeper trees tend to be vendor download mirrors
+  (``models/unsloth/<repo>/...``) holding duplicates, variants and companion files, which are
+  perfectly usable but are not what someone means by "my models".
 * **``mmproj-*.gguf`` files are projectors, not chat models.** They are multimodal vision adapters
   that accompany a model and are loaded with ``--mmproj``; offering one as something to chat with
-  would simply fail. They are reported separately so the vision wiring can find them later.
+  would simply fail. They are reported separately, and a model is paired with the projector that
+  sits in its own directory (``projector_for``), which is how ``RuntimeProcessManager`` decides
+  whether to pass ``--mmproj`` -- the convention being one model per folder with its projector
+  beside it.
 """
 
 import json
@@ -51,7 +55,8 @@ class ModelInfo:
 
     size_bytes: int
     recommended: bool
-    """True when the file sits directly in ``models/`` rather than in a subdirectory."""
+    """True when the file sits in ``models/`` or in a folder directly under it, rather than deeper
+    in a vendor download tree."""
 
     family: Optional[str]
     """Parameter-count hint parsed from the filename ("9B", "4B", ...), used to suggest which
@@ -62,6 +67,10 @@ class ModelInfo:
 
     slots: list[str]
     """Which slots currently point at this file ("main", "fast", or both)."""
+
+    projector: Optional[str] = None
+    """Catalogue id of the multimodal projector paired with this model (the ``mmproj-*.gguf``
+    sitting in the same directory), or None when the model is text-only."""
 
 
 def _is_projector(path: Path) -> bool:
@@ -155,20 +164,48 @@ class ModelCatalog:
             if _is_projector(path)
         ]
 
+    def projector_for(self, model_path: Path) -> Optional[Path]:
+        """
+        The projector that belongs to a chat model: an ``mmproj-*.gguf`` in the same directory.
+
+        A projector is only valid for the model it was converted from, and the per-folder layout
+        is the one signal on disk that says which that is -- there is nothing in the filenames to
+        match on (``mmproj-F16.gguf`` is what every Unsloth repo calls it). When a folder holds
+        several (F16 next to F32, say) the smallest wins: they encode the same projector at
+        different precisions and the smaller one costs less VRAM on an 8GB card.
+        """
+        if _is_projector(model_path):
+            return None
+        candidates = [
+            p for p in model_path.parent.glob("*.gguf") if _is_projector(p) and p.is_file()
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: (p.stat().st_size, p.name))
+
+    def _is_recommended(self, path: Path) -> bool:
+        try:
+            depth = len(path.resolve().relative_to(self.models_dir.resolve()).parts) - 1
+        except ValueError:
+            return False
+        return depth <= 1
+
     def _describe(self, path: Path) -> ModelInfo:
         model_id = self._to_id(path)
         try:
             size = path.stat().st_size
         except OSError:
             size = 0
+        projector = None if _is_projector(path) else self.projector_for(path)
         return ModelInfo(
             id=model_id,
             name=path.stem,
             size_bytes=size,
-            recommended=path.parent.resolve() == self.models_dir.resolve(),
+            recommended=self._is_recommended(path),
             family=_family_of(path.stem),
             directory=self._to_id(path.parent),
             slots=[slot for slot in SLOTS if self._selection.get(slot) == model_id],
+            projector=self._to_id(projector) if projector else None,
         )
 
     def _to_id(self, path: Path) -> str:

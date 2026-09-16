@@ -70,6 +70,7 @@ class RuntimeProcessManager:
         self.use_mmap = use_mmap if use_mmap is not None else settings.llama_use_mmap
         self.startup_timeout = startup_timeout if startup_timeout is not None else settings.llama_startup_timeout_seconds
         self.extra_args = list(extra_args if extra_args is not None else settings.llama_extra_args)
+        self._loaded_projector: Optional[Path] = None
 
 
         self._process: Optional[subprocess.Popen] = None
@@ -116,16 +117,19 @@ class RuntimeProcessManager:
             alias = Path(model_kind).stem
 
         resolved = resolve_repo_path(target_path_str)
-        if not resolved.exists() and alias == "fast":
-            models_dir = REPO_ROOT / "models"
-            if models_dir.exists():
-                for cand in models_dir.glob("*4B*.gguf"):
-                    return cand.resolve(), alias
-        elif not resolved.exists() and alias == "main":
-            models_dir = REPO_ROOT / "models"
-            if models_dir.exists():
-                for cand in models_dir.glob("*9B*.gguf"):
-                    return cand.resolve(), alias
+        if not resolved.exists() and alias in ("main", "fast"):
+            # The configured file moved or was deleted (models now live one-per-folder, so a path
+            # like models/Qwen3.5-4B-*.gguf can go stale). Fall back to the first catalogued model
+            # of the slot's usual size -- discover() lists recommended ones first, so a model in
+            # its own folder beats a copy buried in a vendor mirror.
+            wanted_family = "4B" if alias == "fast" else "9B"
+            for cand in catalog.discover():
+                if cand.family == wanted_family:
+                    logger.warning(
+                        "Configured %s model %s does not exist; using %s instead.",
+                        alias, resolved, cand.id,
+                    )
+                    return REPO_ROOT / cand.id, alias
         elif not resolved.exists() and alias not in ("main", "fast"):
             # An arbitrary model_kind is treated as a path, which is right for a real file and
             # badly wrong for anything else: a stale model *identifier* from another runtime
@@ -140,6 +144,41 @@ class RuntimeProcessManager:
             )
             return self.resolve_model_path("main")
         return resolved, alias
+
+    def resolve_projector_path(self, model_path: Path) -> Optional[Path]:
+        """
+        The ``--mmproj`` file to load with a model, or None for a text-only launch.
+
+        Pairing is by directory (see ``ModelCatalog.projector_for``); ``LLAMA_MMPROJ_ENABLED=false``
+        turns it off globally for anyone who would rather keep the projector's VRAM.
+        """
+        if not settings.llama_mmproj_enabled:
+            return None
+        from app.agent.model_catalog import get_model_catalog
+
+        projector = get_model_catalog().projector_for(Path(model_path))
+        return projector.resolve() if projector else None
+
+    @property
+    def loaded_projector(self) -> Optional[Path]:
+        """The ``--mmproj`` file the Jarvis-spawned server is currently running with, if any."""
+        return self._loaded_projector
+
+    def has_vision(self, model_kind: str = "main") -> bool:
+        """
+        Whether a request for ``model_kind`` would be served by a model with a projector.
+
+        If that slot is the one already loaded, the answer is what actually loaded -- a launch
+        that had to drop its projector (see ``ensure_running``) reports False even though a
+        projector sits on disk. Otherwise it is what the next launch would attempt.
+        """
+        try:
+            resolved_model, alias = self.resolve_model_path(model_kind)
+        except Exception:
+            return False
+        if self.is_running() and self._current_model_kind in (alias, model_kind):
+            return self._loaded_projector is not None
+        return self.resolve_projector_path(resolved_model) is not None
 
     async def health_check(self, timeout: float = 3.0) -> bool:
         """Probe GET /v1/models endpoint."""
@@ -251,6 +290,13 @@ class RuntimeProcessManager:
             ]
             if not self.use_mmap:
                 cmd.append("--no-mmap")
+            projector = self.resolve_projector_path(resolved_model)
+            projector_args: list[str] = []
+            if projector is not None:
+                projector_args = ["--mmproj", str(projector)]
+                if not settings.llama_mmproj_offload:
+                    projector_args.append("--no-mmproj-offload")
+            cmd.extend(projector_args)
             if self.extra_args:
                 cmd.extend(self.extra_args)
 
@@ -275,59 +321,90 @@ class RuntimeProcessManager:
             if reasoning_flag is not None:
                 cmd.extend(["--reasoning", reasoning_flag])
 
-            child_env = os.environ.copy()
-
-            with self._output_lock:
-                self._recent_output.clear()
-
-            logger.info("Spawning llama-server process: %s", " ".join(cmd))
+            # The projector is the one part of the launch that is optional: it needs its own
+            # ~0.7-0.9 GB of VRAM (or RAM with --no-mmproj-offload) on top of the model, and on an
+            # 8 GB card with other apps holding memory it can fail to allocate. When that happens
+            # the model is relaunched text-only rather than leaving the user with no model at all;
+            # ``has_vision`` reports the projector as absent so images fall back to file notes.
             try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=0,
-                    env=child_env
+                return await self._spawn_and_wait(cmd, resolved_exe, model_kind, alias, projector)
+            except RuntimeError as exc:
+                if not projector_args:
+                    raise
+                logger.warning(
+                    "llama-server failed to start with projector %s; retrying text-only. Cause: %s",
+                    projector.name if projector else projector_args, exc,
                 )
-            except Exception as e:
-                logger.error("Failed to spawn llama-server binary at '%s': %s", resolved_exe, e)
-                raise RuntimeError(f"Failed to spawn llama-server ({resolved_exe}): {e}") from e
+                text_only_cmd = [arg for arg in cmd if arg not in projector_args]
+                return await self._spawn_and_wait(text_only_cmd, resolved_exe, model_kind, alias, None)
 
-            self._process = proc
-            self._current_model_kind = model_kind
-            self._externally_managed = False
+    async def _spawn_and_wait(
+        self,
+        cmd: list[str],
+        resolved_exe: Path,
+        model_kind: str,
+        alias: str,
+        projector: Optional[Path],
+    ) -> bool:
+        """Spawns llama-server with ``cmd`` and waits for it to become healthy. Raises RuntimeError
+        (with the child's last output) if it exits early or never comes up."""
+        child_env = os.environ.copy()
 
-            # Start background pipe drainers
-            t_out = threading.Thread(target=self._drain_sync_stream, args=(proc.stdout, "stdout"), daemon=True)
-            t_err = threading.Thread(target=self._drain_sync_stream, args=(proc.stderr, "stderr"), daemon=True)
-            t_out.start()
-            t_err.start()
+        with self._output_lock:
+            self._recent_output.clear()
 
-            # Poll health check until startup timeout
-            start_time = time.time()
-            poll_interval = 0.5
-            while time.time() - start_time < self.startup_timeout:
-                if proc.poll() is not None:
-                    # Give the drain threads a moment to flush what the child said on its way out.
-                    await asyncio.sleep(0.2)
-                    detail = self._tail_output()
-                    raise RuntimeError(
-                        f"llama-server exited prematurely with code {proc.returncode} during startup."
-                        + (f"\n{detail}" if detail else "")
-                    )
-                if await self.health_check(timeout=1.5):
-                    logger.info("llama-server successfully started and healthy at %s (model: %s)", self.base_url, alias)
-                    return True
-                await asyncio.sleep(poll_interval)
-
-            # Startup timed out -> kill process
-            logger.error("llama-server startup timed out after %.1fs", self.startup_timeout)
-            detail = self._tail_output()
-            await self._stop_internal()
-            raise RuntimeError(
-                f"llama-server failed to become healthy within {self.startup_timeout}s."
-                + (f"\n{detail}" if detail else "")
+        logger.info("Spawning llama-server process: %s", " ".join(cmd))
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+                env=child_env
             )
+        except Exception as e:
+            logger.error("Failed to spawn llama-server binary at '%s': %s", resolved_exe, e)
+            raise RuntimeError(f"Failed to spawn llama-server ({resolved_exe}): {e}") from e
+
+        self._process = proc
+        self._current_model_kind = model_kind
+        self._externally_managed = False
+
+        # Start background pipe drainers
+        t_out = threading.Thread(target=self._drain_sync_stream, args=(proc.stdout, "stdout"), daemon=True)
+        t_err = threading.Thread(target=self._drain_sync_stream, args=(proc.stderr, "stderr"), daemon=True)
+        t_out.start()
+        t_err.start()
+
+        # Poll health check until startup timeout
+        start_time = time.time()
+        poll_interval = 0.5
+        while time.time() - start_time < self.startup_timeout:
+            if proc.poll() is not None:
+                # Give the drain threads a moment to flush what the child said on its way out.
+                await asyncio.sleep(0.2)
+                detail = self._tail_output()
+                raise RuntimeError(
+                    f"llama-server exited prematurely with code {proc.returncode} during startup."
+                    + (f"\n{detail}" if detail else "")
+                )
+            if await self.health_check(timeout=1.5):
+                self._loaded_projector = projector
+                logger.info(
+                    "llama-server successfully started and healthy at %s (model: %s, vision: %s)",
+                    self.base_url, alias, projector.name if projector else "off",
+                )
+                return True
+            await asyncio.sleep(poll_interval)
+
+        # Startup timed out -> kill process
+        logger.error("llama-server startup timed out after %.1fs", self.startup_timeout)
+        detail = self._tail_output()
+        await self._stop_internal()
+        raise RuntimeError(
+            f"llama-server failed to become healthy within {self.startup_timeout}s."
+            + (f"\n{detail}" if detail else "")
+        )
 
     async def _stop_internal(self, sweep_all: bool = False) -> bool:
         """
@@ -337,6 +414,7 @@ class RuntimeProcessManager:
         a warning is logged and all system llama-server instances are terminated.
         """
         self._current_model_kind = None
+        self._loaded_projector = None
         self._externally_managed = False
 
         # 1. Terminate tracked subprocess if present

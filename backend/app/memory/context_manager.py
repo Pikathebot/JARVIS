@@ -58,6 +58,60 @@ class ContextManager:
     }
     _MAX_FILE_READ_BYTES = 16_000  # 16KB hard read cap per file
 
+    # Image attachments the vision projector can take. Sent as image_url parts on the user turn
+    # when the serving model has an mmproj loaded; otherwise they fall through the binary-file
+    # path above and the model is told where the file is.
+    _IMAGE_MIMES = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    }
+    _MAX_IMAGES_PER_TURN = 4
+    _MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+    @classmethod
+    def _attachment_field(cls, att: Any, name: str) -> Any:
+        return getattr(att, name, None) or (att.get(name) if isinstance(att, dict) else None)
+
+    @classmethod
+    def _is_image_attachment(cls, att: Any) -> bool:
+        import os
+        fname = cls._attachment_field(att, "filename") or cls._attachment_field(att, "path") or ""
+        return os.path.splitext(str(fname))[1].lower() in cls._IMAGE_MIMES
+
+    def _image_parts(self, attachments: list[Any]) -> list[dict[str, Any]]:
+        """OpenAI-style ``image_url`` parts (data URIs) for the image attachments of this turn."""
+        import base64
+        import os
+        from pathlib import Path
+
+        parts: list[dict[str, Any]] = []
+        for att in attachments:
+            if len(parts) >= self._MAX_IMAGES_PER_TURN:
+                logger.warning("More than %d images attached; the rest are not sent to the model.",
+                               self._MAX_IMAGES_PER_TURN)
+                break
+            fname = self._attachment_field(att, "filename") or ""
+            fpath = self._attachment_field(att, "path") or ""
+            mime = self._IMAGE_MIMES.get(os.path.splitext(str(fname or fpath))[1].lower())
+            p = Path(fpath)
+            if not p.is_file():
+                ws_cand = Path(settings.workspace_path).resolve() / fpath
+                if ws_cand.is_file():
+                    p = ws_cand
+            if not p.is_file():
+                logger.warning("Image attachment '%s' not found on disk at %s", fname, fpath)
+                continue
+            try:
+                if p.stat().st_size > self._MAX_IMAGE_BYTES:
+                    logger.warning("Image attachment '%s' exceeds %d bytes; not sent.", fname, self._MAX_IMAGE_BYTES)
+                    continue
+                encoded = base64.b64encode(p.read_bytes()).decode("ascii")
+            except Exception as exc:
+                logger.warning("Could not read image attachment '%s': %s", fname, exc)
+                continue
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+        return parts
+
     def _read_attachment_content(self, att: Any) -> tuple[str, str]:
         """
         Given an attachment dict (or object), return (filename, text_content).
@@ -165,9 +219,13 @@ class ContextManager:
         retrieved_chunks: Optional[list[dict[str, Any]]] = None,
         chat_mode: str = "WORKSPACE",
         max_context_tokens: Optional[int] = None,
+        vision: bool = False,
     ) -> ContextPackage:
         """
         Main entrypoint: Assembles strict tier-budgeted context package.
+
+        ``vision`` says the model that will serve this turn has a multimodal projector loaded;
+        image attachments are then sent as ``image_url`` parts rather than described as files.
         
         Tiers:
         - Tier 1 (Reserved): System prompt + project instructions
@@ -206,7 +264,10 @@ class ContextManager:
         # -------------------------------------------------------------
         # Tier 2: User Prompt + Attached Files (ALWAYS RESERVED with Safeguard)
         # -------------------------------------------------------------
-        attachment_text = self._format_attachment_text(attachments or [])
+        image_attachments = [a for a in (attachments or []) if vision and self._is_image_attachment(a)]
+        text_attachments = [a for a in (attachments or []) if a not in image_attachments]
+        attachment_text = self._format_attachment_text(text_attachments)
+        image_parts = self._image_parts(image_attachments) if image_attachments else []
         tier2_user_content_parts = []
         if attachment_text:
             tier2_user_content_parts.append(attachment_text)
@@ -214,7 +275,9 @@ class ContextManager:
             tier2_user_content_parts.append(user_message.strip())
 
         tier2_full_user_text = "\n\n".join(tier2_user_content_parts) if tier2_user_content_parts else user_message
-        tier2_tokens = self.token_counter.count(tier2_full_user_text) + 4
+        # Image tokens are decided by the projector at encode time (Qwen3.5 uses dynamic
+        # resolution), so this is a placeholder reservation per image, not a measurement.
+        tier2_tokens = self.token_counter.count(tier2_full_user_text) + 4 + 1024 * len(image_parts)
         remaining_budget -= tier2_tokens
 
         # -------------------------------------------------------------
@@ -346,8 +409,16 @@ class ContextManager:
 
         final_messages.extend(history_messages)
 
-        # Append current turn user prompt (if provided)
-        if tier2_full_user_text:
+        # Append current turn user prompt (if provided). With images the turn becomes a parts
+        # list (text first, then image_url parts), which is what llama-server's OpenAI-compatible
+        # endpoint expects when --mmproj is loaded.
+        if image_parts:
+            content: Any = []
+            if tier2_full_user_text:
+                content.append({"type": "text", "text": tier2_full_user_text})
+            content.extend(image_parts)
+            final_messages.append({"role": "user", "content": content})
+        elif tier2_full_user_text:
             final_messages.append({
                 "role": "user",
                 "content": tier2_full_user_text

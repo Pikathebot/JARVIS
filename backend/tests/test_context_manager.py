@@ -195,3 +195,98 @@ def test_context_manager_system_mode_bypasses_rag(memory_test_env):
     # In SYSTEM mode, RAG chunks are not injected into system prompt
     assert len(pkg.retrieved_chunks_used) == 0
     assert "Relevant Workspace Context & Code" not in pkg.system_prompt
+
+
+# --- vision: image attachments become image_url parts when the model can see ---
+
+_PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"
+)
+
+
+def _image_turn(pkg):
+    user_msgs = [m for m in pkg.messages if m.get("role") == "user"]
+    assert len(user_msgs) == 1
+    return user_msgs[0]["content"]
+
+
+def test_image_attachment_is_sent_as_image_part_when_vision_is_on(memory_test_env):
+    store, tmp_path = memory_test_env
+    img = tmp_path / "shot.png"
+    img.write_bytes(_PNG_1PX)
+    cm = ContextManager(memory_store=store)
+
+    pkg = cm.build_context(
+        user_message="What is in this screenshot?",
+        attachments=[{"filename": "shot.png", "path": str(img)}],
+        max_context_tokens=8192,
+        vision=True,
+    )
+
+    content = _image_turn(pkg)
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "What is in this screenshot?"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    # Text-side description of the image must not also be injected.
+    assert "Binary or unsupported" not in content[0]["text"]
+    # The image is budgeted for, not free.
+    assert pkg.budget_report["tier2_user_tokens"] > 1024
+
+
+def test_image_attachment_stays_a_file_note_when_vision_is_off(memory_test_env):
+    store, tmp_path = memory_test_env
+    img = tmp_path / "shot.png"
+    img.write_bytes(_PNG_1PX)
+    cm = ContextManager(memory_store=store)
+
+    pkg = cm.build_context(
+        user_message="What is in this screenshot?",
+        attachments=[{"filename": "shot.png", "path": str(img)}],
+        max_context_tokens=8192,
+        vision=False,
+    )
+
+    content = _image_turn(pkg)
+    assert isinstance(content, str)
+    assert "shot.png" in content and "Binary or unsupported" in content
+
+
+def test_text_and_image_attachments_mix_on_one_turn(memory_test_env):
+    store, tmp_path = memory_test_env
+    img = tmp_path / "diagram.jpg"
+    img.write_bytes(_PNG_1PX)
+    cm = ContextManager(memory_store=store)
+
+    pkg = cm.build_context(
+        user_message="Compare the code with the diagram",
+        attachments=[
+            {"filename": "main.py", "content": "print('hi')"},
+            {"filename": "diagram.jpg", "path": str(img)},
+        ],
+        max_context_tokens=8192,
+        vision=True,
+    )
+
+    content = _image_turn(pkg)
+    assert content[0]["type"] == "text"
+    assert "--- Attachment: main.py ---" in content[0]["text"]
+    assert "print('hi')" in content[0]["text"]
+    assert [p["type"] for p in content[1:]] == ["image_url"]
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_missing_image_file_is_skipped_not_fatal(memory_test_env, tmp_path):
+    store, _ = memory_test_env
+    cm = ContextManager(memory_store=store)
+
+    pkg = cm.build_context(
+        user_message="see this",
+        attachments=[{"filename": "gone.png", "path": str(tmp_path / "gone.png")}],
+        max_context_tokens=8192,
+        vision=True,
+    )
+
+    # Nothing readable -> plain string turn, not an empty parts list.
+    assert _image_turn(pkg) == "see this"

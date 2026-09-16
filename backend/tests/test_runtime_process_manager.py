@@ -183,3 +183,129 @@ def test_static_audit_no_lms_cli_usage_in_backend_app():
         code = py_file.read_text(encoding="utf-8", errors="ignore")
         for term in forbidden_terms:
             assert term not in code, f"Forbidden LM Studio CLI pattern '{term}' found in {py_file}"
+
+
+# --- vision: the projector beside a model is passed as --mmproj -------------
+
+
+def _gguf(path, size=16):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * size)
+    return path
+
+
+@pytest.fixture
+def vision_catalog(tmp_path, monkeypatch):
+    """A catalogue over a temp models/ tree: fast model with a projector, main without."""
+    import app.agent.model_catalog as mc
+    from app.agent.model_catalog import ModelCatalog
+
+    root = tmp_path / "models"
+    _gguf(root / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf")
+    _gguf(root / "qwen3.5-4b" / "mmproj-F16.gguf")
+    _gguf(root / "qwen3.5-9b" / "Qwen3.5-9B-UD-Q3_K_XL.gguf")
+    catalog = ModelCatalog(models_dir=root, state_path=tmp_path / "models.json")
+    monkeypatch.setattr(mc, "_catalog", catalog)
+    return root
+
+
+async def _spawn_and_capture_cmd(pm, model_kind):
+    mock_proc = MagicMock()
+    mock_proc.poll = MagicMock(return_value=None)
+    mock_proc.stdout = None
+    mock_proc.stderr = None
+    mock_proc.pid = 9999
+    health_states = [False, False, True]
+
+    async def mock_health(timeout=None):
+        return health_states.pop(0) if health_states else True
+
+    with patch.object(pm, "health_check", side_effect=mock_health),          patch("subprocess.Popen") as mock_spawn:
+        mock_spawn.return_value = mock_proc
+        assert await pm.ensure_running(model_kind=model_kind) is True
+        return mock_spawn.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_launch_passes_mmproj_when_the_model_has_a_projector(vision_catalog):
+    pm = RuntimeProcessManager(
+        startup_timeout=5.0,
+        fast_model_path=str(vision_catalog / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf"),
+    )
+    cmd = await _spawn_and_capture_cmd(pm, "fast")
+
+    assert "--mmproj" in cmd
+    assert Path(cmd[cmd.index("--mmproj") + 1]).name == "mmproj-F16.gguf"
+    assert "--no-mmproj-offload" not in cmd
+    assert pm.has_vision("fast") is True
+
+
+@pytest.mark.asyncio
+async def test_launch_is_text_only_when_no_projector_sits_beside_the_model(vision_catalog):
+    pm = RuntimeProcessManager(
+        startup_timeout=5.0,
+        main_model_path=str(vision_catalog / "qwen3.5-9b" / "Qwen3.5-9B-UD-Q3_K_XL.gguf"),
+    )
+    cmd = await _spawn_and_capture_cmd(pm, "main")
+
+    assert "--mmproj" not in cmd
+    assert pm.has_vision("main") is False
+
+
+@pytest.mark.asyncio
+async def test_mmproj_can_be_disabled_and_kept_off_the_gpu(vision_catalog, monkeypatch):
+    from app.config import settings
+
+    fast = str(vision_catalog / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf")
+
+    monkeypatch.setattr(settings, "llama_mmproj_enabled", False)
+    pm = RuntimeProcessManager(startup_timeout=5.0, fast_model_path=fast)
+    assert "--mmproj" not in await _spawn_and_capture_cmd(pm, "fast")
+    assert pm.has_vision("fast") is False
+
+    monkeypatch.setattr(settings, "llama_mmproj_enabled", True)
+    monkeypatch.setattr(settings, "llama_mmproj_offload", False)
+    pm = RuntimeProcessManager(startup_timeout=5.0, fast_model_path=fast)
+    cmd = await _spawn_and_capture_cmd(pm, "fast")
+    assert "--mmproj" in cmd and "--no-mmproj-offload" in cmd
+
+
+def test_stale_configured_path_falls_back_to_a_catalogued_model(vision_catalog):
+    """Models moved into per-folder layout; a .env path to the old flat file must still resolve."""
+    pm = RuntimeProcessManager(fast_model_path="models/Qwen3.5-4B-UD-Q4_K_XL.gguf")
+    resolved, alias = pm.resolve_model_path("fast")
+
+    assert alias == "fast"
+    assert resolved.name == "Qwen3.5-4B-UD-Q4_K_XL.gguf"
+    assert resolved.parent.name == "qwen3.5-4b"
+
+
+@pytest.mark.asyncio
+async def test_projector_that_fails_to_load_falls_back_to_text_only(vision_catalog):
+    """A projector OOM (real case: 9B + mmproj on an 8GB card with a game open) must not leave
+    the user with no model. The relaunch drops --mmproj and has_vision says so."""
+    pm = RuntimeProcessManager(
+        startup_timeout=5.0,
+        fast_model_path=str(vision_catalog / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf"),
+    )
+
+    # First child dies at once (as llama-server does on cudaMalloc failure); second one lives.
+    dead = MagicMock(); dead.poll = MagicMock(return_value=3221226505); dead.returncode = 3221226505
+    dead.stdout = None; dead.stderr = None; dead.pid = 1
+    alive = MagicMock(); alive.poll = MagicMock(return_value=None)
+    alive.stdout = None; alive.stderr = None; alive.pid = 2
+    health_states = [False, True]
+
+    async def mock_health(timeout=None):
+        return health_states.pop(0) if health_states else True
+
+    with patch.object(pm, "health_check", side_effect=mock_health), \
+         patch("subprocess.Popen", side_effect=[dead, alive]) as mock_spawn:
+        assert await pm.ensure_running(model_kind="fast") is True
+
+    first, second = (call.args[0] for call in mock_spawn.call_args_list)
+    assert "--mmproj" in first
+    assert "--mmproj" not in second
+    assert second == [arg for arg in first if arg not in ("--mmproj", first[first.index("--mmproj") + 1])]
+    assert pm.loaded_projector is None
+    assert pm.has_vision("fast") is False  # live answer, despite the projector on disk
