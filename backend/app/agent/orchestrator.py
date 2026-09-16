@@ -227,14 +227,59 @@ TOOL_PROTOCOL_RULES = (
 )
 
 
-def build_system_prompt(persona: Optional[Any] = None) -> str:
+def _measured_system_state() -> str:
     """
-    Compose the system prompt: persona voice first, then the invariant tool
-    protocol. The persona shapes manner only - it can never change what tools
+    The awareness monitor's latest hardware sample as one line, or "" when unavailable.
+    Read lazily from app.main to avoid an import cycle; never raises.
+    """
+    try:
+        from app.awareness.briefing import system_state_line
+        from app.main import awareness_monitor
+
+        snapshot = awareness_monitor.last_snapshot
+        if snapshot is None:
+            return ""
+        loaded = None
+        try:
+            from app.agent.runtime_process_manager import get_runtime_process_manager
+            manager = get_runtime_process_manager()
+            if manager.is_running() and manager.current_model_kind:
+                resolved, _ = manager.resolve_model_path(manager.current_model_kind)
+                loaded = f"{resolved.stem} ({manager.current_model_kind} slot)"
+        except Exception:
+            pass
+        return system_state_line(snapshot, loaded_model=loaded)
+    except Exception:
+        return ""
+
+
+def build_system_prompt(persona: Optional[Any] = None, system_state: Optional[str] = None) -> str:
+    """
+    Compose the system prompt: persona voice first, the measured system state, then the
+    invariant tool protocol. The persona shapes manner only - it can never change what tools
     exist or how they must be invoked.
+
+    The SYSTEM STATE block exists because a persona that asks for "concrete numbers" without
+    supplying any gets numbers invented for it -- a 4B model greeted with "hi" would report a
+    VRAM figure it never read. With the real sample in the prompt there is nothing to make up.
     """
     active = persona or persona_manager.get_active()
-    return f"{active.build_prompt_preamble()}\n\n{TOOL_PROTOCOL_RULES}"
+    state = _measured_system_state() if system_state is None else system_state
+    sections = [active.build_prompt_preamble()]
+    if state:
+        sections.append(
+            "SYSTEM STATE (measured moments ago; the only hardware figures you may quote unless a tool "
+            f"reports newer ones):\n{state}\n"
+            "Mention these figures only when the user asks about the machine, a model, or performance — "
+            "never in a greeting or an unrelated reply."
+        )
+    else:
+        sections.append(
+            "SYSTEM STATE: no hardware sample is available right now. Do not state any hardware "
+            "figures; say you have not checked if asked."
+        )
+    sections.append(TOOL_PROTOCOL_RULES)
+    return "\n\n".join(sections)
 
 
 class _LegacyClientAdapter(ModelProvider):

@@ -269,6 +269,41 @@ def evaluate_url_risk(url: str) -> RiskTier:
         return RiskTier.CONFIRMATION_REQUIRED
 
 
+def evaluate_launch_app_risk(name_or_path: str) -> tuple[RiskTier, Optional[str]]:
+    """
+    Opening an installed application by name ("discord", "settings", "notepad") is what the
+    user asked for and carries no more risk than clicking its Start Menu tile, so it is
+    LOW_RISK. Confirmation stays for anything that is really "run this file": an explicit path,
+    a script (.cmd/.bat/.ps1/.vbs), or an executable under Downloads or a temp folder.
+    """
+    from app.agent.tools.app_control import APP_ALIASES, URI_APPS, resolve_executable, is_uri_or_shortcut
+
+    raw = (name_or_path or "").strip().strip("'\"")
+    lowered = raw.lower()
+    if not raw:
+        return RiskTier.CONFIRMATION_REQUIRED, None
+    if lowered in APP_ALIASES or lowered in URI_APPS:
+        return RiskTier.LOW_RISK, "Known application alias."
+    if any(sep in raw for sep in ("\\", "/")) or lowered.endswith((".cmd", ".bat", ".ps1", ".vbs", ".js", ".msi")):
+        return RiskTier.CONFIRMATION_REQUIRED, "Launching an explicit path or script needs confirmation."
+
+    try:
+        target = resolve_executable(raw)
+    except Exception:
+        target = None
+    if not target:
+        # Unknown app: launching will fail with a clear error, so nothing to confirm.
+        return RiskTier.LOW_RISK, "Application not found; launch will report that."
+    target_l = target.lower()
+    if is_uri_or_shortcut(target):
+        return RiskTier.LOW_RISK, "Installed application opened via the Start Menu or a system URI."
+    if any(marker in target_l for marker in ("\downloads\\", "\temp\\", "\tmp\\", "\appdata\local\temp\\")):
+        return RiskTier.CONFIRMATION_REQUIRED, "Executable lives in a downloads or temp folder."
+    if target_l.endswith((".cmd", ".bat", ".ps1", ".vbs")):
+        return RiskTier.CONFIRMATION_REQUIRED, "Target is a script."
+    return RiskTier.LOW_RISK, "Installed application on PATH."
+
+
 def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str]]:
     """
     Evaluate risk tier for kill_process:
@@ -436,6 +471,11 @@ def evaluate_tool_permission(
         url_tier = evaluate_url_risk(str(url))
         if url_tier != RiskTier.LOW_RISK:
             effective_tier = url_tier
+    elif tool_name == "launch_app":
+        target = arguments.get("name_or_path") or arguments.get("name") or arguments.get("app") or ""
+        la_tier, la_reason = evaluate_launch_app_risk(str(target))
+        effective_tier = la_tier
+        custom_reason = la_reason
     elif tool_name == "kill_process":
         target = arguments.get("pid_or_name") or arguments.get("pid") or arguments.get("name") or arguments.get("process_name") or ""
         kp_tier, kp_reason = evaluate_kill_process_risk(target)

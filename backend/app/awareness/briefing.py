@@ -39,6 +39,40 @@ def _gb(mb: float) -> float:
     return round(mb / 1024.0, 1)
 
 
+def system_state_line(snapshot: SystemSnapshot, loaded_model: Optional[str] = None) -> str:
+    """
+    One compact, factual line of measured hardware state for the system prompt, so the model
+    has real numbers to quote instead of inventing them. Only what was actually read appears;
+    a missing sensor is simply absent rather than guessed.
+    """
+    parts: list[str] = []
+    if snapshot.gpu_available and snapshot.vram_total_mb > 0:
+        gpu = f"GPU {snapshot.gpu_name or 'unknown'}: VRAM {_gb(snapshot.vram_used_mb)}/{_gb(snapshot.vram_total_mb)} GB used"
+        gpu += f", {snapshot.gpu_util_percent:.0f}% load"
+        if snapshot.gpu_temp_c is not None:
+            gpu += f", {snapshot.gpu_temp_c:.0f}°C"
+        parts.append(gpu)
+    else:
+        parts.append("GPU: not readable")
+    if snapshot.ram_total_mb > 0:
+        parts.append(f"RAM {_gb(snapshot.ram_used_mb)}/{_gb(snapshot.ram_total_mb)} GB used")
+    parts.append(f"CPU {snapshot.cpu_percent:.0f}% load")
+    if snapshot.disk_total_gb > 0:
+        parts.append(f"disk {snapshot.disk_free_gb:.0f} GB free")
+    if snapshot.battery_percent is not None:
+        parts.append(
+            f"battery {snapshot.battery_percent:.0f}%"
+            + (" on mains" if snapshot.battery_plugged else " on battery")
+        )
+    if snapshot.model_unloaded:
+        parts.append("local model: unloaded")
+    elif loaded_model:
+        parts.append(f"local model: {loaded_model}")
+    if snapshot.heavy_apps:
+        parts.append("heavy apps running: " + ", ".join(snapshot.heavy_apps))
+    return "; ".join(parts)
+
+
 def build_briefing(
     snapshot: SystemSnapshot,
     persona: Any,

@@ -495,3 +495,27 @@ def test_confirmation_prompt_falls_back_to_tool_name_without_recognizable_args()
     assert "get clipboard" in prompt["spoken"]
 
 
+
+
+# --- launch_app: opening an installed app by name is not a risky action ---
+
+def test_launch_app_by_name_is_low_risk_but_paths_and_scripts_still_ask(monkeypatch):
+    from app.agent import permissions as perm
+    from app.agent.tools import app_control
+
+    monkeypatch.setattr(app_control, "find_start_menu_shortcut",
+                        lambda name: r"C:\Users\x\Start Menu\Programs\Discord.lnk" if name.lower() == "discord" else None)
+
+    assert perm.evaluate_launch_app_risk("settings")[0] == perm.RiskTier.LOW_RISK
+    assert perm.evaluate_launch_app_risk("discord")[0] == perm.RiskTier.LOW_RISK
+    assert perm.evaluate_launch_app_risk("notepad")[0] == perm.RiskTier.LOW_RISK
+    assert perm.evaluate_launch_app_risk("vs code")[0] == perm.RiskTier.LOW_RISK
+    assert perm.evaluate_launch_app_risk("no-such-app-anywhere")[0] == perm.RiskTier.LOW_RISK
+    assert perm.evaluate_launch_app_risk(r"C:\Users\x\Downloads\setup.exe")[0] == perm.RiskTier.CONFIRMATION_REQUIRED
+    assert perm.evaluate_launch_app_risk("D:/JARVIS/Jarvis.bat")[0] == perm.RiskTier.CONFIRMATION_REQUIRED
+    assert perm.evaluate_launch_app_risk("")[0] == perm.RiskTier.CONFIRMATION_REQUIRED
+
+    decision = perm.evaluate_tool_permission("launch_app", {"name_or_path": "discord"})
+    assert decision.allowed and decision.risk_tier == perm.RiskTier.LOW_RISK
+    decision = perm.evaluate_tool_permission("launch_app", {"name_or_path": r"C:\tmp\thing.exe"})
+    assert not decision.allowed
