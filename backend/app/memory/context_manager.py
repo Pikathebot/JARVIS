@@ -416,6 +416,15 @@ class ContextManager:
             content: Any = []
             if tier2_full_user_text:
                 content.append({"type": "text", "text": tier2_full_user_text})
+            # Small models hedge ("I cannot access images...") even while describing the
+            # picture correctly, because the tool protocol talks about opening files with
+            # tools. Say plainly that these pixels are already in front of it.
+            plural = "s are" if len(image_parts) > 1 else " is"
+            content.append({
+                "type": "text",
+                "text": f"(The image{plural} attached to this message and visible to you directly — "
+                        "describe what you actually see; no tool is needed to open it.)",
+            })
             content.extend(image_parts)
             final_messages.append({"role": "user", "content": content})
         elif tier2_full_user_text:

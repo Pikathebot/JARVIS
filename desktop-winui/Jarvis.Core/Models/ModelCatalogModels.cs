@@ -31,6 +31,10 @@ public sealed class ModelInfo
     /// <summary>Which slots currently point at this model ("main", "fast", or both).</summary>
     public List<string> Slots { get; set; } = new();
 
+    /// <summary>Catalogue id of the mmproj-*.gguf paired with this model (the projector in its
+    /// own folder), or null for a text-only model. A model with a projector sees images.</summary>
+    public string? Projector { get; set; }
+
     /// <summary>Human-readable size, e.g. "4.7 GB" — VRAM headroom is the whole question when
     /// picking a model on an 8GB card, so it belongs next to the name.</summary>
     [JsonIgnore]
@@ -60,6 +64,28 @@ public sealed class ModelCatalogResponse
     /// <summary>True when llama-server was started outside Jarvis — switching models then has to
     /// stop that process to free the port.</summary>
     public bool ExternallyManaged { get; set; }
+
+    /// <summary>Filename of the --mmproj the running server actually loaded, or null when it is
+    /// text-only (no projector beside the model, vision disabled, or the projector had to be
+    /// dropped for VRAM).</summary>
+    public string? LoadedProjector { get; set; }
+
+    /// <summary>The CPU image-captioner sidecar that describes images for a model without a
+    /// projector.</summary>
+    public CaptionerStatus? Captioner { get; set; }
+}
+
+/// <summary>Status of the image-captioner sidecar (backend/app/agent/captioner.py).</summary>
+public sealed class CaptionerStatus
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>Enabled and both the model and its projector exist on disk.</summary>
+    public bool Available { get; set; }
+
+    public bool Running { get; set; }
+
+    public string? Model { get; set; }
 }
 
 public sealed class ModelSelectRequest

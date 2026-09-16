@@ -558,6 +558,31 @@ class AgentOrchestrator:
         sections.append("--------------------------------------------------\n")
         return "\n".join(sections)
 
+    def _prefer_seeing_slot(self, decision: Any, is_fast: bool, attachments: Optional[list[Any]]):
+        """
+        An image turn routed to a text-only fast slot goes to main instead when main has a
+        projector: real pixels beat a captioner's sentence. Cloud turns and turns without
+        images are left alone.
+        """
+        if not is_fast or not attachments or (decision.provider and decision.provider != "llama_cpp"):
+            return decision, is_fast
+        try:
+            from app.agent.captioner import is_image_attachment
+            from app.agent.runtime_process_manager import get_runtime_process_manager
+
+            if not any(is_image_attachment(a) for a in attachments):
+                return decision, is_fast
+            manager = get_runtime_process_manager()
+            if manager.has_vision("fast") or not manager.has_vision("main"):
+                return decision, is_fast
+        except Exception as exc:
+            logger.debug("Vision-aware routing skipped: %s", exc)
+            return decision, is_fast
+        logger.info("Image attached and the fast slot cannot see; routing to main instead.")
+        decision.model = "main"
+        decision.reason = (decision.reason or "") + " Rerouted to main: images attached and only main has a projector."
+        return decision, False
+
     async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
         """
         One path for native and MCP tools: off the event loop, under a timeout, with the
@@ -715,6 +740,7 @@ class AgentOrchestrator:
             requested_model=requested_model
         )
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
+        decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
@@ -1341,6 +1367,7 @@ class AgentOrchestrator:
             requested_model=requested_model
         )
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
+        decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         # 2. Match skills & prepare base prompts

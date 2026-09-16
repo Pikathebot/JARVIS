@@ -227,8 +227,11 @@ def test_image_attachment_is_sent_as_image_part_when_vision_is_on(memory_test_en
     content = _image_turn(pkg)
     assert isinstance(content, list)
     assert content[0] == {"type": "text", "text": "What is in this screenshot?"}
-    assert content[1]["type"] == "image_url"
-    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    # A short "the image is right here" note precedes the pixels: small models otherwise hedge
+    # that they cannot open files even while describing the picture correctly.
+    assert content[1]["type"] == "text" and "visible to you directly" in content[1]["text"]
+    assert content[2]["type"] == "image_url"
+    assert content[2]["image_url"]["url"].startswith("data:image/png;base64,")
     # Text-side description of the image must not also be injected.
     assert "Binary or unsupported" not in content[0]["text"]
     # The image is budgeted for, not free.
@@ -273,8 +276,8 @@ def test_text_and_image_attachments_mix_on_one_turn(memory_test_env):
     assert content[0]["type"] == "text"
     assert "--- Attachment: main.py ---" in content[0]["text"]
     assert "print('hi')" in content[0]["text"]
-    assert [p["type"] for p in content[1:]] == ["image_url"]
-    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert [p["type"] for p in content[1:]] == ["text", "image_url"]  # note, then pixels
+    assert content[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
 def test_missing_image_file_is_skipped_not_fatal(memory_test_env, tmp_path):

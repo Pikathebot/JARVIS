@@ -567,6 +567,27 @@ public sealed partial class MainWindow : Window
         {
             e.Handled = true;
             await SendCurrentAsync();
+            return;
+        }
+
+        // Ctrl+V with a bitmap on the clipboard (a Win+Shift+S capture) attaches it as an image
+        // instead of pasting nothing; text on the clipboard still pastes as text.
+        var ctrlDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (e.Key == VirtualKey.V && ctrlDown)
+        {
+            var content = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (content.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Bitmap)
+                && !content.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Text))
+            {
+                e.Handled = true;
+                var saved = await ImageAttachmentService.SaveClipboardImageAsync();
+                if (saved is not null)
+                {
+                    _pendingAttachmentPaths.Add(saved);
+                    AddAttachmentChip(System.IO.Path.GetFileName(saved), saved);
+                }
+            }
         }
     }
 
@@ -581,6 +602,7 @@ public sealed partial class MainWindow : Window
         var paths = _pendingAttachmentPaths.ToList();
         _pendingAttachmentPaths.Clear();
         AttachmentChips.Items.Clear();
+        VisionHint.Visibility = Visibility.Collapsed;
 
         List<Attachment>? uploaded = null;
         if (paths.Count > 0)
@@ -592,11 +614,20 @@ public sealed partial class MainWindow : Window
             {
                 try
                 {
-                    uploaded.Add(await _api.UploadAttachmentAsync(path, ChatViewModel.ActiveSessionId, ChatViewModel.ProjectId));
+                    // Big screenshots are downscaled first; the projector's token cost grows with
+                    // resolution long after the text stopped getting more legible.
+                    var toUpload = await ImageAttachmentService.PrepareForUploadAsync(path);
+                    uploaded.Add(await _api.UploadAttachmentAsync(toUpload, ChatViewModel.ActiveSessionId, ChatViewModel.ProjectId));
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // best-effort — a failed upload just isn't included in the turn
+                    // The turn still goes out without this file, but silently dropping it made
+                    // "why can't it see my image?" impossible to diagnose. Say what happened.
+                    ChatViewModel.Messages.Add(new ChatMessage
+                    {
+                        Role = MessageRole.System,
+                        Content = $"Attachment '{System.IO.Path.GetFileName(path)}' was not uploaded: {ex.Message}",
+                    });
                 }
             }
             SendButton.IsEnabled = true;
@@ -623,23 +654,90 @@ public sealed partial class MainWindow : Window
 
     private void AddAttachmentChip(string name, string path)
     {
+        var isImage = ImageAttachmentService.IsImagePath(path);
         var chip = new Border
         {
             Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(30, 6, 182, 212)),
             CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(10, 4, 6, 4),
+            Padding = new Thickness(isImage ? 4 : 10, 4, 6, 4),
         };
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        if (isImage)
+        {
+            // A thumbnail says "this is the picture I mean" far better than a filename.
+            try
+            {
+                var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path)) { DecodePixelHeight = 40 };
+                row.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(8),
+                    Width = 56,
+                    Height = 40,
+                    Child = new Image { Source = bitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill },
+                });
+            }
+            catch
+            {
+                // unreadable file: fall through to the name-only chip
+            }
+        }
         row.Children.Add(new TextBlock { Text = name, FontSize = 11, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.White), VerticalAlignment = VerticalAlignment.Center });
         var removeButton = new Button { Content = "✕", FontSize = 9, Padding = new Thickness(4), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
         removeButton.Click += (_, _) =>
         {
             _pendingAttachmentPaths.Remove(path);
             AttachmentChips.Items.Remove(chip);
+            _ = RefreshVisionHintAsync();
         };
         row.Children.Add(removeButton);
         chip.Child = row;
         AttachmentChips.Items.Add(chip);
+        _ = RefreshVisionHintAsync();
+    }
+
+    /// <summary>
+    /// Below the chips, one line saying what will happen to an attached image: seen by the model
+    /// (a projector is loaded or paired with the main model), described by the CPU captioner, or
+    /// only attached as a file. Hidden when no image is attached.
+    /// </summary>
+    private async Task RefreshVisionHintAsync()
+    {
+        if (!_pendingAttachmentPaths.Any(ImageAttachmentService.IsImagePath))
+        {
+            VisionHint.Visibility = Visibility.Collapsed;
+            return;
+        }
+        VisionHint.Text = "Checking whether the model can see images…";
+        VisionHint.Visibility = Visibility.Visible;
+        string text;
+        try
+        {
+            var catalog = await _api.FetchModelCatalogAsync();
+            string? seeingModel = null;
+            if (catalog.LoadedProjector is not null && catalog.LoadedSlot is not null
+                && catalog.Selection.TryGetValue(catalog.LoadedSlot, out var loadedId))
+            {
+                seeingModel = catalog.Models.FirstOrDefault(m => m.Id == loadedId)?.Name ?? loadedId;
+            }
+            else if (catalog.Selection.TryGetValue("main", out var mainId) && mainId is not null)
+            {
+                var main = catalog.Models.FirstOrDefault(m => m.Id == mainId);
+                if (main?.Projector is not null) seeingModel = main.Name;
+            }
+
+            if (seeingModel is not null)
+                text = $"🖼 {seeingModel} will see the image directly.";
+            else if (catalog.Captioner?.Available == true)
+                text = "🖼 The current model cannot see images; the local captioner will describe them for it.";
+            else
+                text = "⚠ The current model cannot see images and no captioner is installed — they will be attached as files only.";
+        }
+        catch
+        {
+            text = "🖼 Image attached.";
+        }
+        if (_pendingAttachmentPaths.Any(ImageAttachmentService.IsImagePath))
+            VisionHint.Text = text;
     }
 
     /// <summary>

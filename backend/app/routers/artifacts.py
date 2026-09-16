@@ -186,6 +186,18 @@ async def upload_file(
     with open(dest_path, "wb") as f:
         f.write(content)
 
+    # A client uploads before it sends the first message of a new session, so the session row
+    # the attachment points at may not exist yet; without this the insert fails its foreign key
+    # and the image silently never reaches the turn.
+    if session_id:
+        from app.database.models import Session as ChatSession
+        import time as _time
+
+        if db.get(ChatSession, session_id) is None:
+            now = _time.time()
+            db.add(ChatSession(session_id=session_id, project_id=project_id, created_at=now, updated_at=now))
+            db.flush()
+
     attachment = Attachment(
         id=str(uuid.uuid4()),
         session_id=session_id,

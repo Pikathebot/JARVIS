@@ -216,3 +216,51 @@ def test_status_reports_files_relative_to_the_repo(captioner):
     status = captioner.status()
     assert status["running"] is True
     assert status["port"] == captioner.port
+
+
+# ------------------------------------------------------- vision-aware routing
+
+def _orchestrator_stub():
+    from app.agent.orchestrator import AgentOrchestrator
+    return AgentOrchestrator.__new__(AgentOrchestrator)
+
+
+class _Decision:
+    def __init__(self, model="fast", provider="llama_cpp"):
+        self.model, self.provider, self.mode, self.reason = model, provider, "normal", "r"
+
+
+def test_image_turn_moves_from_a_blind_fast_slot_to_a_seeing_main(monkeypatch):
+    from app.agent import runtime_process_manager as rpm
+
+    class M:
+        def has_vision(self, slot):
+            return slot == "main"
+
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: M())
+    decision, is_fast = _orchestrator_stub()._prefer_seeing_slot(
+        _Decision(), True, [{"filename": "shot.png", "path": "x/shot.png"}]
+    )
+    assert decision.model == "main" and is_fast is False
+
+
+def test_image_turn_stays_on_a_fast_slot_that_can_see(monkeypatch):
+    from app.agent import runtime_process_manager as rpm
+
+    class M:
+        def has_vision(self, slot):
+            return True
+
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: M())
+    decision, is_fast = _orchestrator_stub()._prefer_seeing_slot(
+        _Decision(), True, [{"filename": "shot.png", "path": "x/shot.png"}]
+    )
+    assert decision.model == "fast" and is_fast is True
+
+
+def test_text_only_turns_and_cloud_turns_are_not_rerouted(monkeypatch):
+    o = _orchestrator_stub()
+    d, f = o._prefer_seeing_slot(_Decision(), True, [{"filename": "notes.md", "path": "n.md"}])
+    assert d.model == "fast" and f is True
+    d, f = o._prefer_seeing_slot(_Decision(provider="openrouter"), True, [{"filename": "a.png", "path": "a.png"}])
+    assert d.model == "fast" and f is True

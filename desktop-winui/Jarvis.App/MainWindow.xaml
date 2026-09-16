@@ -216,6 +216,9 @@
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                             </ItemsControl>
+                            <!-- Only shown while an image is attached: says whether the model will
+                                 actually see it, or have it described by the captioner. -->
+                            <TextBlock x:Name="VisionHint" FontSize="11" Opacity="0.7" Visibility="Collapsed" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />

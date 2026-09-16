@@ -142,3 +142,24 @@ def test_attachment_read_by_orchestrator_and_read_file_tool(upload_test_env):
     assert "calc_utils.py" in prompt_context
     assert "calculate_total" in prompt_context
 
+
+
+def test_upload_into_a_session_that_has_no_messages_yet(tmp_path, monkeypatch):
+    """The client uploads before the first message, so the session row may not exist yet."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+
+    import uuid
+    session_id = f"brand-new-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(settings, "workspace_path", str(tmp_path))
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    with TestClient(app) as client:
+        r = client.post("/api/upload", files={"file": ("shot.png", png.read_bytes(), "image/png")},
+                        data={"session_id": session_id})
+        assert r.status_code == 201, r.text
+        assert r.json()["session_id"] == session_id
+        listed = client.get("/api/attachments", params={"session_id": session_id}).json()
+        items = listed if isinstance(listed, list) else listed.get("attachments", listed)
+        assert [a["filename"] for a in items] == ["shot.png"]
