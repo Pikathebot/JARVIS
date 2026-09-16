@@ -46,10 +46,12 @@ from app.routers import (
     awareness_router,
     routines_router,
     models_router,
+    confirmations_router,
 )
 from app.awareness.monitor import AwarenessMonitor
 from app.persona import persona_manager
 from app.routines.scheduler import RoutineScheduler
+from app.agent.confirmations import ConfirmationWatcher, get_confirmation_registry
 
 
 
@@ -234,6 +236,14 @@ routine_scheduler = RoutineScheduler(
 )
 routine_scheduler.enabled = settings.routines_enabled
 
+# Unanswered confirmations: announced through the same observation channel when they lapse,
+# so a hands-free session hears that nothing was done rather than just going quiet.
+confirmation_watcher = ConfirmationWatcher(
+    registry=get_confirmation_registry(),
+    monitor=awareness_monitor,
+    persona_provider=persona_manager.get_active,
+)
+
 
 
 @asynccontextmanager
@@ -264,6 +274,9 @@ async def lifespan(app: FastAPI):
     if settings.routines_enabled:
         await routine_scheduler.start()
 
+    if settings.confirmation_timeout_seconds > 0:
+        await confirmation_watcher.start()
+
     logger.info("==================================================================")
     logger.info("  JARVIS Backend is READY and actively listening for requests!")
     logger.info("  Health endpoint: http://127.0.0.1:8000/health")
@@ -283,6 +296,7 @@ async def lifespan(app: FastAPI):
     wake_detector.stop_listening()
     await awareness_monitor.stop()
     await routine_scheduler.stop()
+    await confirmation_watcher.stop()
     if settings.governor_enabled:
         await process_watcher.stop()
         await governor.stop()
@@ -321,6 +335,7 @@ app.include_router(voice_router)
 app.include_router(awareness_router)
 app.include_router(routines_router)
 app.include_router(models_router)
+app.include_router(confirmations_router)
 
 
 

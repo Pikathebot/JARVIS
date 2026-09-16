@@ -21,6 +21,7 @@ from app.agent.permissions import (
     build_confirmation_prompt,
 )
 from app.agent.validator import validate_tool_call, CallHistory, ValidationResult
+from app.agent.confirmations import get_confirmation_registry
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.provider_factory import get_model_provider
@@ -623,6 +624,9 @@ class AgentOrchestrator:
         attachments: Optional[list[dict[str, Any]]] = None
     ) -> OrchestratorResult:
         active_session_id = session_id or "default"
+        # A token whose confirmation window lapsed does not approve anything: the action is
+        # re-evaluated, comes back as confirmation_required, and the prompt says why.
+        approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
         resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, active_session_id)
         session_data = self.memory_store.get_or_create_session(active_session_id, chat_mode=chat_mode, project_id=resolved_project_id)
         effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
@@ -1114,7 +1118,11 @@ class AgentOrchestrator:
                     "Tool execution blocked by safety permission gate. %d action(s) require confirmation. Details: %s",
                     len(pending_list), pending_list
                 )
-                prompt = build_confirmation_prompt(pending_list, persona_manager.get_active())
+                registry = get_confirmation_registry()
+                registry.ask(session_id, pending_list)
+                prompt = build_confirmation_prompt(
+                    pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
+                )
 
                 return OrchestratorResult(
                     response=prompt["text"],
@@ -1224,6 +1232,7 @@ class AgentOrchestrator:
         """
         stop_playback()
         active_session_id = session_id or "default"
+        approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
         # Conversational voice toggle commands
         lower_msg = user_message.strip().lower()
@@ -1498,7 +1507,11 @@ class AgentOrchestrator:
                     }
                     for p in batch_result.pending_confirmations
                 ]
-                prompt = build_confirmation_prompt(pending_list, persona_manager.get_active())
+                registry = get_confirmation_registry()
+                registry.ask(session_id, pending_list)
+                prompt = build_confirmation_prompt(
+                    pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
+                )
                 yield {
                     "event": "confirmation_required",
                     "data": {

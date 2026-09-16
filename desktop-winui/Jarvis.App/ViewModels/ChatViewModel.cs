@@ -112,13 +112,26 @@ public partial class ChatViewModel : ObservableObject
     [RelayCommand]
     public void DenyAction(PendingConfirmation confirmation)
     {
-        // Client-only today, matching useChat.ts's denyAction — the backend is never told.
-        // See PLAN.md's existing "Confirmation timeout voice feedback" milestone for the real fix.
         PendingConfirmations.Remove(confirmation);
         Messages.Add(new ChatMessage
         {
             Role = MessageRole.System,
             Content = "Action execution was denied by user.",
+        });
+
+        // Tell the backend, otherwise its confirmation window keeps running and Jarvis later
+        // announces a timeout for something the user already said no to. Fire-and-forget: the
+        // card is gone either way.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _api.DenyConfirmationAsync(confirmation.ActionId).ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort; the backend's timeout is the fallback
+            }
         });
     }
 

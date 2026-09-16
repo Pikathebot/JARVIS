@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     # Safety & Tool Limits Settings (Stage A)
     max_tool_calls_per_turn: int = Field(default=15, alias="MAX_TOOL_CALLS_PER_TURN")
     confirmation_timeout_action: str = Field(default="deny", alias="CONFIRMATION_TIMEOUT_ACTION")
+    # How long an unanswered CONFIRMATION_REQUIRED ask stays valid. When it lapses Jarvis says
+    # so (through the awareness monitor) and a late "yes" is refused and re-asked. 0 = never.
+    confirmation_timeout_seconds: float = Field(default=90.0, alias="CONFIRMATION_TIMEOUT_SECONDS")
 
     # Tool-Call Reliability Settings
     reliability_window_size: int = Field(default=30, alias="RELIABILITY_WINDOW_SIZE")

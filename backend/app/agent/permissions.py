@@ -352,11 +352,16 @@ def _describe_pending_action(pending: dict[str, Any]) -> str:
     return tool
 
 
-def build_confirmation_prompt(pending: list[dict[str, Any]], persona: Any) -> dict[str, str]:
+def build_confirmation_prompt(
+    pending: list[dict[str, Any]], persona: Any, re_asked: bool = False
+) -> dict[str, str]:
     """
     Compose the confirmation prompt as both chat text and a TTS-ready sentence,
     so a pending CONFIRMATION_REQUIRED tool call can be spoken and answered by
     voice instead of only shown as a card the user has to click.
+
+    ``re_asked`` marks an action whose earlier approval window lapsed (see
+    ``app.agent.confirmations``), so the user hears why they are being asked again.
     """
     from app.awareness.briefing import address_suffix
 
@@ -375,6 +380,9 @@ def build_confirmation_prompt(pending: list[dict[str, Any]], persona: Any) -> di
             f"- {d} ({p.get('risk_tier', 'CONFIRMATION_REQUIRED')})" for d, p in zip(descriptions, pending)
         ]
 
+    if re_asked:
+        ask = f"That approval had timed out, so I am asking again. {ask}"
+        lines.insert(0, "_The earlier approval timed out, so this is being asked again._")
     spoken = f"{ask} Say yes to proceed, or no to cancel{address}."
     return {"text": "\n".join(lines), "spoken": spoken}
 

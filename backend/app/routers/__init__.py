@@ -6,6 +6,7 @@ from app.routers.voice import router as voice_router
 from app.routers.awareness import router as awareness_router
 from app.routers.routines import router as routines_router
 from app.routers.models import router as models_router
+from app.routers.confirmations import router as confirmations_router
 
 __all__ = [
     "projects_router",
@@ -16,4 +17,5 @@ __all__ = [
     "awareness_router",
     "routines_router",
     "models_router",
+    "confirmations_router",
 ]

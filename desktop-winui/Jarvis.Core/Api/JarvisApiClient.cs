@@ -110,6 +110,23 @@ public sealed class JarvisApiClient
         GetAsync<GovernorTelemetry>("/governor/status", ct);
 
     // ==========================================
+    // Confirmations
+    // ==========================================
+
+    /// <summary>Tells the backend the user declined a pending action, so it stops waiting for an
+    /// answer and does not later announce that the confirmation timed out. A 404 (the ask already
+    /// lapsed or was never registered) is not an error worth surfacing.</summary>
+    public async Task DenyConfirmationAsync(string actionId, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsync(
+            $"/api/confirmations/{Uri.EscapeDataString(actionId)}/deny", content: null, ct).ConfigureAwait(false);
+        if (response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
+    // ==========================================
     // Projects / workspaces
     // ==========================================
 
