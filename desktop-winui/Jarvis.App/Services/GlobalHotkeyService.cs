@@ -4,7 +4,7 @@ namespace Jarvis_App.Services;
 
 /// <summary>
 /// Global hotkey with a fallback chain, replacing the Rust implementation in
-/// desktop-app/src-tauri/src/main.rs (RegisterHotKey candidates tried in order; the first that
+/// the retired Tauri shell's main.rs (RegisterHotKey candidates tried in order; the first that
 /// registers wins, and the winner is reported back so the UI shows the real binding instead of a
 /// guessed one). RegisterHotKey needs a window handle owned by a thread with a message loop; we
 /// piggyback on the main window's HWND via SetWindowSubclass (comctl32) to intercept WM_HOTKEY

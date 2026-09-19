@@ -6,7 +6,7 @@ using Microsoft.UI.Dispatching;
 
 namespace Jarvis_App.ViewModels;
 
-/// <summary>Port of desktop-app/src/hooks/useGovernor.ts — polls GET /health every 2s.</summary>
+/// <summary>Port of the retired Next.js client's src/hooks/useGovernor.ts — polls GET /health every 2s.</summary>
 public partial class GovernorViewModel : ObservableObject, IDisposable
 {
     private readonly JarvisApiClient _api;

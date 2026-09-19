@@ -8,7 +8,7 @@ using Microsoft.UI.Dispatching;
 namespace Jarvis_App.ViewModels;
 
 /// <summary>
-/// Port of desktop-app/src/hooks/useAwareness.ts. Connects to GET /api/awareness/stream and keeps
+/// Port of the retired Next.js client's src/hooks/useAwareness.ts. Connects to GET /api/awareness/stream and keeps
 /// at most 4 visible observation cards, matching the AwarenessTray dedupe rule: a newer observation
 /// of the same "kind" replaces the older one; "resolved" removes it. Reconnects on stream failure
 /// and backfills by seq (never timestamp — see backend/app/awareness/observations.py).

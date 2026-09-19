@@ -2,7 +2,7 @@ using H.NotifyIcon;
 
 namespace Jarvis_App.Services;
 
-/// <summary>Replaces desktop/tray.py's pystray icon: Show/Hide, Toggle HUD, Free VRAM, Exit.</summary>
+/// <summary>Replaces the retired pywebview launcher's pystray icon: Show/Hide, Toggle HUD, Free VRAM, Exit.</summary>
 public sealed class TrayService : IDisposable
 {
     private readonly TaskbarIcon _icon;

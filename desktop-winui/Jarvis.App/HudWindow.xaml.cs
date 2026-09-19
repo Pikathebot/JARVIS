@@ -10,8 +10,8 @@ using Microsoft.UI.Xaml.Input;
 namespace Jarvis_App;
 
 /// <summary>
-/// Port of desktop-app/src/app/hud/page.tsx + the window-management half of
-/// desktop-app/src-tauri/src/main.rs. 460x108-ish, borderless, always-on-top, no taskbar entry,
+/// Port of the retired Next.js client's src/app/hud/page.tsx + the window-management half of
+/// the retired Tauri shell's main.rs. 460x108-ish, borderless, always-on-top, no taskbar entry,
 /// drag-anywhere, positioned bottom-right of the *current* monitor's work area (DisplayArea
 /// already excludes the taskbar, replacing the Rust "margin * 3" hack). Runs its own chat session
 /// against the non-streaming POST /chat and speaks every reply; never speaks awareness

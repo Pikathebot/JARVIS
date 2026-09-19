@@ -8,7 +8,7 @@ namespace Jarvis_App.Rendering;
 
 /// <summary>
 /// Lightweight regex-based syntax highlighter, standing in for the old UI's Prism.js
-/// (desktop-app/src/components/MessageBubble.tsx registered js/ts/python/bash/json/markdown, with
+/// (the retired Next.js client's src/components/MessageBubble.tsx registered js/ts/python/bash/json/markdown, with
 /// a javascript-grammar fallback). There is no drop-in WinUI 3 equivalent of Prism, and pulling in
 /// a full tokenizing library (ColorCode etc.) for six token classes is more machinery than the
 /// payoff — this covers comments/strings/numbers/keywords/punctuation, which is what the old
@@ -16,7 +16,7 @@ namespace Jarvis_App.Rendering;
 /// </summary>
 public static class CodeHighlighter
 {
-    // Token colors ported from the --tok-* custom properties in desktop-app/src/app/globals.css.
+    // Token colors ported from the --tok-* custom properties in the retired Next.js client's src/app/globals.css.
     private static readonly Color CommentColor = Color.FromArgb(255, 100, 116, 139); // slate-500
     private static readonly Color StringColor = Color.FromArgb(255, 134, 239, 172); // green-300
     private static readonly Color NumberColor = Color.FromArgb(255, 253, 186, 116); // orange-300

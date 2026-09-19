@@ -3,7 +3,7 @@ using Microsoft.Windows.AppLifecycle;
 namespace Jarvis_App.Services;
 
 /// <summary>
-/// Replaces the port-57321 TCP lock in run_jarvis.py's acquire_single_instance_lock() with the
+/// Replaces the port-57321 TCP lock in the retired run_jarvis.py's acquire_single_instance_lock() with the
 /// Windows App SDK's AppInstance key registration. A second launch redirects activation to the
 /// already-running instance instead of starting a second copy.
 /// </summary>

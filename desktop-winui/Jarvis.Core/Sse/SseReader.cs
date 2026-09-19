@@ -4,7 +4,7 @@ namespace Jarvis.Core.Sse;
 
 /// <summary>
 /// Frames a raw SSE byte stream into (event, data) packets. Equivalent to the hand-rolled parser in
-/// desktop-app/src/lib/sse-client.ts, but built on StreamReader.ReadLineAsync instead of manual
+/// the retired Next.js client's src/lib/sse-client.ts, but built on StreamReader.ReadLineAsync instead of manual
 /// double-newline splitting — line framing already absorbs the CRLF/LF ambiguity that file handled by hand.
 /// A blank line ends a packet (the SSE spec's frame boundary); multiple "data:" lines are joined with "\n".
 /// ":"-prefixed lines are comments (keepalives) and are dropped without producing a frame.

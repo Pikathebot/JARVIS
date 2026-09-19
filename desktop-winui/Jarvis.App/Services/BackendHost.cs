@@ -5,13 +5,12 @@ using Jarvis.Core.Api;
 namespace Jarvis_App.Services;
 
 /// <summary>
-/// Supervises the FastAPI backend, replacing the launcher role of run_jarvis.py (which this
-/// project retires per the plan's "full native shell" decision). Probes /health; if the backend
-/// isn't already running (e.g. a dev server started by hand), spawns
-/// ".venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000" with
-/// cwd=backend and PYTHONPATH=backend;repoRoot, matching run_jarvis.py's start_backend(). The
-/// child is bound to a Win32 Job Object with KILL_ON_JOB_CLOSE so it cannot outlive this process
-/// even if Jarvis.App crashes — run_jarvis.py had no equivalent guarantee.
+/// Supervises the FastAPI backend, the role the retired run_jarvis.py launcher used to play.
+/// Probes /health; if the backend isn't already running (e.g. a dev server started by hand),
+/// spawns ".venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000" with
+/// cwd=backend and PYTHONPATH=backend;repoRoot. The child is bound to a Win32 Job Object with
+/// KILL_ON_JOB_CLOSE so it cannot outlive this process even if Jarvis.App crashes — the Python
+/// launcher had no equivalent guarantee.
 /// </summary>
 public sealed class BackendHost : IDisposable
 {

@@ -26,7 +26,7 @@ public sealed class StreamChatOptions
     public required ChatStreamCallbacks Callbacks { get; init; }
 }
 
-/// <summary>Port of streamChat() in desktop-app/src/lib/sse-client.ts: POST /chat/stream,
+/// <summary>Port of streamChat() in the retired Next.js client's src/lib/sse-client.ts: POST /chat/stream,
 /// Accept: text/event-stream, dispatch typed events as they arrive.</summary>
 public sealed class ChatStreamClient
 {

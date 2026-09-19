@@ -14,7 +14,7 @@ using Windows.Media.Render;
 namespace Jarvis_App.ViewModels;
 
 /// <summary>
-/// Native port of desktop-app/src/hooks/useVoice.ts. The client owns the microphone and does
+/// Native port of the retired Next.js client's src/hooks/useVoice.ts. The client owns the microphone and does
 /// local voice-activity detection (RMS over AudioGraph frames); the backend owns what an
 /// utterance means (wake-word detection, arming, transcription) — VoiceListenResult.Session.State
 /// is authoritative and this view model mirrors it rather than running its own arm-window timer.

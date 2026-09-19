@@ -9,7 +9,7 @@ using Microsoft.UI.Dispatching;
 namespace Jarvis_App.ViewModels;
 
 /// <summary>
-/// Port of desktop-app/src/hooks/useChat.ts. Owns the transcript for one chat session and drives
+/// Port of the retired Next.js client's src/hooks/useChat.ts. Owns the transcript for one chat session and drives
 /// POST /chat/stream via ChatStreamClient. UI-thread marshalling happens through the supplied
 /// DispatcherQueue since SSE callbacks arrive on a background thread.
 /// </summary>

@@ -73,11 +73,8 @@ class Settings(BaseSettings):
     workspace_path: str = Field(default="./workspace", alias="WORKSPACE_PATH")
     allowed_cors_origins: list[str] = Field(
         default_factory=lambda: [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
-            "tauri://localhost",
             "vscode-webview://*"
         ],
         alias="ALLOWED_CORS_ORIGINS"

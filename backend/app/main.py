@@ -336,8 +336,6 @@ async def lifespan(app: FastAPI):
 
 
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 app = FastAPI(
     title="Local Jarvis Assistant API",
@@ -363,50 +361,6 @@ app.include_router(awareness_router)
 app.include_router(routines_router)
 app.include_router(models_router)
 app.include_router(confirmations_router)
-
-
-
-def _get_ui_directory() -> Optional[Path]:
-    import sys
-    import os
-
-    use_legacy = os.environ.get("JARVIS_USE_LEGACY_UI", "").lower() in ("1", "true", "yes")
-
-    root = Path(__file__).resolve().parent.parent.parent
-    if getattr(sys, "frozen", False):
-        if hasattr(sys, "_MEIPASS"):
-            root = Path(sys._MEIPASS)
-        else:
-            root = Path(sys.executable).resolve().parent
-
-    candidates = []
-    if not use_legacy:
-        # Prefer canonical desktop-app/out (Next.js / React build)
-        candidates.extend([
-            root / "desktop-app" / "out",
-            Path.cwd() / "desktop-app" / "out",
-            Path(__file__).resolve().parent.parent / "desktop-app" / "out",
-        ])
-
-    # Fallback to legacy desktop/ui
-    candidates.extend([
-        root / "desktop" / "ui",
-        Path.cwd() / "desktop" / "ui",
-        Path(__file__).resolve().parent.parent / "desktop" / "ui",
-    ])
-
-    for c in candidates:
-        if c.exists() and (c / "index.html").exists():
-            return c
-    return None
-
-UI_DIR = _get_ui_directory()
-if UI_DIR:
-    next_dir = UI_DIR / "_next"
-    if next_dir.exists() and next_dir.is_dir():
-        app.mount("/_next", StaticFiles(directory=str(next_dir)), name="next_assets")
-    app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
-
 
 
 

@@ -9,9 +9,9 @@ This document provides a comprehensive technical overview of the Jarvis Local AI
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           DESKTOP CLIENT                                    │
-│   • Active: native WinUI 3 / C# shell (desktop-winui/, mid-migration)       │
-│   • Deprecated: Next.js/Tauri (desktop-app/), pywebview (desktop/,          │
-│     --legacy-ui) — retained but not the target for new frontend work        │
+│   native WinUI 3 / C# shell (desktop-winui/): Jarvis.App + Jarvis.Core +    │
+│   Jarvis.Glass — the only client; it also supervises the backend process    │
+│                                                                             │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ SSE Streaming (POST /chat/stream)
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
@@ -93,10 +93,11 @@ This document provides a comprehensive technical overview of the Jarvis Local AI
   - `Jarvis.App` — the shell itself: `MainWindow` (sidebar/chat/composer/right-panel), `HudWindow`
     (always-on-top overlay, its own voice session), view models, tray/hotkey/backend-process
     services.
-- **Talks to the backend purely over HTTP + SSE** — same seam as the deprecated frontends, so
-  backend changes are frontend-agnostic.
-- Replacing this section's previous content (Next.js/Tauri, `desktop-app/`): that stack is
-  deprecated but not yet deleted; do not build new frontend features there.
+- **Talks to the backend purely over HTTP + SSE**, so backend changes are frontend-agnostic.
+- The earlier Next.js/Tauri (`desktop-app/`) and pywebview (`desktop/`) clients, and the
+  `run_jarvis.py` launcher that served them, were deleted once this client covered every backend
+  surface. `Start Jarvis.bat` → `scripts/start-jarvis.ps1` is the entry point; `BackendHost`
+  spawns uvicorn inside a Job Object.
 
 ### 8. Voice & Wake-Word Engine (`backend/app/voice/`)
 - **Wake-Word Detector**: Regex keyword spotter listening for `"Jarvis"`, `"Hey Jarvis"`, and variants.

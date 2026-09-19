@@ -3,7 +3,7 @@ using Jarvis.Core.Models;
 namespace Jarvis.Core.Sse;
 
 /// <summary>Callback bag dispatched over as /chat/stream frames arrive. Mirrors SSEEventCallbacks
-/// in desktop-app/src/lib/types.ts. Handlers for tool_call/tool_result/agent_status/file_change/
+/// in the retired Next.js client's src/lib/types.ts. Handlers for tool_call/tool_result/agent_status/file_change/
 /// artifact_update are included for forward-compat with backend/app/agent/loop.py, which is not on
 /// the live path today but the client should not need changing when it is wired up.</summary>
 public sealed class ChatStreamCallbacks

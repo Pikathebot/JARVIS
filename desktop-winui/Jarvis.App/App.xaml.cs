@@ -8,8 +8,8 @@ namespace Jarvis_App;
 
 /// <summary>
 /// Application entry point and the full native shell: single-instance guard, backend
-/// supervision, tray icon, global hotkey, main window, and HUD window. Replaces run_jarvis.py's
-/// launcher role plus the pywebview/Tauri/legacy-UI trio it juggled — see Phase 1e/3 of the plan.
+/// supervision, tray icon, global hotkey, main window, and HUD window. Replaces the retired
+/// run_jarvis.py launcher and the pywebview/Tauri UIs it juggled.
 /// </summary>
 public partial class App : Application
 {
@@ -130,17 +130,18 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Walks up from the app's build output to find the JARVIS repo root (marked by run_jarvis.py
-    /// and a backend/ directory), so BackendHost can locate .venv and backend/ regardless of
-    /// whether we're running from bin\Debug\... during development or a published layout.
+    /// Walks up from the app's build output to find the JARVIS repo root (marked by
+    /// backend/app/main.py and a desktop-winui/ directory), so BackendHost can locate .venv and
+    /// backend/ regardless of whether we're running from bin\Debug\... during development or a
+    /// published layout.
     /// </summary>
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "run_jarvis.py")) &&
-                Directory.Exists(Path.Combine(dir.FullName, "backend")))
+            if (File.Exists(Path.Combine(dir.FullName, "backend", "app", "main.py")) &&
+                Directory.Exists(Path.Combine(dir.FullName, "desktop-winui")))
             {
                 return dir.FullName;
             }

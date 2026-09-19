@@ -7,14 +7,13 @@ Welcome to Jarvis, your private, lightweight local AI assistant for Windows 11.
 ## 1. Quick Start
 
 ### Launching Jarvis
-- **From Windows Launcher**: Run `.\Jarvis.bat` or `python run_jarvis.py`.
-- **Legacy Fallback**: Run `python run_jarvis.py --legacy-ui` to open the legacy vanilla UI.
+- **From Windows**: Double-click `Start Jarvis.bat` in the repository root. It builds the native client on first run, registers it, launches it, and the app starts the backend itself. Pass `-Build` to force a rebuild after pulling changes.
 
 ---
 
 ## 2. Desktop Interface Overview
 
-The canonical Jarvis desktop application ([`desktop-app/`](../desktop-app/)) consists of 3 integrated areas:
+The Jarvis desktop application is a native WinUI 3 client ([`desktop-winui/`](../desktop-winui/)) with 3 integrated areas:
 
 ### 1. Left Sidebar
 - **Workspace Switcher**: Select between your isolated Project Workspaces or switch to Global chat.
@@ -26,11 +25,12 @@ The canonical Jarvis desktop application ([`desktop-app/`](../desktop-app/)) con
 - **Paperclip Attachment Button**: Upload source code, markdown, PDFs, or data files. Files are automatically processed and injected into the LLM context.
 - **Deterministic Action Cards**: Approve or deny sensitive operations (`write_file`, `execute_command`) with one click.
 
-### 3. Right Panel (4 Tabs)
+### 3. Right Panel
 - **Artifacts**: View and browse AI-generated durable code snippets, markdown reports, and version history.
 - **Files**: Inspect all files stored in the active project workspace.
 - **Context**: View active system instructions and context usage.
 - **Activity**: Inspect hardware telemetry and background tool execution logs.
+- **Reasoning**: The model's thinking for the current reply, kept out of the transcript. It only shows a badge; it never opens itself.
 
 ---
 

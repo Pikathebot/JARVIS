@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Jarvis.Core.Api;
 
 // Request-only payload shapes that don't have a corresponding response DTO in Models/.
-// Mirrors the inline object literals in desktop-app/src/lib/api.ts.
+// Mirrors the inline object literals in the retired Next.js client's src/lib/api.ts.
 
 public sealed class CreateProjectRequest
 {

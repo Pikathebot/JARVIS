@@ -9,11 +9,11 @@ Jarvis is a private, local-first AI assistant for Windows 11. A FastAPI backend 
 8GB RTX 4060), with tool calling, deterministic safety permissions, a hardware resource governor,
 project workspaces with versioned artifacts, RAG, MCP, voice, and proactive/ambient behavior.
 
-**Frontend is mid-migration.** `desktop-winui/` (WinUI 3 / C#, solution `Jarvis.slnx`) is the
-active native client being built out and is where new frontend work should go. `desktop-app/`
-(Next.js/Tauri) and `desktop/` (pywebview) are deprecated legacy UIs, not yet deleted. The backend
-(`http://127.0.0.1:8000`) is UI-agnostic — the seam to any frontend is pure HTTP + SSE, so backend
-changes should not assume a particular client.
+**The frontend is `desktop-winui/`** (WinUI 3 / C#, solution `Jarvis.slnx`) — the only client;
+the earlier Next.js/Tauri and pywebview UIs and the `run_jarvis.py` launcher were deleted in
+September 2026, so don't look for them. The app supervises the backend process itself
+(`BackendHost`). The backend (`http://127.0.0.1:8000`) is UI-agnostic — the seam to any frontend
+is pure HTTP + SSE, so backend changes should not assume a particular client.
 
 ## Commands
 
@@ -28,9 +28,11 @@ cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1
 
 **Launch full app (backend + UI):**
 ```powershell
-.\Jarvis.bat
-# or: .\.venv\Scripts\python.exe run_jarvis.py [--legacy-ui]
+.\"Start Jarvis.bat"            # → scripts/start-jarvis.ps1: build if needed, register dev package, launch by AUMID
+.\"Start Jarvis.bat" -Build     # force a rebuild first
 ```
+The app finds the repo root by walking up from its exe (`backend/app/main.py` + `desktop-winui/`)
+and starts uvicorn from `.venv` inside a Job Object, so no separate backend launch is needed.
 
 **WinUI native client** (from `desktop-winui/`):
 ```powershell
@@ -39,8 +41,6 @@ dotnet run -c Debug --no-build --project Jarvis.App
 ```
 Kill any running `Jarvis.App` process first (`Get-Process -Name 'Jarvis.App' | Stop-Process -Force`)
 — a live instance locks the AppX output and `dotnet run` fails with an unhelpful MSB3027.
-
-**Legacy Next.js UI** (from `desktop-app/`, deprecated): `npm run dev` / `npm run build` / `npm run lint`.
 
 ## Architecture
 
@@ -126,4 +126,4 @@ Known gotchas (see memory `winui_migration_status` for full detail if working in
 
 ## Tests
 `backend/tests/` (200+ tests), run via `pytest` from repo root. `norecursedirs` excludes
-`jarvis_project`, `.venv`, `desktop-app`, `node_modules`, `dist`, `build`.
+`jarvis_project`, `.venv`, `desktop-winui`, `dist`, `build`.

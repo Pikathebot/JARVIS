@@ -40,16 +40,6 @@ test_sandbox*/
 /data/
 backend/data/
 
-# Node & Next.js & Tauri Build Output
-node_modules/
-.next/
-/out/
-/target/
-desktop-app/node_modules/
-desktop-app/.next/
-desktop-app/out/
-desktop-app/src-tauri/target/
-
 # Build & packaging
 /build/
 /dist/
