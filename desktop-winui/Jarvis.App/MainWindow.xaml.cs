@@ -105,6 +105,13 @@ public sealed partial class MainWindow : Window
                 }
             }
         };
+        ChatViewModel.SpokenFeedback += text =>
+        {
+            if (VoiceViewModel.IsActive)
+            {
+                _ = VoiceViewModel.SpeakAsync(text);
+            }
+        };
 
         RightPanelViewModel.PropertyChanged += (_, args) =>
         {

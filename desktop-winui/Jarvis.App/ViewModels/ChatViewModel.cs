@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using Jarvis.Core.Api;
 using Jarvis.Core.Models;
 using Jarvis.Core.Sse;
+using Jarvis.Core.Voice;
 using Microsoft.UI.Dispatching;
 
 namespace Jarvis_App.ViewModels;
@@ -64,6 +65,10 @@ public partial class ChatViewModel : ObservableObject
 
     public event Action<ChatMessage>? MessageCompleted;
 
+    /// <summary>Short spoken acknowledgements for things that resolve without a model turn
+    /// (a cancelled confirmation), so a voice exchange is not left hanging in silence.</summary>
+    public event Action<string>? SpokenFeedback;
+
     public ChatViewModel(JarvisApiClient api, ChatStreamClient streamClient, DispatcherQueue dispatcher)
     {
         _api = api;
@@ -73,24 +78,38 @@ public partial class ChatViewModel : ObservableObject
 
     public async Task SendMessageAsync(string content, List<Attachment>? attachments = null)
     {
-        if (string.IsNullOrWhiteSpace(content) && PendingConfirmations.Count == 0 && (attachments is null || attachments.Count == 0))
+        var hasAttachments = attachments is { Count: > 0 };
+        if (string.IsNullOrWhiteSpace(content) && !hasAttachments)
         {
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(content) || (attachments is { Count: > 0 }))
+        // While an action is waiting, a reply is first read as the answer to that question --
+        // the backend's spoken prompt literally says "say yes to proceed, or no to cancel". Only
+        // a clear yes approves; anything that is not an answer goes to the model as an ordinary
+        // message with nothing approved, and the card stays until it is answered or the
+        // backend's confirmation window lapses. (Every message used to carry every pending
+        // action id, so "no" and unrelated questions ran the action.)
+        if (PendingConfirmations.Count > 0 && !hasAttachments)
         {
-            var displayContent = content;
-            if (string.IsNullOrWhiteSpace(displayContent) && attachments is { Count: > 0 })
+            switch (ConfirmationIntentParser.Parse(content))
             {
-                displayContent = $"Uploaded {attachments.Count} file(s): {string.Join(", ", attachments.Select(a => a.Filename))}";
+                case ConfirmationIntent.Yes:
+                    await ApproveAllPendingAsync(content).ConfigureAwait(false);
+                    return;
+                case ConfirmationIntent.No:
+                    DenyAllPending(content);
+                    return;
             }
-            _lastUserPrompt = displayContent;
-            Messages.Add(new ChatMessage { Role = MessageRole.User, Content = displayContent });
         }
 
-        var approvedIds = PendingConfirmations.Select(p => p.ActionId).ToList();
-        PendingConfirmations.Clear();
+        var displayContent = content;
+        if (string.IsNullOrWhiteSpace(displayContent) && hasAttachments)
+        {
+            displayContent = $"Uploaded {attachments!.Count} file(s): {string.Join(", ", attachments.Select(a => a.Filename))}";
+        }
+        _lastUserPrompt = displayContent;
+        Messages.Add(new ChatMessage { Role = MessageRole.User, Content = displayContent });
 
         var attachmentPayload = attachments?.Select(a => new Dictionary<string, object?>
         {
@@ -99,38 +118,101 @@ public partial class ChatViewModel : ObservableObject
             ["path"] = a.Path,
         }).ToList();
 
-        await RunStreamAsync(content, approvedIds, attachmentPayload).ConfigureAwait(false);
+        await RunStreamAsync(content, new List<string>(), attachmentPayload).ConfigureAwait(false);
     }
 
     [RelayCommand]
     public Task ConfirmActionAsync(PendingConfirmation confirmation)
     {
-        PendingConfirmations.Remove(confirmation);
-        return RunStreamAsync("", new List<string> { confirmation.ActionId });
+        // The card may be clicked after a typed/spoken "yes" already resolved it; the id must
+        // not be sent twice, since the backend's hash check would run the action again.
+        if (!PendingConfirmations.Contains(confirmation)) return Task.CompletedTask;
+        Resolve(new[] { confirmation });
+        return RunStreamAsync(_lastUserPrompt, new List<string> { confirmation.ActionId });
     }
 
     [RelayCommand]
     public void DenyAction(PendingConfirmation confirmation)
     {
-        PendingConfirmations.Remove(confirmation);
+        if (!PendingConfirmations.Contains(confirmation)) return;
+        Resolve(new[] { confirmation });
         Messages.Add(new ChatMessage
         {
             Role = MessageRole.System,
             Content = "Action execution was denied by user.",
         });
+        NotifyDenied(new[] { confirmation });
+    }
 
-        // Tell the backend, otherwise its confirmation window keeps running and Jarvis later
-        // announces a timeout for something the user already said no to. Fire-and-forget: the
-        // card is gone either way.
+    /// <summary>A typed or spoken "yes": every waiting action is approved in one resubmission,
+    /// the same way the approve button does it, and the user's own words stay in the transcript
+    /// so the turn reads as a conversation rather than a card that vanished.
+    ///
+    /// An approval resubmits the prompt that led to the ask, with the approved ids attached:
+    /// the backend re-plans the same tool call, whose id now matches, and runs it. The message
+    /// itself cannot be empty -- /chat/stream rejects that with a 422.</summary>
+    private Task ApproveAllPendingAsync(string utterance)
+    {
+        var pending = PendingConfirmations.ToList();
+        Resolve(pending);
+        Messages.Add(new ChatMessage { Role = MessageRole.User, Content = utterance.Trim() });
+        return RunStreamAsync(_lastUserPrompt, pending.Select(p => p.ActionId).ToList());
+    }
+
+    private void DenyAllPending(string utterance)
+    {
+        var pending = PendingConfirmations.ToList();
+        Resolve(pending);
+        Messages.Add(new ChatMessage { Role = MessageRole.User, Content = utterance.Trim() });
+        Messages.Add(new ChatMessage
+        {
+            Role = MessageRole.System,
+            Content = pending.Count == 1
+                ? "Action execution was denied by user."
+                : $"{pending.Count} actions were denied by user.",
+        });
+        NotifyDenied(pending);
+        // Nothing is sent to the model, so there is no reply to speak; the voice loop still
+        // needs to hear that it was understood.
+        SpokenFeedback?.Invoke("Understood, cancelled.");
+    }
+
+    /// <summary>Takes the confirmations out of the live list and off the bubble that shows
+    /// their card, so the card collapses instead of offering an approve button for an action
+    /// that has already been decided.</summary>
+    private void Resolve(IEnumerable<PendingConfirmation> confirmations)
+    {
+        foreach (var confirmation in confirmations)
+        {
+            PendingConfirmations.Remove(confirmation);
+            foreach (var message in Messages)
+            {
+                if (message.PendingConfirmations.Contains(confirmation))
+                {
+                    message.ResolveConfirmation(confirmation);
+                }
+            }
+        }
+    }
+
+    /// <summary>Tells the backend, otherwise its confirmation window keeps running and Jarvis
+    /// later announces a timeout for something the user already said no to. Fire-and-forget:
+    /// the card is gone either way and the backend's timeout is the fallback.</summary>
+    private void NotifyDenied(IEnumerable<PendingConfirmation> confirmations)
+    {
+        var ids = confirmations.Select(c => c.ActionId).ToList();
         _ = Task.Run(async () =>
         {
-            try
+            foreach (var id in ids)
             {
-                await _api.DenyConfirmationAsync(confirmation.ActionId).ConfigureAwait(false);
-            }
-            catch
-            {
-                // best-effort; the backend's timeout is the fallback
+                try
+                {
+                    await _api.DenyConfirmationAsync(id).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // best-effort
+                }
             }
         });
     }
@@ -334,6 +416,16 @@ public partial class ChatViewModel : ObservableObject
             {
                 _streamingMessage.Content = e.Response;
             }
+            // The backend ends the stream here without a "done" event, so this is the turn's
+            // completion: the caret has to go, and the spoken "say yes to proceed, or no to
+            // cancel" prompt is only spoken through MessageCompleted.
+            _streamingMessage.IsStreaming = false;
+            _streamingMessage.Model = e.Model;
+            _streamingMessage.Provider = e.Provider;
+            var finished = _streamingMessage;
+            _streamingMessage = null;
+            IsReasoningStreaming = false;
+            MessageCompleted?.Invoke(finished);
         }
     }
 

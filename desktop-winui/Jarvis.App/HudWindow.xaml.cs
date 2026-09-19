@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Jarvis.Core.Api;
 using Jarvis.Core.Models;
+using Jarvis.Core.Voice;
 using Jarvis_App.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -26,6 +27,15 @@ public sealed partial class HudWindow : Window
     private readonly AppWindow _appWindow;
     private readonly PeriodicTimer _telemetryTimer = new(TimeSpan.FromSeconds(4));
     private CancellationTokenSource? _telemetryCts;
+
+    /// <summary>Actions the last HUD turn asked approval for. The HUD has no card to click, so
+    /// the spoken prompt ("say yes to proceed, or no to cancel") is the only way to answer, and
+    /// the next utterance is read against this first.</summary>
+    private readonly List<PendingConfirmation> _pendingConfirmations = new();
+
+    /// <summary>The prompt that led to the pending ask; an approval resubmits it with the ids
+    /// attached, since the backend rejects an empty message.</summary>
+    private string _lastQuery = "";
     public VoiceViewModel VoiceViewModel { get; }
 
     /// <summary>The liquid-glass renderer behind this window (see GlassHost). Created before the
@@ -160,7 +170,40 @@ public sealed partial class HudWindow : Window
 
     private async Task HandleCommandAsync(string query)
     {
-        var response = await SendAsync(query);
+        List<string>? approved = null;
+        if (_pendingConfirmations.Count > 0)
+        {
+            switch (ConfirmationIntentParser.Parse(query))
+            {
+                case ConfirmationIntent.Yes:
+                    approved = _pendingConfirmations.Select(p => p.ActionId).ToList();
+                    _pendingConfirmations.Clear();
+                    query = _lastQuery;
+                    break;
+                case ConfirmationIntent.No:
+                    var denied = _pendingConfirmations.ToList();
+                    _pendingConfirmations.Clear();
+                    DispatcherQueue.TryEnqueue(() => CaptionText.Text = "Cancelled.");
+                    _ = Task.Run(async () =>
+                    {
+                        foreach (var confirmation in denied)
+                        {
+                            try { await _api.DenyConfirmationAsync(confirmation.ActionId).ConfigureAwait(false); }
+                            catch { /* best-effort; the backend's timeout is the fallback */ }
+                        }
+                    });
+                    await VoiceViewModel.SpeakAsync("Understood, cancelled.");
+                    return;
+                // Anything else is an ordinary question: it goes to the model with nothing
+                // approved, and the pending action waits for a real answer or the timeout.
+            }
+        }
+
+        if (approved is null)
+        {
+            _lastQuery = query;
+        }
+        var response = await SendAsync(query, approved);
         if (!string.IsNullOrWhiteSpace(response.Spoken ?? response.Response))
         {
             await VoiceViewModel.SpeakAsync(response.Spoken ?? response.Response);
@@ -214,13 +257,21 @@ public sealed partial class HudWindow : Window
     /// <summary>Non-streaming chat turn for the HUD — mirrors sendChatApi() in api.ts. The
     /// LISTENING/GO AHEAD/WORKING/SPEAKING state label is driven by VoiceViewModel.State via
     /// UpdateVoiceVisuals, not set directly here.</summary>
-    public async Task<ChatResponse> SendAsync(string message, CancellationToken ct = default)
+    public async Task<ChatResponse> SendAsync(string message, List<string>? approvedActionIds = null, CancellationToken ct = default)
     {
         var response = await _api.SendChatAsync(new SendChatRequest
         {
             Message = message,
             SessionId = HudSessionId,
+            ApprovedActionIds = approvedActionIds is { Count: > 0 } ? approvedActionIds : null,
         }, ct).ConfigureAwait(false);
+        // A turn that asks for approval replaces whatever was pending: the backend re-evaluates
+        // the same tool call on resubmission and its earlier token is no longer the one to send.
+        _pendingConfirmations.Clear();
+        if (response.PendingConfirmations is { Count: > 0 })
+        {
+            _pendingConfirmations.AddRange(response.PendingConfirmations);
+        }
         DispatcherQueue.TryEnqueue(() => CaptionText.Text = response.Response);
         return response;
     }

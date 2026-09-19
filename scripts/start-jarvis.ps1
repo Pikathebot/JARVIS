@@ -80,6 +80,15 @@ if ($Build -or -not (Test-Path $manifest)) {
     if ($LASTEXITCODE -ne 0) {
         Fail "The build failed. The compiler output is in $logPath."
     }
+
+    # A plain build refreshes bin\...\win-x64 but leaves the AppX layout next to it as it was,
+    # so a launch would run the previous build. The winapp CLI behind `dotnet run` is what
+    # lays out and registers the package; invoking its target without launching does the same.
+    $appProject = Join-Path $repoRoot 'desktop-winui\Jarvis.App\Jarvis.App.csproj'
+    & dotnet msbuild $appProject -t:RunPackagedApp -p:Configuration=$Configuration -p:WinAppRunNoLaunch=true -nologo -v quiet 2>&1 | Tee-Object -FilePath $logPath -Append | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Fail "The build succeeded but the app package could not be laid out. The output is in $logPath."
+    }
     if (-not (Test-Path $manifest)) {
         Fail "The build reported success but produced no app package at $appDir."
     }

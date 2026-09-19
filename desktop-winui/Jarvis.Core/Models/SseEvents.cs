@@ -89,6 +89,8 @@ public sealed class SseConfirmationRequiredEvent
 
     public string? Response { get; set; }
     public string? Spoken { get; set; }
+    public string? Model { get; set; }
+    public string? Provider { get; set; }
 }
 
 public sealed class RetrievedChunk

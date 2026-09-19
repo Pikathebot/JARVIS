@@ -84,6 +84,16 @@ public partial class ChatMessage : ObservableObject
     public List<string> ActiveSkills { get; set; } = new();
     public List<PendingConfirmation> PendingConfirmations { get; set; } = new();
 
+    /// <summary>Removes a decided confirmation and announces the change, so the bubble showing
+    /// its card re-renders and drops the approve/deny buttons for it.</summary>
+    public void ResolveConfirmation(PendingConfirmation confirmation)
+    {
+        if (PendingConfirmations.Remove(confirmation))
+        {
+            OnPropertyChanged(nameof(PendingConfirmations));
+        }
+    }
+
     /// <summary>TTS-ready text for this message, when it differs from the displayed content.</summary>
     public string? Spoken { get; set; }
 

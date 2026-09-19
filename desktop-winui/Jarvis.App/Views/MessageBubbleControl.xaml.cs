@@ -94,6 +94,8 @@ public sealed partial class MessageBubbleControl : UserControl
             // Streaming starting or finishing is a state the user must see immediately: the
             // final token's text, the caret going away, the tool steps and footer appearing.
             case nameof(ChatMessage.IsStreaming):
+            // A confirmation answered by typing or voice must take its card away at once.
+            case nameof(ChatMessage.PendingConfirmations):
                 DispatcherQueue.TryEnqueue(RenderNow);
                 break;
 
