@@ -86,6 +86,31 @@ def strip_thinking_tags(text: str) -> tuple[str, str]:
     return cleaned, extracted_reasoning
 
 
+def _dump_payload(payload: dict[str, Any], stream: bool) -> None:
+    """Write the request to settings.llama_payload_dump_dir (see config); never raises."""
+    target = getattr(settings, "llama_payload_dump_dir", None)
+    if not target:
+        return
+    try:
+        import copy
+        import time
+        from pathlib import Path
+
+        out_dir = Path(target)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        clone = copy.deepcopy(payload)
+        for msg in clone.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and "image_url" in part:
+                        part["image_url"] = {"url": "<elided>"}
+        name = f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}-{'stream' if stream else 'chat'}.json"
+        (out_dir / name).write_text(json.dumps(clone, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - debug aid only
+        logger.debug("Payload dump skipped: %s", exc)
+
+
 def _sanitize_messages_for_jinja(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Sanitizes conversation messages for Qwen3.5 Jinja chat template.
@@ -314,6 +339,7 @@ class LlamaCppProvider(ModelProvider):
         if isinstance(req_timeout, (int, float)):
             client_timeout = httpx.Timeout(connect=30.0, read=float(req_timeout), write=60.0, pool=None)
 
+        _dump_payload(payload, stream=False)
         # Attempt call with retry on connection failure
         for attempt in (1, 2):
             try:
@@ -405,6 +431,7 @@ class LlamaCppProvider(ModelProvider):
                 payload["tools"] = formatted_tools
                 payload["tool_choice"] = "auto"
 
+        _dump_payload(payload, stream=True)
         try:
             await self._ensure_server_ready(target_model_kind)
         except Exception as e:
@@ -534,10 +561,9 @@ class LlamaCppProvider(ModelProvider):
         full_content = "".join(accumulated_content)
         full_reasoning = "".join(accumulated_reasoning)
 
-        # Fallback if content was entirely emitted inside reasoning block
-        if not full_content.strip() and full_reasoning.strip() and not final_tool_calls:
-            full_content = full_reasoning
-            yield {"event": "text_delta", "content": full_content}
+        # A turn that is all reasoning and no answer stays that way: the orchestrator decides
+        # whether to nudge the model on (it usually stopped right before a tool call) rather
+        # than having the thinking shown as if it were the reply.
 
         yield {
             "event": "done",

@@ -55,7 +55,10 @@ Kill any running `Jarvis.App` process first (`Get-Process -Name 'Jarvis.App' | S
   - `llamacpp_provider.py` — OpenAI-compatible client to llama-server; `ThinkTagStreamScanner`
     splits `<think>` reasoning out of the token stream into separate `reasoning_delta`/`text_delta`
     SSE events (reasoning is a distinct channel, not inline text — see `messages.reasoning_content`).
-  - `model_router.py` — local vs. OpenRouter "Heavy Mode" routing.
+  - `model_router.py` — local vs. OpenRouter "Heavy Mode" routing. Tools are selected *before*
+    routing; a turn offering any non-LOW_RISK tool is pulled onto `main` (`_prefer_capable_slot`).
+    To see exactly what a model was sent, set `LLAMA_PAYLOAD_DUMP_DIR` — every request lands there
+    as JSON, replayable with curl against `:8001`.
   - `permissions.py` — deterministic O(1) safety tiers (`LOW_RISK` / `CONFIRMATION_REQUIRED` /
     `HIGH_RISK`); confirmation-required actions get a SHA-256 `act_<hash>` token the user must
     approve, and can carry a TTS-ready `spoken` prompt for voice-initiated turns.

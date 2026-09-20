@@ -11,6 +11,7 @@ from app.config import settings, MAX_TOOL_CALLS_PER_TURN
 from app.persona import persona_manager
 from app.agent.tools.registry import AVAILABLE_TOOLS, execute_tool, get_tool_schema, get_relevant_tools
 from app.agent.permissions import (
+    BASE_TOOL_RISK_MAP,
     evaluate_tool_calls_batch,
     evaluate_tool_permission,
     check_rate_limit,
@@ -227,6 +228,25 @@ TOOL_PROTOCOL_RULES = (
     "18. When the user asks to delete or remove a file, invoke 'delete_file(file_path=...)'. It asks the user to confirm first; that is expected.\n"
     "19. NEVER report an action as done unless a tool result in this turn confirms it. If you have no tool for what was asked, or the tool was not run, say so plainly instead of describing a result you did not observe."
 )
+
+
+_NUDGE_TO_ACT = (
+    "You stopped before doing anything. If an action is needed, call the tool now; "
+    "otherwise give your answer. Do not describe what you are about to do."
+)
+
+
+def _with_system_prompt(system_prompt: str, conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    One system message, then the conversation. ContextManager.build_context already puts its
+    assembled system prompt at the head of `messages`, and the loops used to prepend the same
+    text again -- every local turn shipped the persona, rules and RAG context twice. A 4B model
+    reading 10 KB of prompt in duplicate is a 4B model that stops reading its tools.
+    """
+    body = list(conversation or [])
+    while body and isinstance(body[0], dict) and body[0].get("role") == "system":
+        body.pop(0)
+    return [{"role": "system", "content": system_prompt}] + body
 
 
 def _measured_system_state() -> str:
@@ -585,6 +605,48 @@ class AgentOrchestrator:
         decision.reason = (decision.reason or "") + " Rerouted to main: images attached and only main has a projector."
         return decision, False
 
+    @staticmethod
+    def _tool_names(tools: Optional[list[Any]]) -> list[str]:
+        names: list[str] = []
+        for t in tools or []:
+            if isinstance(t, dict):
+                names.append(t.get("function", {}).get("name") or t.get("name") or "?")
+            else:
+                names.append(getattr(t, "__name__", str(t)))
+        return names
+
+    @staticmethod
+    def _log_model_reply(model: str, content: str, tool_calls: Optional[list[Any]]) -> None:
+        called = [
+            (tc.get("function", {}).get("name") or tc.get("name") or "?") if isinstance(tc, dict) else str(tc)
+            for tc in (tool_calls or [])
+        ]
+        head = (content or "").strip().replace("\n", " ")
+        if len(head) > 160:
+            head = head[:160] + "..."
+        logger.info("Model '%s' replied: tool_calls=%s content=%r", model, called, head)
+
+    def _prefer_capable_slot(
+        self, decision: Any, is_fast: bool, tools: Optional[list[Any]], requested_model: Optional[str]
+    ):
+        """
+        A turn that puts a guarded tool on the table (delete_file, execute_command, launch_app,
+        clipboard) goes to main. The router only sees the prose, so "delete probe.txt" read as a
+        short chat turn and landed on the 4B slot, which then *said* it had deleted the file
+        without calling anything. An explicit model choice is respected.
+        """
+        if not is_fast or requested_model or (decision.provider and decision.provider != "llama_cpp"):
+            return decision, is_fast
+        guarded = sorted(
+            n for n in self._tool_names(tools) if BASE_TOOL_RISK_MAP.get(n, RiskTier.LOW_RISK) != RiskTier.LOW_RISK
+        )
+        if not guarded:
+            return decision, is_fast
+        logger.info("Guarded tools offered (%s); routing to main instead of fast.", ", ".join(guarded))
+        decision.model = "main"
+        decision.reason = (decision.reason or "") + f" Rerouted to main: guarded tools offered ({', '.join(guarded)})."
+        return decision, False
+
     async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
         """
         One path for native and MCP tools: off the event loop, under a timeout, with the
@@ -735,20 +797,7 @@ class AgentOrchestrator:
         effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
         resolved_chat_mode = ChatMode.SYSTEM if effective_mode_str == "SYSTEM" else ChatMode.WORKSPACE
 
-        # 1. Routing Decision made first (Amendment 2)
-        decision = self.router.evaluate(
-            message=user_message,
-            requested_mode=requested_mode,
-            requested_model=requested_model
-        )
-        is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
-        decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
-        resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
-
-        logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
-                    decision.mode, decision.provider, decision.model, decision.reason)
-
-        # 2. Dynamic Skills Matching & Prompt Injection
+        # 1. Dynamic Skills Matching & Prompt Injection, then the tools for this turn
         matched_skills = self.skills_loader.match_skills(user_message)
         active_skill_names = [s.name for s in matched_skills]
         if active_skill_names:
@@ -756,6 +805,24 @@ class AgentOrchestrator:
 
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = (system_prompt or build_system_prompt()) + skill_prompt_injection
+
+        mcp_tools = self.mcp_manager.get_tool_definitions()
+        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
+        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
+
+        # 2. Routing Decision (Amendment 2)
+        decision = self.router.evaluate(
+            message=user_message,
+            requested_mode=requested_mode,
+            requested_model=requested_model
+        )
+        is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
+        decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
+        decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
+        resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
+
+        logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
+                    decision.mode, decision.provider, decision.model, decision.reason)
 
         # 3. Compaction Evaluation (Step 4C)
         history = self.memory_store.get_messages(active_session_id)
@@ -806,11 +873,6 @@ class AgentOrchestrator:
             max_context_tokens=resolved_ctx_tokens,
             vision=vision,
         )
-
-        # 6. Dynamic Tool Aggregation
-        mcp_tools = self.mcp_manager.get_tool_definitions()
-        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
-        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
 
         self.memory_store.append_message(active_session_id, role="user", content=user_message)
 
@@ -949,15 +1011,14 @@ class AgentOrchestrator:
         repair_attempts: dict[str, int] = {}
         model_tier = "tier2" if provider.name == "llama_cpp" else "tier1"
 
-        messages: list[dict[str, Any]] = []
-        messages.append({"role": "system", "content": system_prompt})
-        messages.extend(conversation_messages)
+        messages = _with_system_prompt(system_prompt, conversation_messages)
 
         tools_used: list[dict[str, Any]] = []
 
         for iteration in range(max_iterations):
             logger.info("%s loop iteration %d/%d for model '%s' (turn_id=%s)", provider.name, iteration + 1, max_iterations, model, turn_id)
 
+            logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
             chat_response = await provider.chat(
                 model=model,
                 messages=messages,
@@ -968,6 +1029,7 @@ class AgentOrchestrator:
             message_obj = chat_response.get("message", {})
             content = message_obj.get("content", "") or ""
             tool_calls = message_obj.get("tool_calls")
+            self._log_model_reply(model, content, tool_calls)
 
             # Fallback tool call extraction from text if needed
             if not tool_calls:
@@ -1362,7 +1424,17 @@ class AgentOrchestrator:
         effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
         resolved_chat_mode = ChatMode.SYSTEM if effective_mode_str == "SYSTEM" else ChatMode.WORKSPACE
 
-        # 1. Model routing decision made first (Amendment 2)
+        # 1. Match skills, then pick the tools for this turn: routing needs to know them.
+        matched_skills = self.skills_loader.match_skills(user_message)
+        active_skill_names = [s.name for s in matched_skills]
+        skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
+        base_system_prompt = (system_prompt or build_system_prompt()) + skill_prompt_injection
+
+        mcp_tools = self.mcp_manager.get_tool_definitions()
+        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
+        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
+
+        # 2. Model routing decision (Amendment 2)
         decision = self.router.evaluate(
             message=user_message,
             requested_mode=requested_mode,
@@ -1370,13 +1442,10 @@ class AgentOrchestrator:
         )
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
+        decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
-
-        # 2. Match skills & prepare base prompts
-        matched_skills = self.skills_loader.match_skills(user_message)
-        active_skill_names = [s.name for s in matched_skills]
-        skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
-        base_system_prompt = (system_prompt or build_system_prompt()) + skill_prompt_injection
+        logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
+                    decision.mode, decision.provider, decision.model, decision.reason)
 
         # 3. RAG Retrieval in WORKSPACE mode
         retrieved_chunks = []
@@ -1415,10 +1484,6 @@ class AgentOrchestrator:
                 "budget_report": context_pkg.budget_report
             }
         }
-
-        mcp_tools = self.mcp_manager.get_tool_definitions()
-        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
-        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
 
         self.memory_store.append_message(active_session_id, role="user", content=user_message)
 
@@ -1482,13 +1547,13 @@ class AgentOrchestrator:
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
         tool_ctx = tool_context or {"workspace_path": str(ws_root), "session_id": session_id}
         call_history = CallHistory(window=3)
-        messages: list[dict[str, Any]] = []
-        messages.append({"role": "system", "content": system_prompt})
-        messages.extend(conversation_messages)
+        messages = _with_system_prompt(system_prompt, conversation_messages)
 
         tools_used: list[dict[str, Any]] = []
+        nudged = False
 
         for iteration in range(max_iterations):
+            logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
             stream_gen = provider.stream_chat(
                 model=model,
                 messages=messages,
@@ -1521,6 +1586,7 @@ class AgentOrchestrator:
             content = raw_done.get("content", "") or ""
             tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
             full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
+            self._log_model_reply(model, content, tool_calls)
 
             if not tool_calls:
                 latest_user_prompt = ""
@@ -1535,8 +1601,17 @@ class AgentOrchestrator:
 
             if not tool_calls:
                 if not content.strip():
+                    # Thinking models sometimes close their reasoning ("Found it. Now I'll delete
+                    # the file.") and stop without the call. Once, ask for the action itself --
+                    # with the tools still on the table -- before settling for prose.
+                    if tools and full_reasoning.strip() and not nudged:
+                        nudged = True
+                        logger.info("Model '%s' stopped after reasoning only; nudging it to act.", model)
+                        messages.append({"role": "assistant", "content": full_reasoning.strip()})
+                        messages.append({"role": "user", "content": _NUDGE_TO_ACT})
+                        continue
                     synth_response = await provider.chat(model=model, messages=messages, profile=profile)
-                    content = synth_response.get("message", {}).get("content", "") or ""
+                    content = synth_response.get("message", {}).get("content", "") or full_reasoning.strip()
                     yield {"event": "token", "data": {"delta": content}}
 
                 self.memory_store.append_message(
@@ -1687,7 +1762,7 @@ class AgentOrchestrator:
         active_skills: Optional[list[str]] = None,
         compaction_info: Optional[dict] = None
     ):
-        messages = [{"role": "system", "content": system_prompt}] + conversation_messages
+        messages = _with_system_prompt(system_prompt, conversation_messages)
         stream_gen = self.openrouter_client.chat_stream(messages=messages, model=model)
 
         done_event = None

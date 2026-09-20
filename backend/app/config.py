@@ -36,6 +36,11 @@ class Settings(BaseSettings):
         default='{"enable_thinking":false}', alias="LLAMA_CHAT_TEMPLATE_KWARGS_FAST"
     )
 
+    # Debug aid: when set, every chat-completions payload sent to llama-server is written to this
+    # directory as JSON (one file per request, image data elided) so a "the model ignored its
+    # tools" report can be replayed against the server with curl. Off by default.
+    llama_payload_dump_dir: Optional[str] = Field(default=None, alias="LLAMA_PAYLOAD_DUMP_DIR")
+
     # Execution Flags (Amendment 1)
     llama_n_gpu_layers: int = Field(default=99, alias="LLAMA_N_GPU_LAYERS")
     llama_use_mmap: bool = Field(default=False, alias="LLAMA_USE_MMAP")
