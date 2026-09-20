@@ -146,8 +146,22 @@ public sealed partial class MainWindow : Window
             if (args.PropertyName == nameof(ViewModels.ChatViewModel.ActiveSessionId)) DispatcherQueue.TryEnqueue(UpdateSessionHighlight);
         };
 
-        _ = ProjectsViewModel.RefreshAsync();
-        _ = SessionsViewModel.RefreshAsync();
+        // Initial state is fetched when the backend is reachable, not now: the window is built
+        // before BackendHost has uvicorn up, so a fetch here fails silently and nothing would
+        // retry it -- the sidebar stayed empty and the workspace picker stuck on its placeholder
+        // until the first completed turn. Projects first; ActiveProjectChanged scopes and
+        // refreshes the session list. Also re-runs after a backend restart.
+        GovernorViewModel.BackendCameOnline += () => _ = ProjectsViewModel.RefreshAsync();
+        // The session list virtualises and recycles its rows now, and Loaded does not fire
+        // again for a recycled container, so the active tint is applied per content change too.
+        SessionsList.ContainerContentChanging += (_, args) =>
+        {
+            if (!args.InRecycleQueue && args.Item is Session session
+                && args.ItemContainer.ContentTemplateRoot is Jarvis_Glass.GlassSlab row)
+            {
+                ApplySessionHighlight(row, session);
+            }
+        };
 
         RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(RootGrid_PointerPressedForDropdown), handledEventsToo: true);
         ExtendTitleBar();
@@ -192,6 +206,9 @@ public sealed partial class MainWindow : Window
         }
 
         RootGrid.SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
+        // The floating panel's top offset follows the header's height, which settles after the
+        // first layout pass and changes when captions are shed.
+        HeaderSlab.SizeChanged += (_, _) => ApplyResponsiveLayout(RootGrid.ActualWidth);
     }
 
     // ------------------------------------------------------------------ responsive layout
@@ -267,7 +284,11 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(RightPanel, 1);
             RightPanel.HorizontalAlignment = HorizontalAlignment.Right;
             RightPanel.Width = Math.Min(PanelWidth, Math.Max(240, available - 24));
-            RightPanel.Margin = new Thickness(0);
+            // Floating, the sheet shares the chat column's cell and would stretch over the
+            // header too -- covering the very Panel button that closes it. Start below the
+            // header instead (its height varies with width as captions are shed).
+            var headerHeight = HeaderSlab.ActualHeight > 0 ? HeaderSlab.ActualHeight + HeaderSlab.Margin.Bottom : 0;
+            RightPanel.Margin = new Thickness(0, headerHeight, 0, 0);
             Canvas.SetZIndex(RightPanel, 10);
             RightPanel.Layer = 3;
         }
@@ -477,7 +498,7 @@ public sealed partial class MainWindow : Window
     {
         if (WorkspaceDropdown.Visibility == Visibility.Visible)
         {
-            WorkspaceDropdown.Visibility = Visibility.Collapsed;
+            SetWorkspaceDropdownOpen(false);
             return;
         }
         // Float the card just under the button, matching its width.
@@ -485,8 +506,22 @@ public sealed partial class MainWindow : Window
         _workspaceDropdownOrigin = origin;
         WorkspaceDropdown.Margin = new Thickness(origin.X, origin.Y, 0, 0);
         WorkspaceDropdown.MinWidth = WorkspaceButton.ActualWidth;
-        WorkspaceDropdown.Visibility = Visibility.Visible;
+        SetWorkspaceDropdownOpen(true);
         UpdateWorkspaceHighlight();
+    }
+
+    /// <summary>Every slab's glass renders under all XAML, so the session rows' plain
+    /// TextBlocks would print straight through the card (it read as a stale frame). The card
+    /// always floats over the sidebar's list, so the list is collapsed while it is open --
+    /// collapsed rather than transparent, because opacity leaves the rows' glass in the scene
+    /// and an empty pill would peek out under the card. The buttons' labels are glass text and
+    /// need nothing; the list is in a * row so nothing else moves.</summary>
+    private void SetWorkspaceDropdownOpen(bool open)
+    {
+        WorkspaceDropdown.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        var listVisibility = open ? Visibility.Collapsed : Visibility.Visible;
+        RecentSessionsHeader.Visibility = listVisibility;
+        SessionsList.Visibility = listVisibility;
     }
 
     /// <summary>Light dismiss: any press outside the card (or its button) closes it. Registered
@@ -495,7 +530,7 @@ public sealed partial class MainWindow : Window
     {
         if (WorkspaceDropdown.Visibility != Visibility.Visible) return;
         if (e.OriginalSource is DependencyObject source && (IsInside(source, WorkspaceDropdown) || IsInside(source, WorkspaceButton))) return;
-        WorkspaceDropdown.Visibility = Visibility.Collapsed;
+        SetWorkspaceDropdownOpen(false);
     }
 
     private static bool IsInside(DependencyObject node, DependencyObject ancestor)
@@ -539,7 +574,7 @@ public sealed partial class MainWindow : Window
         var project = ProjectsViewModel.Projects[index];
         // Let the puck land before the card folds away.
         await Task.Delay(180);
-        WorkspaceDropdown.Visibility = Visibility.Collapsed;
+        SetWorkspaceDropdownOpen(false);
         if (project.Id != ProjectsViewModel.ActiveProject?.Id)
         {
             await ProjectsViewModel.ActivateAsync(project);
@@ -585,7 +620,7 @@ public sealed partial class MainWindow : Window
 
     private void SessionRow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is Jarvis_Glass.GlassSlab row) ApplySessionHighlight(row);
+        if (sender is Jarvis_Glass.GlassSlab { Tag: Session session } row) ApplySessionHighlight(row, session);
     }
 
     /// <summary>Tints the active session's row accent, the rest neutral. Called whenever the
@@ -597,14 +632,14 @@ public sealed partial class MainWindow : Window
             if (SessionsList.ContainerFromItem(item) is ListViewItem container
                 && container.ContentTemplateRoot is Jarvis_Glass.GlassSlab row)
             {
-                ApplySessionHighlight(row);
+                ApplySessionHighlight(row, item);
             }
         }
     }
 
-    private void ApplySessionHighlight(Jarvis_Glass.GlassSlab row)
+    private void ApplySessionHighlight(Jarvis_Glass.GlassSlab row, Session session)
     {
-        var active = row.Tag is Session s && s.SessionId == ChatViewModel.ActiveSessionId;
+        var active = session.SessionId == ChatViewModel.ActiveSessionId;
         row.TintColor = active ? SessionActiveTint : SessionRestTint;
         row.TintAmount = active ? 0.6 : 0.14;
     }

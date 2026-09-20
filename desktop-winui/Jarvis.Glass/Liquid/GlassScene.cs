@@ -92,18 +92,57 @@ public sealed class GlassScene
         }
     }
 
-    /// <summary>Shapes ordered by layer, truncated to <see cref="MaxShapes"/>.</summary>
+    /// <summary>The host prepends its layer-0 pane to whatever this returns and the cbuffer holds
+    /// <see cref="MaxShapes"/> in total, so the scene itself gets one less -- otherwise the host's
+    /// own truncation cut the last (highest) shape.</summary>
+    public const int SceneBudget = MaxShapes - 1;
+
+    /// <summary>Shapes ordered by layer, at most <see cref="SceneBudget"/> of them.</summary>
     public GlassShape[] SnapshotShapes()
     {
         lock (_gate)
         {
             if (_shapesDirty)
             {
-                _shapeSnapshot = _shapes.Values.SelectMany(s => s).OrderBy(s => s.Params2.Y).Take(MaxShapes).ToArray();
+                _shapeSnapshot = FitToBudget(_shapes.Values.SelectMany(s => s).ToList());
                 _shapesDirty = false;
             }
             return _shapeSnapshot;
         }
+    }
+
+    private bool _overBudgetLogged;
+
+    /// <summary>Over budget, shed from the most crowded layer -- a long list of nested rows --
+    /// never by cutting the top layers off. Sorting by layer and truncating dropped whatever was
+    /// highest, i.e. the toggle thumbs and any open dropdown, the moment a list got long: the
+    /// controls silently vanished while the rows that caused it stayed. Losing a few rows at the
+    /// end of a list is visible but harmless; losing the controls is not.</summary>
+    private GlassShape[] FitToBudget(List<GlassShape> all)
+    {
+        if (all.Count > SceneBudget)
+        {
+            if (!_overBudgetLogged)
+            {
+                _overBudgetLogged = true;
+                GlassLog.Write($"scene has {all.Count} shapes, budget is {SceneBudget}; shedding from the most crowded layer");
+            }
+            // Owners are kept in publish order, so the last shapes of a layer are the newest /
+            // furthest down a list; drop from that end.
+            var byLayer = all.Select((shape, index) => (shape, index))
+                .GroupBy(t => (int)t.shape.Params2.Y)
+                .ToDictionary(g => g.Key, g => g.Select(t => t.index).ToList());
+            var drop = new HashSet<int>();
+            while (all.Count - drop.Count > SceneBudget)
+            {
+                var crowded = byLayer.Values.OrderByDescending(v => v.Count).First();
+                drop.Add(crowded[^1]);
+                crowded.RemoveAt(crowded.Count - 1);
+            }
+            all = all.Where((_, index) => !drop.Contains(index)).ToList();
+        }
+        // Stable, so a layer keeps its publish order.
+        return all.OrderBy(s => s.Params2.Y).ToArray();
     }
 
     public GlassText[] SnapshotTexts()

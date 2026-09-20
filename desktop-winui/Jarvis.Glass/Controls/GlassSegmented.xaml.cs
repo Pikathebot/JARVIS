@@ -344,7 +344,7 @@ public sealed partial class GlassSegmented : UserControl
 
     /// <summary>Vertical (menu) publish: a pill the row's size sliding between rows, no track,
     /// labels left-aligned under it on the layer beneath.</summary>
-    private void PublishVertical(Windows.Foundation.Rect bounds, float scale, Vector4 clip, int baseLayer)
+    private void PublishVertical(GlassScene scene, Windows.Foundation.Rect bounds, float scale, Vector4 clip, int baseLayer)
     {
         var left = (float)bounds.X * scale;
         var top = (float)bounds.Y * scale;
@@ -369,7 +369,7 @@ public sealed partial class GlassSegmented : UserControl
         var pillCenter = new Vector2(left + width * 0.5f, top + rowCenterDip * scale);
         var pillRadius = Math.Min(pillHalf.Y, 10f * scale);
 
-        _scene.Publish(this,
+        scene.Publish(this,
             GlassShape.Create(pillCenter, pillHalf, pillRadius, pillRadius * Material.LiftBezelFraction, GlassBezelProfile.Lens,
                 refractionScale: Material.LiftRefraction * m * scale,
                 specularIntensity: T.RestSpecular + (T.LiftSpecular - T.RestSpecular) * m,
@@ -400,7 +400,7 @@ public sealed partial class GlassSegmented : UserControl
                 texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer, Clip: clip));
             }
         }
-        _scene.PublishText(this, texts.ToArray());
+        scene.PublishText(this, texts.ToArray());
     }
 
     private static void Spring(ref float value, ref float velocity, float target, float dt, float stiffness, float damping)
@@ -433,7 +433,7 @@ public sealed partial class GlassSegmented : UserControl
 
         if (IsVertical)
         {
-            PublishVertical(bounds, scale, clip, baseLayer);
+            PublishVertical(_scene, bounds, scale, clip, baseLayer);
             return;
         }
 

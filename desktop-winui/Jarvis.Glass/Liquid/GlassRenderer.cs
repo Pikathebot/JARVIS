@@ -408,8 +408,8 @@ internal sealed class GlassRenderer : IDisposable
                 }
                 _context.PSSetShader(_blurPs);
                 _context.PSSetConstantBuffer(0, _blurConstants);
-                _context.PSSetShaderResource(0, null);
-                _context.PSSetShaderResource(2, null);
+                _context.PSSetShaderResource(0, null!);
+                _context.PSSetShaderResource(2, null!);
 
                 WriteBlurConstants(uvRect, bw, bh, sourceIsCapture: layer == 0, sigma / ds, horizontal: true);
                 _context.OMSetRenderTargets(blur.Rtvs[0]!);
@@ -420,7 +420,7 @@ internal sealed class GlassRenderer : IDisposable
                 _context.OMSetRenderTargets(blur.Rtvs[1]!);
                 _context.PSSetShaderResource(1, blur.Srvs[0]!);
                 _context.Draw(3, 0);
-                _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
+                _context.OMSetRenderTargets((ID3D11RenderTargetView)null!);
 
                 _context.RSSetViewport(0, 0, width, height);
                 if (layer == 0) _context.RSSetScissorRect(0, 0, width, height);
@@ -434,8 +434,8 @@ internal sealed class GlassRenderer : IDisposable
             // Pass 1: displacement field for this layer's shapes. Unbind the SRVs first so the
             // displacement texture (read by the previous layer's pass 2) can be a render target
             // again without a hazard warning.
-            _context.PSSetShaderResource(0, null);
-            _context.PSSetShaderResource(1, null);
+            _context.PSSetShaderResource(0, null!);
+            _context.PSSetShaderResource(1, null!);
             _context.OMSetRenderTargets(_displacementRtv!);
             _context.PSSetShader(_displacementPs);
             _context.PSSetConstantBuffer(0, _displacementConstants);
@@ -450,9 +450,9 @@ internal sealed class GlassRenderer : IDisposable
             _context.PSSetConstantBuffer(1, _shapeConstants);
             _context.PSSetShaderResource(0, _displacementSrv!);
             _context.PSSetShaderResource(1, source);
-            _context.PSSetShaderResource(2, maxBlur > 0f ? _blur[BlurDownscale(maxBlur)].Srvs[1] : null);
+            _context.PSSetShaderResource(2, (maxBlur > 0f ? _blur[BlurDownscale(maxBlur)].Srvs[1] : null)!);
             _context.Draw(3, 0);
-            _context.PSSetShaderResource(2, null);
+            _context.PSSetShaderResource(2, null!);
 
             // Pass 3: rim highlight + tint, screen-blended onto the same target.
             _context.OMSetBlendState(_screenBlendState);
@@ -467,14 +467,14 @@ internal sealed class GlassRenderer : IDisposable
             {
                 _context.OMSetBlendState(_overBlendState);
                 _context.PSSetShader(_compositePs);
-                _context.PSSetShaderResource(1, _content.Srv(layer));
+                _context.PSSetShaderResource(1, _content.Srv(layer)!);
                 _context.Draw(3, 0);
                 _context.OMSetBlendState(null);
-                _context.PSSetShaderResource(1, null);
+                _context.PSSetShaderResource(1, null!);
             }
 
             // The layer target becomes the next layer's source; release it as a render target.
-            _context.OMSetRenderTargets((ID3D11RenderTargetView?)null);
+            _context.OMSetRenderTargets((ID3D11RenderTargetView)null!);
         }
 
         // The top layer's output is the frame; the swapchain's back buffer changes every present

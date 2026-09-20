@@ -35,6 +35,14 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial bool OllamaConnected { get; set; }
 
+    /// <summary>Raised on the UI thread each time the backend goes from unreachable to
+    /// reachable -- first launch (the window is built before uvicorn is up) and any restart.
+    /// Anything that fetches state at startup should fetch here instead, or it races the
+    /// backend and silently stays empty.</summary>
+    public event Action? BackendCameOnline;
+
+    private bool _wasOnline;
+
     public GovernorViewModel(JarvisApiClient api, DispatcherQueue dispatcher)
     {
         _api = api;
@@ -70,11 +78,23 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
         try
         {
             var health = await _api.FetchHealthAsync(ct).ConfigureAwait(false);
-            _dispatcher.TryEnqueue(() => Apply(health));
+            _dispatcher.TryEnqueue(() =>
+            {
+                Apply(health);
+                if (!_wasOnline)
+                {
+                    _wasOnline = true;
+                    BackendCameOnline?.Invoke();
+                }
+            });
         }
         catch
         {
-            _dispatcher.TryEnqueue(() => Status = "offline");
+            _dispatcher.TryEnqueue(() =>
+            {
+                Status = "offline";
+                _wasOnline = false;
+            });
         }
     }
 

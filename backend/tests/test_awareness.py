@@ -68,7 +68,7 @@ def test_healthy_machine_trips_no_rules():
 
 def test_vram_escalates_from_warning_to_critical():
     warning = vram_pressure(snapshot(vram_util_percent=90.0), THRESHOLDS)
-    critical = vram_pressure(snapshot(vram_util_percent=97.0), THRESHOLDS)
+    critical = vram_pressure(snapshot(vram_util_percent=99.0), THRESHOLDS)
 
     assert warning.severity is Severity.WARNING
     assert critical.severity is Severity.CRITICAL
@@ -125,7 +125,7 @@ def test_condition_is_announced_once_not_every_poll(monitor):
 def test_escalation_breaks_through_the_cooldown(monitor):
     monitor.evaluate(snapshot(vram_util_percent=90.0))
 
-    escalated = monitor.evaluate(snapshot(vram_util_percent=98.0))
+    escalated = monitor.evaluate(snapshot(vram_util_percent=99.0))
     assert len(escalated) == 1
     assert escalated[0].severity is Severity.CRITICAL
 
@@ -142,7 +142,7 @@ def test_a_standing_condition_is_restated_after_the_cooldown(monitor):
 
 
 def test_de_escalation_does_not_re_announce(monitor):
-    monitor.evaluate(snapshot(vram_util_percent=98.0))
+    monitor.evaluate(snapshot(vram_util_percent=99.0))
 
     # Still tripped, but less severe: nothing new to say.
     assert monitor.evaluate(snapshot(vram_util_percent=90.0)) == []
@@ -214,7 +214,7 @@ async def test_subscribers_receive_published_observations(monitor):
     queue = monitor.subscribe()
     monitor.governor = None
 
-    monitor._publish(monitor.evaluate(snapshot(vram_util_percent=98.0)))
+    monitor._publish(monitor.evaluate(snapshot(vram_util_percent=99.0)))
     payload = await asyncio.wait_for(queue.get(), timeout=1.0)
 
     assert payload["kind"] == "vram_pressure"
@@ -231,7 +231,7 @@ async def test_a_saturated_subscriber_does_not_block_publishing(monitor):
         queue.put_nowait({"filler": True})
 
     # Must not raise despite the queue being full.
-    monitor._publish(monitor.evaluate(snapshot(vram_util_percent=98.0)))
+    monitor._publish(monitor.evaluate(snapshot(vram_util_percent=99.0)))
 
 
 @pytest.mark.asyncio
@@ -251,7 +251,7 @@ async def test_a_critical_observation_triggers_its_registered_action():
         return "evicted"
 
     monitor = AwarenessMonitor(actions={"vram_pressure": evict})
-    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=98.0)
+    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=99.0)
 
     await monitor.poll_once()
     await asyncio.sleep(0)  # let the fire-and-forget action task run
@@ -287,7 +287,7 @@ async def test_action_fires_once_per_escalation_not_every_poll():
         return "evicted"
 
     monitor = AwarenessMonitor(actions={"vram_pressure": evict})
-    hot = snapshot(vram_util_percent=98.0)
+    hot = snapshot(vram_util_percent=99.0)
     monitor.collect_snapshot = lambda: hot
 
     await monitor.poll_once()
@@ -317,7 +317,7 @@ async def test_actions_enabled_flag_suppresses_the_action():
 
     monitor = AwarenessMonitor(actions={"vram_pressure": evict})
     monitor.actions_enabled = False
-    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=98.0)
+    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=99.0)
 
     await monitor.poll_once()
     await asyncio.sleep(0)
@@ -331,7 +331,7 @@ async def test_a_raising_action_does_not_crash_the_poll():
         raise RuntimeError("eviction failed")
 
     monitor = AwarenessMonitor(actions={"vram_pressure": broken})
-    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=98.0)
+    monitor.collect_snapshot = lambda: snapshot(vram_util_percent=99.0)
 
     observations = await monitor.poll_once()
     await asyncio.sleep(0)
@@ -366,7 +366,7 @@ def test_address_suffix_follows_the_persona():
 
 
 def test_spoken_text_is_rendered_in_the_active_persona_voice():
-    observation = vram_pressure(snapshot(vram_util_percent=98.0), THRESHOLDS)
+    observation = vram_pressure(snapshot(vram_util_percent=99.0), THRESHOLDS)
 
     assert "{address}" in observation.spoken
     assert ", sir" in format_spoken(observation, JARVIS)
@@ -405,7 +405,7 @@ def test_briefing_handles_a_machine_with_no_gpu():
 @pytest.fixture
 def client(monkeypatch):
     isolated = AwarenessMonitor(governor=None)
-    isolated.collect_snapshot = lambda: snapshot(vram_util_percent=98.0)
+    isolated.collect_snapshot = lambda: snapshot(vram_util_percent=99.0)
 
     import app.routers.awareness as awareness_router
 

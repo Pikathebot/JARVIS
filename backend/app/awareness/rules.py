@@ -21,7 +21,10 @@ from app.awareness.observations import Observation, Severity, SystemSnapshot
 @dataclass(frozen=True)
 class Thresholds:
     vram_warning_percent: float = 88.0
-    vram_critical_percent: float = 96.0
+    # Above the main model's own steady state: the 9B + projector + KV sits at ~97% of the
+    # 4060's 8 GB with an ordinary desktop behind it. At 96 this fired every session and the
+    # registered action evicted the very model that accounted for the usage -- mid-turn.
+    vram_critical_percent: float = 98.5
     gpu_temp_warning_c: float = 80.0
     gpu_temp_critical_c: float = 87.0
     ram_warning_percent: float = 88.0

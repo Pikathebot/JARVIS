@@ -47,9 +47,10 @@ public partial class SessionsViewModel : ObservableObject
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
-            // best-effort — sidebar just stays with whatever it last had
+            // sidebar just stays with whatever it last had
+            App.Log($"sessions refresh failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

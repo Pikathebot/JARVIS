@@ -82,13 +82,15 @@ public sealed class GlassSlab : Grid
         set => SetValue(SpecularProperty, value);
     }
 
-    public static readonly DependencyProperty ShadowProperty = DependencyProperty.Register(
+    // Intentionally hides UIElement.Shadow (a composition ThemeShadow): the slab's shadow is
+    // rendered by the glass pipeline, not the XAML compositor.
+    public static new readonly DependencyProperty ShadowProperty = DependencyProperty.Register(
         nameof(Shadow), typeof(double), typeof(GlassSlab), new PropertyMetadata(0.32, OnMaterialChanged));
 
     /// <summary>Strength (0..1) of the soft shadow the slab drops onto the layer beneath it --
     /// the desktop for a panel, the panel for a nested sheet. What grounds a slab instead of
     /// leaving it as a bent rectangle floating in the capture.</summary>
-    public double Shadow
+    public new double Shadow
     {
         get => (double)GetValue(ShadowProperty);
         set => SetValue(ShadowProperty, value);
@@ -205,8 +207,13 @@ public sealed class GlassSlab : Grid
     private void Publish()
     {
         if (!IsLoaded || XamlRoot is null) return;
-        _scene ??= GlassScene.Find(this);
-        if (_scene is null) return;
+        if (_scene is null)
+        {
+            _scene = GlassScene.Find(this);
+            if (_scene is null) return;
+            ulong id = 0; try { id = XamlRoot.ContentIslandEnvironment.AppWindowId.Value; } catch { }
+            GlassLog.Write($"slab '{Name}' bound to scene of window 0x{id:X} (scene 0x{_scene.GetHashCode():X}) size {ActualWidth}x{ActualHeight}");
+        }
         if (IsCollapsedInTree(this) || ActualWidth <= 0 || ActualHeight <= 0)
         {
             // A collapsed panel (the right sheet) must take its slab with it.

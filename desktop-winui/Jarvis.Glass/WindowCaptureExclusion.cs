@@ -29,6 +29,12 @@ public static class WindowCaptureExclusion
 
     private static readonly List<IntPtr> _hwnds = new();
 
+    /// <summary>Master switch. Off, <see cref="SetExcluded"/> always clears the affinity, so the
+    /// windows stay visible to PrintWindow / screen copies / screen-share -- at the cost of the
+    /// live glass reading its own last frame back through the capture. Meant for development:
+    /// it is the only way to screenshot the app from a script for visual feedback.</summary>
+    public static bool Enabled { get; set; } = true;
+
     /// <summary>Call once per top-level window (MainWindow, HudWindow) after construction, same as
     /// <see cref="WindowPositionService.Register"/>.</summary>
     public static void Register(Window window) => Register(WinRT.Interop.WindowNative.GetWindowHandle(window));
@@ -50,7 +56,7 @@ public static class WindowCaptureExclusion
     /// </summary>
     public static void SetExcluded(bool excluded)
     {
-        var affinity = excluded ? WdaExcludeFromCapture : WdaNone;
+        var affinity = excluded && Enabled ? WdaExcludeFromCapture : WdaNone;
         foreach (var hwnd in _hwnds)
         {
             SetWindowDisplayAffinity(hwnd, affinity);

@@ -67,8 +67,24 @@ if ($running) {
 $appDir   = Join-Path $repoRoot "desktop-winui\Jarvis.App\bin\$Configuration\net10.0-windows10.0.26100.0\win-x64\AppX"
 $manifest = Join-Path $appDir 'AppxManifest.xml'
 
-if ($Build -or -not (Test-Path $manifest)) {
-    $reason = if ($Build) { 'Rebuilding' } else { 'Not built yet -- building' }
+# "Needed" means the registered layout is older than the code: a source file edited since the
+# layout was made, or a `dotnet build` run by hand (which refreshes bin\...\win-x64 but not the
+# AppX layout beside it). Without this check a launch after either silently ran the previous
+# build -- a whole round of testing was done against stale binaries that way.
+$layoutDll = Join-Path $appDir 'Jarvis.App.dll'
+$reason = $null
+if ($Build) { $reason = 'Rebuilding' }
+elseif (-not (Test-Path $manifest)) { $reason = 'Not built yet -- building' }
+elseif (Test-Path $layoutDll) {
+    $layoutTime = (Get-Item $layoutDll).LastWriteTimeUtc
+    $srcDir = Join-Path $repoRoot 'desktop-winui'
+    $newer = Get-ChildItem $srcDir -Recurse -File -Include *.cs,*.xaml,*.csproj,*.slnx,*.hlsl,*.appxmanifest,*.txt,*.dll |
+        Where-Object { $_.FullName -notlike '*\obj\*' -and $_.FullName -notlike '*\AppX\*' -and $_.LastWriteTimeUtc -gt $layoutTime } |
+        Select-Object -First 1
+    if ($newer) { $reason = "Newer than the last layout ($($newer.Name)) -- rebuilding" }
+}
+
+if ($reason) {
     Write-Step "$reason (this takes a minute the first time)..."
 
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {

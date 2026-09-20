@@ -55,9 +55,13 @@ public sealed class JarvisApiClient
     public Task<HealthResponse> FetchHealthAsync(CancellationToken ct = default) =>
         GetAsync<HealthResponse>("/health", ct);
 
-    public Task<List<Session>> FetchSessionsAsync(string? projectId = null, CancellationToken ct = default)
+    /// <summary>Most recent sessions first, at most <paramref name="limit"/> of them (the
+    /// server caps at 50 by default; 0 = all). The sidebar must never ask for everything --
+    /// every row it shows is a glass slab.</summary>
+    public Task<List<Session>> FetchSessionsAsync(string? projectId = null, int limit = 50, CancellationToken ct = default)
     {
-        var url = projectId is null ? "/sessions" : $"/sessions?project_id={Uri.EscapeDataString(projectId)}";
+        var url = $"/sessions?limit={limit}";
+        if (projectId is not null) url += $"&project_id={Uri.EscapeDataString(projectId)}";
         return GetAsync<List<Session>>(url, ct);
     }
 

@@ -41,9 +41,9 @@ public partial class ProjectsViewModel : ObservableObject
                 ActiveProjectChanged?.Invoke(active);
             });
         }
-        catch
+        catch (Exception ex)
         {
-            // best-effort
+            App.Log($"projects refresh failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

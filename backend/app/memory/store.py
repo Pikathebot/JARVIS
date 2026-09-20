@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from typing import Any, Callable, Optional
-from sqlmodel import Session, select, col
+from sqlmodel import Session, select, col, or_
 
 from app.database.models import (
     Project,
@@ -18,6 +18,9 @@ from app.database.models import (
     ToolCallAudit,
     ReliabilityEvent,
 )
+
+# Seeded by the initial migration; the workspace a session belongs to when none was chosen.
+DEFAULT_PROJECT_ID = "default-workspace"
 
 logger = logging.getLogger("jarvis.memory.store")
 
@@ -144,13 +147,23 @@ class MemoryStore:
                 session.rollback()
                 raise
 
-    def list_sessions(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_sessions(self, project_id: Optional[str] = None, limit: Optional[int] = None) -> list[dict[str, Any]]:
+        """Most-recent-first. ``limit`` bounds the result: a sidebar showing "recent sessions"
+        must never be handed the whole table (hundreds of rows once QA runs pile up)."""
         with self._get_session() as session:
             try:
                 statement = select(DBSession)
-                if project_id is not None:
+                if project_id == DEFAULT_PROJECT_ID:
+                    # Sessions created before a project was ever chosen have no project_id;
+                    # they belong to the default workspace, not to nowhere.
+                    statement = statement.where(
+                        or_(DBSession.project_id == project_id, col(DBSession.project_id).is_(None))
+                    )
+                elif project_id is not None:
                     statement = statement.where(DBSession.project_id == project_id)
                 statement = statement.order_by(col(DBSession.updated_at).desc())
+                if limit is not None and limit > 0:
+                    statement = statement.limit(limit)
                 sessions = session.exec(statement).all()
                 # The stored title is a placeholder ("Session session_") unless a caller named
                 # the session, so the sidebar shows the first thing the user said instead.

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 from alembic.config import Config
 from alembic import command
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, status
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import ollama
@@ -70,6 +70,8 @@ def run_db_migrations() -> None:
         alembic_ini_path = backend_dir / "alembic.ini"
         if alembic_ini_path.exists():
             alembic_cfg = Config(str(alembic_ini_path))
+            # In-process: keep the app's logging (see alembic/env.py).
+            alembic_cfg.attributes["configure_logging_skipped"] = True
             alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
             alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
             command.upgrade(alembic_cfg, "head")
@@ -116,6 +118,8 @@ process_watcher = ProcessWatcher(
     recovery_debounce_seconds=settings.governor_process_recovery_debounce,
 )
 from app.database.session import SessionLocal
+from app.database.models import Project
+from sqlmodel import select
 from app.memory.store import MemoryStore
 
 from app.agent.model_router import ModelRouter
@@ -213,6 +217,12 @@ async def _evict_on_vram_critical(observation) -> Optional[str]:
     VRAM) or for llama.cpp to fail an allocation outright.
     """
     if awareness_monitor.last_snapshot and awareness_monitor.last_snapshot.model_unloaded:
+        return None
+    if governor.is_busy:
+        # A turn is in flight: high VRAM is that turn working. Killing llama-server now
+        # ends the user's answer with a ReadError (seen live); the governor's own
+        # eviction path defers for exactly this reason. Re-evaluated on the next poll.
+        logger.info("VRAM critical during an active turn; deferring eviction until idle.")
         return None
     try:
         success = await auto_unload_models()
@@ -630,9 +640,10 @@ async def governor_history(limit: int = 20):
 
 
 @app.get("/sessions")
-async def list_sessions(project_id: Optional[str] = None):
-    """List all stored conversation sessions, optionally filtered by project_id."""
-    return await asyncio.to_thread(memory_store.list_sessions, project_id=project_id)
+async def list_sessions(project_id: Optional[str] = None, limit: int = Query(50, ge=0, le=1000)):
+    """List stored conversation sessions, most recent first, optionally filtered by project_id.
+    ``limit`` defaults to 50; pass 0 for everything."""
+    return await asyncio.to_thread(memory_store.list_sessions, project_id=project_id, limit=limit or None)
 
 
 
@@ -857,6 +868,22 @@ async def load_model_endpoint(req: Optional[LoadModelRequest] = None):
 
 
 
+
+def resolve_project_id(requested: Optional[str]) -> Optional[str]:
+    """The project a chat turn belongs to: what the client asked for, else the server-side
+    active project. Without the fallback a client that has not learned the active workspace yet
+    files its sessions under no project at all, where no workspace-scoped list ever shows them."""
+    if requested:
+        return requested
+    try:
+        with SessionLocal() as db:
+            project = db.exec(select(Project).where(Project.is_active == True).limit(1)).first()  # noqa: E712
+            return project.id if project else None
+    except Exception:
+        logger.debug("active project lookup failed; leaving the turn unscoped", exc_info=True)
+        return None
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
@@ -867,6 +894,7 @@ async def chat(request: ChatRequest):
     # Check for wake word in message
     detected, wake_word, cleaned_query = wake_detector.detect_in_text(request.message)
     active_message = cleaned_query if detected and cleaned_query else request.message
+    project_id = await asyncio.to_thread(resolve_project_id, request.project_id)
 
     # 1. Resource Governor Check (with adaptive queueing wait)
     if settings.governor_enabled:
@@ -902,7 +930,7 @@ async def chat(request: ChatRequest):
             result = await orchestrator.run(
                 user_message=active_message,
                 session_id=request.session_id,
-                project_id=request.project_id,
+                project_id=project_id,
                 requested_mode=request.mode,
                 requested_model=request.model,
                 system_prompt=request.system_prompt,
@@ -942,6 +970,7 @@ async def chat_stream(request: ChatRequest):
     """
     detected, wake_word, cleaned_query = wake_detector.detect_in_text(request.message)
     active_message = cleaned_query if detected and cleaned_query else request.message
+    project_id = await asyncio.to_thread(resolve_project_id, request.project_id)
 
     if settings.governor_enabled:
         is_healthy, reason = await governor.wait_until_healthy(
@@ -977,7 +1006,7 @@ async def chat_stream(request: ChatRequest):
                 async for event in orchestrator.run_stream(
                     user_message=active_message,
                     session_id=request.session_id,
-                    project_id=request.project_id,
+                    project_id=project_id,
                     requested_mode=request.mode,
                     requested_model=request.model,
                     system_prompt=request.system_prompt,

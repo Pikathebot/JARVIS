@@ -101,6 +101,7 @@ public sealed class GlassHost : IDisposable
         PInvoke.DeleteObject(emptyRegion);
 
         GlassScene.Register(_windowId, Scene);
+        GlassLog.Write($"host for window 0x{_windowId:X} '{window.Title}' registered scene 0x{Scene.GetHashCode():X}");
 
         _appWindow.Changed += OnAppWindowChanged;
         InstallSubclass();

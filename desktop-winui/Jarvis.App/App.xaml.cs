@@ -67,6 +67,10 @@ public partial class App : Application
             _mainWindow.Hud = _hudWindow;
             WindowPositionService.Register(_mainWindow);
             WindowPositionService.Register(_hudWindow);
+            // Keep capture exclusion ON. Turning it off (tried for scripted screenshots) makes
+            // the live glass re-capture its own output, so the scene never settles: the renderer
+            // ran every frame at ~70% GPU, the governor throttled and evicted the model.
+            WindowCaptureExclusion.Enabled = true;
             WindowCaptureExclusion.Register(_mainWindow);
             WindowCaptureExclusion.Register(_hudWindow);
             Window = _mainWindow;
@@ -88,12 +92,18 @@ public partial class App : Application
         }
     }
 
-    private static void LogCrash(Exception? ex)
+    private static void LogCrash(Exception? ex) => Log("jarvis-app-crash.log", $"{ex}\n");
+
+    /// <summary>Appends to jarvis-app.log beside the exe -- for best-effort paths that swallow
+    /// their exceptions (sidebar/project refreshes), so a silent failure is at least findable.</summary>
+    public static void Log(string message) => Log("jarvis-app.log", message);
+
+    private static void Log(string file, string message)
     {
         try
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "jarvis-app-crash.log");
-            File.AppendAllText(path, $"[{DateTimeOffset.Now:O}]\n{ex}\n\n");
+            var path = Path.Combine(AppContext.BaseDirectory, file);
+            File.AppendAllText(path, $"[{DateTimeOffset.Now:O}] {message}\n");
         }
         catch
         {

@@ -322,6 +322,10 @@ def get_relevant_tools(
         tools.add(find_files)
         tools.add(grep_in_files)
         tools.add(list_directory)
+        # The permission gate makes this a confirmation, not the selection. Leaving it out
+        # meant "delete secret.txt" reached the model with no way to delete anything -- and
+        # it answered "deleted" anyway.
+        tools.add(delete_file)
 
     # 3. Artifact triggers
     artifact_triggers = (

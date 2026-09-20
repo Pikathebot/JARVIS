@@ -52,7 +52,20 @@
             <!-- Sidebar: floating glass slab. At narrow widths it leaves the grid and floats over
                  the chat from the ☰ button (see ApplyResponsiveLayout). -->
             <glass:GlassSlab x:Name="SidebarSlab" Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="18">
-                    <StackPanel Padding="16" Spacing="12">
+                    <!--
+                        Header / list / footer rows rather than one StackPanel: a ListView in a
+                        StackPanel is measured with infinite height and realises every row. Each
+                        row is a glass slab, so with hundreds of sessions that blew the scene's
+                        shape budget (toggle thumbs vanished) and republished hundreds of slabs
+                        per layout pass. In a * row the list virtualises to what is visible.
+                    -->
+                    <Grid Padding="16" RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Spacing="12">
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
 
                         <!--
@@ -64,7 +77,8 @@
                         <glass:GlassButton x:Name="WorkspaceButton" Text="Default Workspace" HorizontalAlignment="Stretch" Click="WorkspaceButton_Click" />
 
                         <glass:GlassButton Text="+ New Chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
-                        <TextBlock Text="Recent Sessions" Foreground="#94A3B8" FontSize="12" Margin="0,12,0,0" />
+                        <TextBlock x:Name="RecentSessionsHeader" Text="Recent Sessions" Foreground="#94A3B8" FontSize="12" Margin="0,12,0,0" />
+                        </StackPanel>
                         <!--
                             Each session is a small glass row nested in the sidebar slab (auto
                             layer 2, clipped to the list). The active one is tinted accent from
@@ -73,6 +87,7 @@
                         -->
                         <ListView
                             x:Name="SessionsList"
+                            Grid.Row="1"
                             Background="Transparent"
                             SelectionMode="None"
                             ItemsSource="{x:Bind SessionsViewModel.Sessions}">
@@ -121,9 +136,11 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
+                        <StackPanel Grid.Row="2" Spacing="12">
                         <glass:GlassButton Text="Free VRAM" HorizontalAlignment="Stretch" Click="FreeVram_Click" />
                         <glass:GlassButton Text="Settings" HorizontalAlignment="Stretch" Click="Settings_Click" />
-                    </StackPanel>
+                        </StackPanel>
+                    </Grid>
             </glass:GlassSlab>
 
             <!-- Chat surface -->
@@ -135,7 +152,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Header: session label, mode toggle, governor pill -->
-                <glass:GlassSlab Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="14">
+                <glass:GlassSlab x:Name="HeaderSlab" Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="14">
                         <Grid Padding="16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -399,6 +416,13 @@
             Workspace dropdown: one frosted glass card (iOS search-suggestions style) floated
             under the workspace button; rows are plain text on the card, the active one lit.
             Positioned from code-behind when opened; light-dismissed by any press outside it.
+        -->
+        <!--
+            No XAML fill on the card: the menu's labels are glass text (GlassSegmented), and a
+            fill would sit above them. What would otherwise show through the card is the
+            sidebar's plain-XAML text (the sessions header and rows): every slab's glass
+            renders beneath all XAML, so those are hidden while the card is open instead
+            (SetWorkspaceDropdownOpen).
         -->
         <glass:GlassSlab
             x:Name="WorkspaceDropdown"

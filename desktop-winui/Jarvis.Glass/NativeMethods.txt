@@ -44,9 +44,9 @@ ClientToScreen
 IsIconic
 IsWindowVisible
 GetWindowLongPtr
-WS_EX_APPWINDOW
+WINDOW_EX_STYLE
 GetWindowLongPtr
-GWL_EXSTYLE
+WINDOW_LONG_PTR_INDEX
 // GlassHost: WM_DISPLAYCHANGE on the WinUI HWND itself (the glass is now inside it).
 SetWindowSubclass
 RemoveWindowSubclass

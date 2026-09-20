@@ -318,7 +318,7 @@ internal sealed class LiveCaptureSource : IDisposable
 
     /// <summary>Set to receive a line for every dropped/failed frame - not wired to per-frame
     /// success, which would spam this at capture's full rate.</summary>
-    public static string? DiagnosticLogPath;
+    public static string? DiagnosticLogPath { get; set; }
 
     private static void Diag(string message)
     {

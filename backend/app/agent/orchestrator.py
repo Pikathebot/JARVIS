@@ -223,7 +223,9 @@ TOOL_PROTOCOL_RULES = (
     "14. When listing running processes, invoke 'list_processes(filter_name=...)'. When terminating an application or process, invoke 'kill_process(pid_or_name=...)'.\n"
     "15. When sending desktop toast notification alerts, invoke 'send_toast(title=..., message=..., urgent=...)'.\n"
     "16. Strip surrounding quotation marks from user queries if present.\n"
-    "17. Always use clean relative workspace paths (e.g. '.', 'backend/app', 'scripts', 'docs')."
+    "17. Always use clean relative workspace paths (e.g. '.', 'backend/app', 'scripts', 'docs').\n"
+    "18. When the user asks to delete or remove a file, invoke 'delete_file(file_path=...)'. It asks the user to confirm first; that is expected.\n"
+    "19. NEVER report an action as done unless a tool result in this turn confirms it. If you have no tool for what was asked, or the tool was not run, say so plainly instead of describing a result you did not observe."
 )
 
 

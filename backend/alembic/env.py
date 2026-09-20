@@ -17,7 +17,11 @@ import app.database.models  # ensure models are registered in SQLModel.metadata
 
 config = context.config
 
-if config.config_file_name is not None:
+# Only take over logging when Alembic runs from its own CLI. FastAPI runs these migrations
+# in-process at startup, and fileConfig() would reset the root logger to WARN and disable every
+# logger created so far (all of jarvis.*) -- backend.log then held the startup burst and nothing
+# else for the whole session. The app signals the in-process case with this attribute.
+if config.config_file_name is not None and not config.attributes.get("configure_logging_skipped"):
     fileConfig(config.config_file_name)
 
 target_metadata = SQLModel.metadata

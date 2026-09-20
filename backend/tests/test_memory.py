@@ -219,3 +219,41 @@ async def test_compaction_triggered_and_logged():
         finally:
             compactor.max_context_tokens = orig_threshold
             memory_store.delete_session(session_id)
+
+
+# --- list_sessions: bounded, and the default workspace owns the unscoped sessions ---
+
+def test_list_sessions_limit_returns_most_recent(temp_store):
+    for i in range(6):
+        temp_store.append_message(f"lim_{i}", role="user", content=f"m{i}")
+
+    limited = temp_store.list_sessions(limit=3)
+    assert len(limited) == 3
+    # newest first
+    assert [s["session_id"] for s in limited] == ["lim_5", "lim_4", "lim_3"]
+    assert len(temp_store.list_sessions()) >= 6
+
+
+def test_list_sessions_default_workspace_includes_unscoped(temp_store):
+    from app.memory.store import DEFAULT_PROJECT_ID
+
+    temp_store.get_or_create_session("unscoped", project_id=None)
+    temp_store.get_or_create_session("in_default", project_id=DEFAULT_PROJECT_ID)
+    temp_store.get_or_create_session("in_other", project_id="proj-x")
+
+    ids = {s["session_id"] for s in temp_store.list_sessions(project_id=DEFAULT_PROJECT_ID)}
+    assert ids == {"unscoped", "in_default"}
+    assert {s["session_id"] for s in temp_store.list_sessions(project_id="proj-x")} == {"in_other"}
+
+
+@pytest.mark.asyncio
+async def test_sessions_endpoint_defaults_to_fifty():
+    for i in range(55):
+        memory_store.append_message(f"ep_{uuid.uuid4().hex[:8]}_{i}", role="user", content="x")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        default = await client.get("/sessions")
+        assert default.status_code == 200
+        assert len(default.json()) == 50
+        everything = await client.get("/sessions", params={"limit": 0})
+        assert len(everything.json()) >= 55

@@ -85,6 +85,9 @@ public sealed class BackendHost : IDisposable
         startInfo.ArgumentList.Add("8000");
 
         startInfo.Environment["PYTHONPATH"] = $"{backendDir};{_repoRoot}";
+        // Python block-buffers stdout when it is a pipe; unbuffered so prints land in
+        // backend.log as they happen rather than in 8 KB bursts.
+        startInfo.Environment["PYTHONUNBUFFERED"] = "1";
 
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 

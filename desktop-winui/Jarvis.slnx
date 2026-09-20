@@ -2,5 +2,6 @@
   <Project Path="Jarvis.App/Jarvis.App.csproj" />
   <Project Path="Jarvis.Core/Jarvis.Core.csproj" />
   <Project Path="Jarvis.Glass/Jarvis.Glass.csproj" />
-  <Project Path="Jarvis.GlassLab/Jarvis.GlassLab.csproj" />
+  <!-- Jarvis.GlassLab (the shader prototyping bench) is kept on disk but not built with the app:
+       build it on its own with `dotnet build Jarvis.GlassLab` when tuning the material. -->
 </Solution>
