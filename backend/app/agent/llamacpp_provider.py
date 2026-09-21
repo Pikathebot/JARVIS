@@ -111,6 +111,19 @@ def _dump_payload(payload: dict[str, Any], stream: bool) -> None:
         logger.debug("Payload dump skipped: %s", exc)
 
 
+def _thinking_override(thinking: Optional[bool]) -> dict[str, Any]:
+    """
+    Per-request reasoning switch. llama-server applies ``chat_template_kwargs`` from the request
+    body on top of the launch-time ``--chat-template-kwargs``, so one loaded model can answer a
+    quick question directly and reason through a tool turn without a reload: measured on the
+    9B, "17*23?" took 19.3 s with thinking (434 tokens) and 0.4 s without (4 tokens), same
+    answer. None means "as launched".
+    """
+    if thinking is None:
+        return {}
+    return {"chat_template_kwargs": {"enable_thinking": bool(thinking)}}
+
+
 def _sanitize_messages_for_jinja(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Sanitizes conversation messages for Qwen3.5 Jinja chat template.
@@ -306,7 +319,8 @@ class LlamaCppProvider(ModelProvider):
         tools: Optional[list[Any]] = None,
         temperature: Optional[float] = None,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Send a non-streaming chat completion request to llama-server.
@@ -322,7 +336,8 @@ class LlamaCppProvider(ModelProvider):
             "model": target_model_kind,
             "messages": _sanitize_messages_for_jinja(messages),
             "stream": False,
-            **sampling
+            **sampling,
+            **_thinking_override(thinking),
         }
 
         if tools:
@@ -397,7 +412,8 @@ class LlamaCppProvider(ModelProvider):
         tools: Optional[list[Any]] = None,
         temperature: Optional[float] = None,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Stream chat tokens and tool calls from llama-server.
@@ -418,7 +434,8 @@ class LlamaCppProvider(ModelProvider):
             "model": target_model_kind,
             "messages": _sanitize_messages_for_jinja(messages),
             "stream": True,
-            **sampling
+            **sampling,
+            **_thinking_override(thinking),
         }
 
         if tools:

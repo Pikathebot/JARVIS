@@ -228,15 +228,23 @@ class ContextManager:
         chat_mode: str = "WORKSPACE",
         max_context_tokens: Optional[int] = None,
         vision: bool = False,
+        turn_context: Optional[str] = None,
     ) -> ContextPackage:
         """
         Main entrypoint: Assembles strict tier-budgeted context package.
 
         ``vision`` says the model that will serve this turn has a multimodal projector loaded;
         image attachments are then sent as ``image_url`` parts rather than described as files.
-        
+
+        ``turn_context`` is the per-turn block (measured system state, matched skills). It and
+        the RAG chunks change from one message to the next, so they are emitted as a *trailing*
+        system message after the stored history, never in the head system message: llama-server
+        reuses the KV cache for the longest common prefix of consecutive prompts, and a prefix
+        that stays byte-identical -- system prompt, tool schemas, history -- is what makes a
+        long session cost only its new tokens per turn instead of a full re-prefill.
+
         Tiers:
-        - Tier 1 (Reserved): System prompt + project instructions
+        - Tier 1 (Reserved): System prompt + project instructions, plus the turn context
         - Tier 2 (Reserved): User prompt + attachments (with size safeguard)
         - Tier 3 (Dynamic): Retrieved RAG chunks
         - Tier 4 (Dynamic): Recent message history
@@ -267,6 +275,9 @@ class ContextManager:
 
         tier1_text = "\n\n".join(tier1_parts)
         tier1_tokens = self.token_counter.count(tier1_text) + 4  # system framing
+        turn_context_text = (turn_context or "").strip()
+        if turn_context_text:
+            tier1_tokens += self.token_counter.count(turn_context_text) + 4
         remaining_budget -= tier1_tokens
 
         # -------------------------------------------------------------
@@ -405,21 +416,27 @@ class ContextManager:
         # -------------------------------------------------------------
         # Final Message Assembly
         # -------------------------------------------------------------
-        final_system_prompt_parts = [tier1_text]
-        if tier3_formatted_blocks:
-            final_system_prompt_parts.append(
-                "--- Relevant Workspace Context & Code ---\n" +
-                "\n\n".join(tier3_formatted_blocks)
-            )
-
-        assembled_system_prompt = "\n\n".join(final_system_prompt_parts)
-
-        # Messages list for OpenAI / llama.cpp format
+        # The head system message is the stable prefix; the per-turn material follows the
+        # history so the prefix stays cache-identical between consecutive turns.
+        assembled_system_prompt = tier1_text
         final_messages: list[dict[str, Any]] = [
             {"role": "system", "content": assembled_system_prompt}
         ]
-
         final_messages.extend(history_messages)
+
+        trailing_parts: list[str] = []
+        if turn_context_text:
+            trailing_parts.append(turn_context_text)
+        if tier3_formatted_blocks:
+            trailing_parts.append(
+                "--- Relevant Workspace Context & Code ---\n" +
+                "\n\n".join(tier3_formatted_blocks)
+            )
+        # Qwen3.5's template rejects a system message anywhere but first ("System message must
+        # be at the beginning"), so the block rides at the front of the current user turn. It is
+        # sent, never stored: the history keeps the user's own words.
+        if trailing_parts:
+            tier2_full_user_text = "\n\n".join(trailing_parts + ["--- User message ---", tier2_full_user_text or ""]).rstrip()
 
         # Append current turn user prompt (if provided). With images the turn becomes a parts
         # list (text first, then image_url parts), which is what llama-server's OpenAI-compatible

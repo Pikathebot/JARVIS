@@ -27,7 +27,7 @@ class ScriptedProvider(ModelProvider):
         return "llama_cpp"
 
     async def stream_chat(
-        self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None
+        self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None
     ) -> AsyncIterator[dict[str, Any]]:
         self.calls.append({"messages": [dict(m) for m in messages], "tools": tools})
         events = self.turns[len(self.calls) - 1] if len(self.calls) <= len(self.turns) else []
@@ -158,3 +158,57 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     assert events[-1]["data"]["response"] == "prose fallback"
     # Nudged once, then the no-tools synthesis -- never a third streamed attempt.
     assert [("chat" in c) for c in provider.calls] == [False, False, True]
+
+
+# --- a fast verdict never swaps models; it runs on whatever is loaded, thinking off on main ---
+
+class _Runtime:
+    def __init__(self, kind):
+        self.current_model_kind = kind
+
+
+def test_fast_verdict_stays_on_loaded_main_with_thinking_off(monkeypatch):
+    import app.agent.runtime_process_manager as rpm
+    orch = _orchestrator()
+
+    def fast():
+        return RoutingDecision(mode="normal", provider="llama_cpp", model="fast", reason="short turn")
+
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("main"))
+    decision, is_fast, thinking = orch._prefer_loaded_slot(fast(), True, None)
+    assert (decision.model, is_fast, thinking) == ("main", False, False)
+    assert "thinking off" in decision.reason
+
+    # Nothing loaded yet: main is the right thing to load, since the next tool turn needs it anyway.
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime(None))
+    decision, is_fast, thinking = orch._prefer_loaded_slot(fast(), True, None)
+    assert (decision.model, is_fast, thinking) == ("main", False, False)
+
+    # The 4B is what is loaded: use it as-is (it launches with thinking off already).
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("fast"))
+    decision, is_fast, thinking = orch._prefer_loaded_slot(fast(), True, None)
+    assert (decision.model, is_fast, thinking) == ("fast", True, None)
+
+    # An explicit model choice, a main verdict, and a cloud route are all left alone.
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("main"))
+    decision, is_fast, thinking = orch._prefer_loaded_slot(fast(), True, "fast")
+    assert (decision.model, is_fast, thinking) == ("fast", True, None)
+    main = RoutingDecision(mode="normal", provider="llama_cpp", model="main", reason="")
+    assert orch._prefer_loaded_slot(main, False, None) == (main, False, None)
+    cloud = RoutingDecision(mode="heavy", provider="openrouter", model="x", reason="")
+    assert orch._prefer_loaded_slot(cloud, True, None) == (cloud, True, None)
+
+
+def test_offered_tools_grow_monotonically_per_session_and_mode():
+    orch = _orchestrator()
+    names = lambda ts: orch._tool_names(ts)
+
+    assert names(orch._offered_tools("s1", "WORKSPACE", [read_file])) == ["read_file"]
+    # A later turn that matched different tools still gets the earlier ones, in first-seen order.
+    assert names(orch._offered_tools("s1", "WORKSPACE", [web_search])) == ["read_file", "web_search"]
+    # Same tool again is not duplicated; a turn with no matches keeps offering the session's set.
+    assert names(orch._offered_tools("s1", "WORKSPACE", [web_search, read_file])) == ["read_file", "web_search"]
+    assert names(orch._offered_tools("s1", "WORKSPACE", [])) == ["read_file", "web_search"]
+    # Other sessions and other chat modes are independent.
+    assert names(orch._offered_tools("s2", "WORKSPACE", [delete_file])) == ["delete_file"]
+    assert names(orch._offered_tools("s1", "SYSTEM", [delete_file])) == ["delete_file"]

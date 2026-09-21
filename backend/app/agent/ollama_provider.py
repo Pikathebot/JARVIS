@@ -138,7 +138,8 @@ class OllamaProvider(ModelProvider):
         tools: Optional[list[Any]] = None,
         temperature: float = 0.7,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> dict[str, Any]:
         """Send chat request to Ollama native /api/chat endpoint."""
         target_model = model or self.default_model
@@ -197,7 +198,8 @@ class OllamaProvider(ModelProvider):
         tools: Optional[list[Any]] = None,
         temperature: float = 0.7,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream chat tokens and tool calls from Ollama /api/chat."""
         target_model = model or self.default_model

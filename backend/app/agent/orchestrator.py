@@ -275,19 +275,35 @@ def _measured_system_state() -> str:
         return ""
 
 
-def build_system_prompt(persona: Optional[Any] = None, system_state: Optional[str] = None) -> str:
+def build_system_prompt(persona: Optional[Any] = None) -> str:
     """
-    Compose the system prompt: persona voice first, the measured system state, then the
-    invariant tool protocol. The persona shapes manner only - it can never change what tools
-    exist or how they must be invoked.
+    Compose the system prompt: persona voice first, then the invariant tool protocol. The
+    persona shapes manner only - it can never change what tools exist or how they must be invoked.
+
+    Only content that is identical from one turn to the next belongs here. llama-server reuses
+    the KV cache for the longest common prefix of consecutive prompts, and the system message is
+    the head of every prompt (the chat template renders the tool schemas inside it too). One
+    changing line up here -- a hardware reading, a matched skill -- and the whole conversation is
+    re-prefilled every turn: measured 2389 of 2389 tokens re-processed on a turn that changed one
+    number, versus 516 with the same number placed after the history. Anything per-turn goes
+    through ``build_turn_context`` instead.
+    """
+    active = persona or persona_manager.get_active()
+    return "\n\n".join([active.build_prompt_preamble(), TOOL_PROTOCOL_RULES])
+
+
+def build_turn_context(skill_injection: str = "", system_state: Optional[str] = None) -> str:
+    """
+    The per-turn block: the measured system state and whatever skills this message matched.
+    ``ContextManager`` places it as a trailing system message after the stored history, right
+    before the user turn, so it never disturbs the cached prefix (see ``build_system_prompt``).
 
     The SYSTEM STATE block exists because a persona that asks for "concrete numbers" without
     supplying any gets numbers invented for it -- a 4B model greeted with "hi" would report a
     VRAM figure it never read. With the real sample in the prompt there is nothing to make up.
     """
-    active = persona or persona_manager.get_active()
     state = _measured_system_state() if system_state is None else system_state
-    sections = [active.build_prompt_preamble()]
+    sections = []
     if state:
         sections.append(
             "SYSTEM STATE (measured moments ago; the only hardware figures you may quote unless a tool "
@@ -300,7 +316,8 @@ def build_system_prompt(persona: Optional[Any] = None, system_state: Optional[st
             "SYSTEM STATE: no hardware sample is available right now. Do not state any hardware "
             "figures; say you have not checked if asked."
         )
-    sections.append(TOOL_PROTOCOL_RULES)
+    if skill_injection and skill_injection.strip():
+        sections.append(skill_injection.strip())
     return "\n\n".join(sections)
 
 
@@ -322,7 +339,7 @@ class _LegacyClientAdapter(ModelProvider):
     async def list_models(self) -> list[str]:
         return []
 
-    async def chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None) -> dict[str, Any]:
+    async def chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None) -> dict[str, Any]:
         res = await self.client.chat(model=model, messages=messages, tools=tools)
         if isinstance(res, dict):
             return res
@@ -340,7 +357,7 @@ class _LegacyClientAdapter(ModelProvider):
             }
         return {"message": {"role": "assistant", "content": str(res), "tool_calls": None}, "raw": res}
 
-    async def stream_chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None) -> AsyncIterator[dict[str, Any]]:
+    async def stream_chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None) -> AsyncIterator[dict[str, Any]]:
         if hasattr(self.client, "chat_stream"):
             async for ev in self.client.chat_stream(model=model, messages=messages, tools=tools):
                 if ev.get("type") == "token":
@@ -399,6 +416,8 @@ class AgentOrchestrator:
             self.provider = get_model_provider()
 
         self.router = router or ModelRouter(default_mode=settings.default_routing_mode)
+        # Tools offered so far per (session, chat mode), in first-seen order -- see _offered_tools.
+        self._session_tools: dict[tuple[str, str], dict[str, Any]] = {}
         self.memory_store = memory_store or MemoryStore(db_path=settings.memory_db_path)
         self.compactor = compactor or ContextCompactor(
             max_context_tokens=settings.memory_max_context_tokens,
@@ -647,6 +666,52 @@ class AgentOrchestrator:
         decision.reason = (decision.reason or "") + f" Rerouted to main: guarded tools offered ({', '.join(guarded)})."
         return decision, False
 
+    def _prefer_loaded_slot(
+        self, decision: Any, is_fast: bool, requested_model: Optional[str]
+    ) -> tuple[Any, bool, Optional[bool]]:
+        """
+        A "fast" verdict must never cost a model swap. Switching main<->fast reloads ~5 GB of
+        weights (~8 s) -- longer than the whole answer the router was trying to speed up. So an
+        automatic fast verdict is served by whatever is already loaded: if that is main, the
+        turn runs on main with thinking switched off *for this request* (measured on the 9B:
+        19.3 s with thinking vs 0.4 s without, same answer), which is what "fast" was for. The
+        4B is used when it is the one loaded, or when the user asked for it by name.
+
+        Returns (decision, is_fast, thinking) where thinking is the per-request override
+        (None = as launched).
+        """
+        if not is_fast or requested_model or (decision.provider and decision.provider != "llama_cpp"):
+            return decision, is_fast, None
+        try:
+            from app.agent.runtime_process_manager import get_runtime_process_manager
+            loaded = get_runtime_process_manager().current_model_kind
+        except Exception as exc:
+            logger.debug("Loaded-slot routing skipped: %s", exc)
+            return decision, is_fast, None
+        if loaded == "fast":
+            return decision, is_fast, None
+        logger.info("Fast verdict while '%s' is loaded; answering on main with thinking off instead of swapping.", loaded or "nothing")
+        decision.model = "main"
+        decision.reason = (decision.reason or "") + " Served on main with thinking off (no model swap for a quick turn)."
+        return decision, False, False
+
+    def _offered_tools(self, session_id: str, chat_mode: str, tools: list[Any]) -> list[Any]:
+        """
+        The tool set offered to the model for this turn: every tool this session has offered
+        so far in this chat mode, in first-seen order, plus this turn's. The chat template
+        renders the tool schemas inside the head system message, and llama-server reuses the
+        KV cache only for a byte-identical prefix -- a tool list that changes with each
+        message's keywords re-prefills the whole conversation. Growing monotonically keeps the
+        prefix stable except on the turn that first adds a tool.
+        """
+        key = (session_id, (chat_mode or "").upper())
+        seen = self._session_tools.setdefault(key, {})
+        for t in tools or []:
+            name = self._tool_names([t])[0]
+            if name not in seen:
+                seen[name] = t
+        return list(seen.values())
+
     async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
         """
         One path for native and MCP tools: off the event loop, under a timeout, with the
@@ -804,11 +869,13 @@ class AgentOrchestrator:
             logger.info("Active dynamic skills matched: %s", active_skill_names)
 
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
-        base_system_prompt = (system_prompt or build_system_prompt()) + skill_prompt_injection
+        base_system_prompt = system_prompt or build_system_prompt()
+        turn_context = build_turn_context(skill_prompt_injection)
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
         combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
+        combined_tools = self._offered_tools(active_session_id, effective_mode_str, combined_tools)
 
         # 2. Routing Decision (Amendment 2)
         decision = self.router.evaluate(
@@ -819,6 +886,7 @@ class AgentOrchestrator:
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
+        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
@@ -866,6 +934,7 @@ class AgentOrchestrator:
             session_id=active_session_id,
             user_message=user_message,
             system_prompt=base_system_prompt,
+            turn_context=turn_context,
             project_id=active_rag_project_id,
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
@@ -946,7 +1015,8 @@ class AgentOrchestrator:
                 chat_mode=resolved_chat_mode,
                 profile=profile,
                 workspace_path=workspace_path,
-                tool_context=tool_context
+                tool_context=tool_context,
+                thinking=thinking,
             )
             result.compaction_performed = compaction_info
             result.active_skills = active_skill_names
@@ -996,7 +1066,8 @@ class AgentOrchestrator:
         chat_mode: ChatMode = ChatMode.WORKSPACE,
         profile: str = "general",
         workspace_path: Optional[str | Path] = None,
-        tool_context: Optional[dict[str, Any]] = None
+        tool_context: Optional[dict[str, Any]] = None,
+        thinking: Optional[bool] = None,
     ) -> OrchestratorResult:
         """
         Execute deterministic agent loop against ModelProvider with schema validation,
@@ -1023,7 +1094,8 @@ class AgentOrchestrator:
                 model=model,
                 messages=messages,
                 tools=tools if tools else None,
-                profile=profile
+                profile=profile,
+                thinking=thinking,
             )
 
             message_obj = chat_response.get("message", {})
@@ -1049,7 +1121,8 @@ class AgentOrchestrator:
                     synth_response = await provider.chat(
                         model=model,
                         messages=messages,
-                        profile=profile
+                        profile=profile,
+                        thinking=thinking,
                     )
                     content = synth_response.get("message", {}).get("content", "") or ""
 
@@ -1428,11 +1501,13 @@ class AgentOrchestrator:
         matched_skills = self.skills_loader.match_skills(user_message)
         active_skill_names = [s.name for s in matched_skills]
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
-        base_system_prompt = (system_prompt or build_system_prompt()) + skill_prompt_injection
+        base_system_prompt = system_prompt or build_system_prompt()
+        turn_context = build_turn_context(skill_prompt_injection)
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
         combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
+        combined_tools = self._offered_tools(active_session_id, effective_mode_str, combined_tools)
 
         # 2. Model routing decision (Amendment 2)
         decision = self.router.evaluate(
@@ -1443,6 +1518,7 @@ class AgentOrchestrator:
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
+        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
@@ -1467,6 +1543,7 @@ class AgentOrchestrator:
             session_id=active_session_id,
             user_message=user_message,
             system_prompt=base_system_prompt,
+            turn_context=turn_context,
             project_id=active_rag_project_id,
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
@@ -1521,7 +1598,8 @@ class AgentOrchestrator:
             active_skills=active_skill_names,
             compaction_info=None,
             workspace_path=workspace_path,
-            tool_context=tool_context
+            tool_context=tool_context,
+            thinking=thinking,
         ):
             yield ev
 
@@ -1542,7 +1620,8 @@ class AgentOrchestrator:
         active_skills: Optional[list[str]] = None,
         compaction_info: Optional[dict] = None,
         workspace_path: Optional[str | Path] = None,
-        tool_context: Optional[dict[str, Any]] = None
+        tool_context: Optional[dict[str, Any]] = None,
+        thinking: Optional[bool] = None,
     ):
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
         tool_ctx = tool_context or {"workspace_path": str(ws_root), "session_id": session_id}
@@ -1558,7 +1637,8 @@ class AgentOrchestrator:
                 model=model,
                 messages=messages,
                 tools=tools if tools else None,
-                profile=profile
+                profile=profile,
+                thinking=thinking,
             )
 
             done_event = None
@@ -1610,7 +1690,7 @@ class AgentOrchestrator:
                         messages.append({"role": "assistant", "content": full_reasoning.strip()})
                         messages.append({"role": "user", "content": _NUDGE_TO_ACT})
                         continue
-                    synth_response = await provider.chat(model=model, messages=messages, profile=profile)
+                    synth_response = await provider.chat(model=model, messages=messages, profile=profile, thinking=thinking)
                     content = synth_response.get("message", {}).get("content", "") or full_reasoning.strip()
                     yield {"event": "token", "data": {"delta": content}}
 

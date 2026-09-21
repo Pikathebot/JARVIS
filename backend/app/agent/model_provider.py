@@ -37,10 +37,14 @@ class ModelProvider(ABC):
         tools: Optional[list[Any]] = None,
         temperature: float = 0.7,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Send a non-streaming chat completion request.
+
+        ``thinking`` overrides the model's launch-time reasoning setting for this one request
+        (None = leave it as launched). Providers without a reasoning switch ignore it.
         Returns normalized dictionary:
         {
             "message": {
@@ -70,10 +74,11 @@ class ModelProvider(ABC):
         tools: Optional[list[Any]] = None,
         temperature: float = 0.7,
         profile: str = "general",
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        thinking: Optional[bool] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        Stream chat tokens and tool calls.
+        Stream chat tokens and tool calls. ``thinking`` as in ``chat``.
         Yields normalized event dictionaries:
         - {"event": "text_delta", "content": str}
         - {"event": "tool_call", "tool_call": dict}  (complete, accumulated per tool call)

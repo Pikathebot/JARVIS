@@ -196,10 +196,12 @@ async def test_orchestrator_injects_rag_context_from_active_project(batch3_env, 
     orch = AgentOrchestrator(memory_store=mem_store, retriever=retriever)
 
     captured_system_prompt = None
+    captured_messages = None
 
     async def mock_run_provider_loop(*args, **kwargs):
-        nonlocal captured_system_prompt
+        nonlocal captured_system_prompt, captured_messages
         captured_system_prompt = kwargs.get("system_prompt")
+        captured_messages = kwargs.get("conversation_messages")
         return OrchestratorResult(
             response="Found secret",
             model="test",
@@ -217,5 +219,9 @@ async def test_orchestrator_injects_rag_context_from_active_project(batch3_env, 
 
     assert result is not None
     assert captured_system_prompt is not None
-    assert "998877" in captured_system_prompt
+    # Retrieved chunks ride on the current user turn, not the head system message: the system
+    # prompt is the cached prefix and must not change from turn to turn.
+    assert "998877" not in captured_system_prompt
+    assert captured_messages and captured_messages[-1]["role"] == "user"
+    assert "998877" in captured_messages[-1]["content"]
 
