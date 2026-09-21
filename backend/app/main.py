@@ -73,7 +73,7 @@ def run_db_migrations() -> None:
             # In-process: keep the app's logging (see alembic/env.py).
             alembic_cfg.attributes["configure_logging_skipped"] = True
             alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-            alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+            alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url_resolved)
             command.upgrade(alembic_cfg, "head")
             logger.info("Database migrations applied successfully.")
         else:

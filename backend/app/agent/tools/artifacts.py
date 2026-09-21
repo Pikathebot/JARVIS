@@ -11,8 +11,8 @@ logger = logging.getLogger("jarvis.agent.tools.artifacts")
 
 def create_artifact(
     name: str,
-    type: str,
     content: str,
+    type: str = "code",
     language: Optional[str] = None,
     summary: Optional[str] = None,
     project_id: Optional[str] = None,

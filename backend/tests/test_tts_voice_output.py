@@ -45,9 +45,12 @@ def test_audio_playback_and_interruption():
 # --- 2. Permission Tier & Tool Registry Tests ---
 
 def test_tts_tool_registration_and_permissions():
-    """Verify play_audio and stop_playback are in registry and LOW_RISK tier."""
+    """stop_playback is offered to the model; play_audio is registered for the backend's own use
+    but never offered -- it takes raw audio bytes, which no model can produce."""
+    from app.agent.tools.registry import TOOL_FUNCTIONS
     tool_names = [getattr(t, "__name__", str(t)) for t in AVAILABLE_TOOLS]
-    assert "play_audio" in tool_names
+    assert "play_audio" not in tool_names
+    assert "play_audio" in TOOL_FUNCTIONS
     assert "stop_playback" in tool_names
 
     assert "play_audio" in TOOL_SCHEMAS

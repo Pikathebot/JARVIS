@@ -11,7 +11,7 @@ db_file = Path(settings.memory_db_path)
 db_file.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
-    settings.database_url,
+    settings.database_url_resolved,
     connect_args={"check_same_thread": False},
     pool_pre_ping=True,
     echo=False

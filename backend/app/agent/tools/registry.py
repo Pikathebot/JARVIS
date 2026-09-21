@@ -1,6 +1,6 @@
 import inspect
 import logging
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.agent.tools.read_file import read_file
@@ -77,7 +77,8 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     list_processes,
     kill_process,
     send_toast,
-    play_audio,
+    # play_audio is deliberately absent: it takes raw audio bytes, which no model can supply
+    # (a string from a model just raises). It stays in TOOL_FUNCTIONS for the backend's own use.
     stop_playback,
 ]
 
@@ -123,6 +124,7 @@ class PatchFileArgs(BaseModel):
 class FindFilesArgs(BaseModel):
     pattern: str = Field(..., description="File pattern or extension")
     root_dir: str = Field(default=".", description="Root search directory")
+    max_results: int = Field(default=50, description="Maximum number of matches to return")
 
 
 class GrepInFilesArgs(BaseModel):
@@ -167,7 +169,7 @@ class MuteToggleArgs(BaseModel):
 
 
 class MediaKeyArgs(BaseModel):
-    action: str = Field(..., description="Media playback action ('play_pause', 'next', 'previous', 'stop')")
+    action: Literal["play_pause", "next", "previous", "stop"] = Field(..., description="Media playback action")
 
 
 class GetClipboardArgs(BaseModel):

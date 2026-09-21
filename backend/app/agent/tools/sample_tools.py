@@ -8,6 +8,12 @@ from app.config import settings
 logger = logging.getLogger("jarvis.agent.tools.sample_tools")
 
 
+def _windows_shell() -> str:
+    """pwsh (PowerShell 7) if it is on PATH, else the built-in Windows PowerShell 5.1."""
+    import shutil
+    return shutil.which("pwsh") or "powershell"
+
+
 def execute_command(command: str, workspace_path: Optional[str] = None) -> str:
     """
     Execute a shell command locally in the terminal within the active project workspace directory.
@@ -26,11 +32,19 @@ def execute_command(command: str, workspace_path: Optional[str] = None) -> str:
         ws_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        cmd_to_run = f'powershell -NoProfile -NonInteractive -Command "{cmd_clean}"' if os.name == "nt" else cmd_clean
+        # Models write `echo a && echo b`; Windows PowerShell 5.1 rejects `&&`/`||`, PowerShell 7
+        # (pwsh) accepts them, so prefer it when installed. The command goes as one argv element,
+        # not interpolated into a quoted string through the shell, so embedded quotes survive.
+        if os.name == "nt":
+            cmd_to_run: list[str] | str = [_windows_shell(), "-NoProfile", "-NonInteractive", "-Command", cmd_clean]
+            use_shell = False
+        else:
+            cmd_to_run = cmd_clean
+            use_shell = True
         logger.info("Executing terminal command: '%s' in cwd='%s'", cmd_clean, ws_root)
         result = subprocess.run(
             cmd_to_run,
-            shell=True,
+            shell=use_shell,
             capture_output=True,
             text=True,
             timeout=30,

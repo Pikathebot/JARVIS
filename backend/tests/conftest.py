@@ -1,3 +1,14 @@
+import os
+import tempfile
+
+# Point the whole test session at a throwaway database *before* app.main is imported: the
+# SQLModel engine is created at import time from settings, and without this every test run
+# from the repo root wrote sessions, artifacts and projects into the developer's real
+# backend/data/jarvis_memory.db.
+_TEST_DB = os.path.join(tempfile.mkdtemp(prefix="jarvis-tests-"), "jarvis_memory.db")
+os.environ.setdefault("DATABASE_URL", "sqlite:///" + _TEST_DB.replace("\\", "/"))
+os.environ.setdefault("MEMORY_DB_PATH", _TEST_DB)
+
 import pytest
 from unittest.mock import patch
 from app.main import governor

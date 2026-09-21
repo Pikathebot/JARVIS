@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # Server & App Configuration
     app_host: str = Field(default="127.0.0.1", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
+    # A relative sqlite path is anchored to the backend directory (see ``database_url_resolved``),
+    # not to the process cwd: the app runs with cwd=backend, pytest with cwd=repo root, and the
+    # two would otherwise quietly use two different database files.
     database_url: str = Field(default="sqlite:///./data/jarvis_memory.db", alias="DATABASE_URL")
     workspace_path: str = Field(default="./workspace", alias="WORKSPACE_PATH")
     allowed_cors_origins: list[str] = Field(
@@ -250,7 +253,17 @@ class Settings(BaseSettings):
     def llamacpp_startup_timeout_seconds(self) -> float:
         return self.llama_startup_timeout_seconds
 
-
+    @property
+    def database_url_resolved(self) -> str:
+        """``database_url`` with a relative sqlite path made absolute under the backend directory."""
+        url = self.database_url
+        for prefix in ("sqlite:///./", "sqlite:///"):
+            if url.startswith(prefix):
+                rest = url[len(prefix):]
+                if not os.path.isabs(rest) and not rest.startswith(("/", ":memory:")):
+                    return "sqlite:///" + os.path.join(BASE_DIR, rest).replace("\\", "/")
+                break
+        return url
 
 
 settings = Settings()
