@@ -710,3 +710,40 @@ async def test_retry_counter_local_isolation_across_invocations():
 
 
 
+
+
+# --- VRAM attribution: the model's own footprint is never a reason to evict the model ---
+
+def _metrics(total=8188.0, used=7900.0, model=5987.0, gpu_util=45.0):
+    from app.governor.resource_governor import SystemMetrics
+    m = SystemMetrics(gpu_available=True, vram_total_mb=total, vram_used_mb=used,
+                      vram_util_percent=round(used / total * 100.0, 1), gpu_util_percent=gpu_util)
+    m.model_vram_mb = model
+    m.external_vram_mb = max(0.0, used - model)
+    return m
+
+
+def test_vram_rule_ignores_the_models_own_footprint():
+    gov = ResourceGovernor(enabled=True, vram_threshold=92.0, external_vram_floor_mb=2048.0, startup_grace_seconds=0.0)
+    # The steady state that used to evict mid-conversation: 96.5% with a busy desktop.
+    assert gov._vram_reasons(_metrics(used=7900.0, model=5987.0, gpu_util=45.0)) == []
+    # A real external workload: 2.5 GB beyond the model.
+    reasons = gov._vram_reasons(_metrics(used=7900.0, model=5300.0))
+    assert reasons and "External VRAM use" in reasons[0]
+    # The hardware ceiling is always a reason -- the model itself is about to page.
+    reasons = gov._vram_reasons(_metrics(used=8150.0, model=5987.0))
+    assert reasons and "hardware ceiling" in reasons[0]
+    # Below the threshold nothing fires, whatever the split.
+    assert gov._vram_reasons(_metrics(used=7000.0, model=1000.0)) == []
+    # No model of ours loaded: everything is external, the old GPU-busy coupling applies.
+    assert gov._vram_reasons(_metrics(used=7900.0, model=0.0, gpu_util=45.0))
+    assert gov._vram_reasons(_metrics(used=7900.0, model=0.0, gpu_util=5.0)) == []
+
+
+def test_collect_metrics_derives_external_share_from_provider():
+    gov = ResourceGovernor(enabled=True, model_vram_mb_provider=lambda: 6000.0, startup_grace_seconds=0.0)
+    m = gov.collect_metrics()
+    if not m.gpu_available:
+        pytest.skip("no NVML on this machine")
+    assert m.model_vram_mb == 6000.0
+    assert m.external_vram_mb == pytest.approx(max(0.0, m.vram_used_mb - 6000.0), abs=0.2)

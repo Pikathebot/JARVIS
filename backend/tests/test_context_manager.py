@@ -301,8 +301,8 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
     """
     llama-server reuses the KV cache for the longest common prefix of consecutive prompts, and
     Qwen3.5's template only allows a system message at index 0. So everything that changes per
-    turn -- the measured system state, matched skills, RAG chunks -- must be delivered at the
-    front of the *current user turn*, leaving the head system message and the stored history
+    turn -- the measured system state, matched skills, RAG chunks -- must be delivered on the
+    *current user turn*, leaving the head system message and the stored history
     byte-identical from one turn to the next.
     """
     store, _ = memory_test_env
@@ -334,10 +334,12 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
     assert "Relevant Workspace Context" not in first.system_prompt
     # Only one system message, and it is first (the template raises on any other placement).
     assert [i for i, m in enumerate(first.messages) if m["role"] == "system"] == [0]
-    # The per-turn block is on the user turn, ahead of the user's own words.
+    # The per-turn block is on the user turn, *after* the user's own words (put first, it
+    # swallowed short follow-ups like "why?" on the no-thinking 9B).
     last = second.messages[-1]
     assert last["role"] == "user"
+    assert last["content"].startswith("what now?")
     assert "VRAM 5934/8188" in last["content"]
     assert "ACombatCharacter" in last["content"]
-    assert last["content"].rstrip().endswith("what now?")
-    assert last["content"].index("VRAM 5934") < last["content"].index("what now?")
+    assert last["content"].index("what now?") < last["content"].index("VRAM 5934")
+    assert "not part of the user's message" in last["content"]

@@ -109,7 +109,9 @@ governor = ResourceGovernor(
     recovery_polls=settings.governor_recovery_polls,
     startup_grace_seconds=settings.governor_startup_grace_seconds,
     auto_unload_on_throttle=True,
-    on_throttle_unload=auto_unload_models
+    on_throttle_unload=auto_unload_models,
+    model_vram_mb_provider=lambda: get_runtime_process_manager().model_vram_mb,
+    external_vram_floor_mb=settings.governor_external_vram_floor_mb,
 )
 process_watcher = ProcessWatcher(
     config_path=settings.governor_watchlist_path,
@@ -571,12 +573,15 @@ async def governor_status():
             "vram_used_mb": metrics.vram_used_mb,
             "vram_total_mb": metrics.vram_total_mb,
             "vram_free_mb": metrics.vram_free_mb,
+            "model_vram_mb": metrics.model_vram_mb,
+            "external_vram_mb": metrics.external_vram_mb,
             "gpu_temp_c": metrics.gpu_temp_c,
             "timestamp": metrics.timestamp,
         },
         thresholds={
             "gpu_threshold": governor.gpu_threshold,
             "vram_threshold": governor.vram_threshold,
+            "external_vram_floor_mb": governor.external_vram_floor_mb,
             "cpu_threshold": governor.cpu_threshold,
             "ram_threshold": governor.ram_threshold,
         }

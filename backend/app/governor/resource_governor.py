@@ -5,7 +5,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Callable
 import psutil
 
 logger = logging.getLogger("jarvis.governor")
@@ -102,6 +102,8 @@ class SystemMetrics:
     vram_used_mb: float = 0.0
     vram_total_mb: float = 0.0
     vram_free_mb: float = 0.0
+    model_vram_mb: float = 0.0       # what Jarvis's own loaded model accounts for
+    external_vram_mb: float = 0.0    # everything else on the card (desktop, browsers, games)
     gpu_temp_c: Optional[float] = None
     raw_throttled: bool = False      # Instantaneous single-poll threshold breach
     throttled: bool = False          # Debounced hysteresis state
@@ -139,8 +141,14 @@ class ResourceGovernor:
         on_throttle_unload: Optional[Any] = None,
         on_reload: Optional[Any] = None,
         startup_grace_seconds: float = 20.0,
+        model_vram_mb_provider: Optional[Callable[[], float]] = None,
+        external_vram_floor_mb: float = 2048.0,
     ):
         self.enabled = enabled
+        # How much of the card is Jarvis's own model (RuntimeProcessManager.model_vram_mb): the
+        # governor must never evict the model to "yield" VRAM that the model itself is using.
+        self.model_vram_mb_provider = model_vram_mb_provider
+        self.external_vram_floor_mb = external_vram_floor_mb
         self.poll_interval = poll_interval
         self.gpu_threshold = gpu_threshold
         self.vram_threshold = vram_threshold
@@ -684,6 +692,39 @@ class ResourceGovernor:
             logger.warning("Failed to initialize NVML: %s. Continuing with CPU/RAM metrics only.", e)
             self._nvml_initialized = False
 
+    def _vram_reasons(self, metrics: SystemMetrics) -> list[str]:
+        """
+        VRAM is only a reason to evict when something *other than the model* needs the card.
+
+        The 9B with its projector and a 32k context sits at ~6 GB of the 4060's 8 GB, and an
+        ordinary desktop (compositor, wallpaper engine, a browser) adds 1-2 GB more: 96-97%
+        utilisation is the steady state of a working session, not pressure. The previous rule
+        read "VRAM >= 92% and GPU busy >= 30%" as an external workload and evicted the model
+        between two chat messages, then watched the same 96% persist -- because the usage was
+        the model. So the rule looks at the external share (total minus what the runtime manager
+        says its model costs): evict when that share grows past the floor (a game, a renderer),
+        or when the card is at its hardware ceiling and the model itself is about to page.
+        """
+        if not metrics.gpu_available or metrics.vram_util_percent < self.vram_threshold:
+            return []
+        if metrics.vram_util_percent >= 99.0:
+            return [
+                f"VRAM at hardware ceiling ({metrics.vram_util_percent}%, "
+                f"{metrics.external_vram_mb:.0f} MiB external beyond the model's {metrics.model_vram_mb:.0f} MiB)"
+            ]
+        if metrics.model_vram_mb > 0 and metrics.external_vram_mb >= self.external_vram_floor_mb:
+            return [
+                f"External VRAM use ({metrics.external_vram_mb:.0f} MiB beyond the model's "
+                f"{metrics.model_vram_mb:.0f} MiB) exceeds floor ({self.external_vram_floor_mb:.0f} MiB) "
+                f"at {metrics.vram_util_percent}% utilization"
+            ]
+        if metrics.model_vram_mb <= 0 and metrics.gpu_util_percent >= 30.0:
+            # No model of ours is loaded, so all of it is external: the old coupling still applies.
+            return [
+                f"VRAM utilization ({metrics.vram_util_percent}%) exceeds threshold ({self.vram_threshold}%) under external load"
+            ]
+        return []
+
     def collect_metrics(self) -> SystemMetrics:
         """
         Poll real-time hardware telemetry and evaluate threshold breaches.
@@ -717,6 +758,12 @@ class ResourceGovernor:
                 metrics.vram_free_mb = round(mem_info.free / (1024 * 1024), 1)
                 if mem_info.total > 0:
                     metrics.vram_util_percent = round((mem_info.used / mem_info.total) * 100.0, 1)
+                if self.model_vram_mb_provider is not None:
+                    try:
+                        metrics.model_vram_mb = float(self.model_vram_mb_provider() or 0.0)
+                    except Exception as exc:
+                        logger.debug("model VRAM provider failed: %s", exc)
+                metrics.external_vram_mb = round(max(0.0, metrics.vram_used_mb - metrics.model_vram_mb), 1)
 
                 # GPU Temperature
                 try:
@@ -736,13 +783,7 @@ class ResourceGovernor:
                     f"GPU compute utilization ({metrics.gpu_util_percent}%) exceeds threshold ({self.gpu_threshold}%)"
                 )
 
-            # VRAM Saturation: High VRAM (95-98%) is normal for resident local LLMs.
-            # Only throttle if VRAM reaches true hardware ceiling (>= 99.0%) OR if coupled with external GPU compute (>= 30.0%).
-            if metrics.gpu_available and metrics.vram_util_percent >= self.vram_threshold:
-                if metrics.vram_util_percent >= 99.0 or metrics.gpu_util_percent >= 30.0:
-                    reasons.append(
-                        f"VRAM utilization ({metrics.vram_util_percent}%) exceeds threshold ({self.vram_threshold}%) under external load"
-                    )
+            reasons.extend(self._vram_reasons(metrics))
 
             if metrics.cpu_percent >= self.cpu_threshold:
                 reasons.append(

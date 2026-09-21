@@ -433,10 +433,18 @@ class ContextManager:
                 "\n\n".join(tier3_formatted_blocks)
             )
         # Qwen3.5's template rejects a system message anywhere but first ("System message must
-        # be at the beginning"), so the block rides at the front of the current user turn. It is
-        # sent, never stored: the history keeps the user's own words.
+        # be at the beginning"), so the block rides on the current user turn -- *after* the
+        # user's words, bracketed as context. Put first, it swallowed short follow-ups: with
+        # thinking off the 9B answered "why?" with "I am unable to determine the context",
+        # while this order matched a no-context baseline exactly. Sent, never stored: the
+        # history keeps the user's own words.
         if trailing_parts:
-            tier2_full_user_text = "\n\n".join(trailing_parts + ["--- User message ---", tier2_full_user_text or ""]).rstrip()
+            tier2_full_user_text = (
+                (tier2_full_user_text or "").rstrip()
+                + "\n\n[Turn context — not part of the user's message; use only if relevant:\n"
+                + "\n\n".join(trailing_parts)
+                + "]"
+            ).strip()
 
         # Append current turn user prompt (if provided). With images the turn becomes a parts
         # list (text first, then image_url parts), which is what llama-server's OpenAI-compatible

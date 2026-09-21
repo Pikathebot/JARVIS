@@ -343,3 +343,21 @@ async def test_reload_does_not_sweep_when_the_healthy_server_is_our_own_child():
         await pm.reload("fast")
 
     mock_stop.assert_awaited_once_with(sweep_all=False)
+
+
+def test_model_vram_mb_measured_then_estimated_then_zero(tmp_path):
+    """The governor's attribution input: the launch delta when measured, a size-based estimate
+    for an adopted server, and 0 when nothing is running."""
+    pm = RuntimeProcessManager()
+    assert pm.model_vram_mb == 0.0
+
+    gguf = tmp_path / "m.gguf"; gguf.write_bytes(b"\0" * (300 * 1024 * 1024))
+    proj = tmp_path / "mmproj.gguf"; proj.write_bytes(b"\0" * (100 * 1024 * 1024))
+    pm._externally_managed = True
+    pm._current_model_kind = "main"
+    pm._loaded_projector = proj
+    pm.resolve_model_path = lambda kind: (gguf, "main")  # type: ignore[method-assign]
+    assert pm.model_vram_mb == 400.0 + 600.0  # weights + projector + fixed overhead
+
+    pm._model_vram_mb = 5987.3
+    assert pm.model_vram_mb == 5987.3

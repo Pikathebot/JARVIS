@@ -37,8 +37,10 @@ def test_reranker_service_orders_candidates_by_relevance():
 
     reranked = reranker.rerank(query=query, docs=docs, top_k=2)
 
-    assert len(reranked) == 2
-    # The trajectory calculation must be ranked #1
-    assert reranked[0]["id"] == "doc2"
-    assert "score" in reranked[0]
-    assert reranked[0]["score"] > reranked[1]["score"]
+    # Only the chunk with real term evidence comes back: the lexical scorer has no semantic
+    # signal, so unrelated chunks are dropped rather than padded in to fill top_k.
+    assert [d["id"] for d in reranked] == ["doc2"]
+    assert reranked[0]["score"] > 0
+
+    # Stopwords and short tokens are not evidence: a query of nothing but them matches nothing.
+    assert reranker.rerank(query="why is it the one?", docs=docs, top_k=3) == []

@@ -6,6 +6,21 @@ from app.config import settings
 
 logger = logging.getLogger("jarvis.rag.embeddings")
 
+# Words that carry no retrieval signal on their own. Deliberately small: the point is to stop
+# "the"/"is"/"one" matching every chunk, not to do NLP.
+_STOPWORDS = frozenset("""
+a an and are as at be by can could did do does for from had has have how i if in into is it its
+me my no not of on one or our say says so than that the their them then there these they this to
+was we were what when where which who why will with would you your please thanks thank ok okay
+""".split())
+
+
+def _query_terms(query: str) -> list[str]:
+    """Lowercased query tokens worth matching: alphanumeric, longer than two chars, not stopwords."""
+    import re
+    return [t for t in re.findall(r"[a-z0-9_]+", (query or "").lower()) if len(t) > 2 and t not in _STOPWORDS]
+
+
 
 class EmbeddingService:
     """
@@ -187,8 +202,14 @@ class RerankerService:
             except Exception as e:
                 logger.warning("Error running CrossEncoder on CPU: %s. Using lexical-semantic scorer.", e)
 
-        # Fallback scoring: lexical overlap + symbol matches + reciprocal rank
-        query_words = set(query.lower().split())
+        # Fallback scoring: lexical overlap + symbol matches + reciprocal rank.
+        #
+        # This scorer has no semantic signal, so a chunk that shares no real term with the
+        # query has no evidence of relevance and is dropped rather than padded in by rank:
+        # before this, "why?" put five 0.017-scored chunks into every turn and the model
+        # chatted about them. Stopwords and short tokens do not count as terms -- "one",
+        # "the" and "is" used to score a test file 12.6 for "what colour is the sky".
+        query_words = {w for w in _query_terms(query)}
         scored_docs = []
         for doc in docs:
             doc_copy = dict(doc)
@@ -198,14 +219,14 @@ class RerankerService:
 
             score = 0.0
             for qw in query_words:
-                if not qw:
-                    continue
                 if qw in symbol_name:
                     score += 3.0
                 if qw in file_path:
                     score += 2.0
                 if qw in content:
                     score += 1.0 + min(content.count(qw) * 0.1, 1.0)
+            if score <= 0.0:
+                continue
 
             # Reciprocal rank booster if initial rank exists
             initial_rank = doc_copy.get("initial_rank", 50)

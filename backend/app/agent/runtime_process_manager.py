@@ -16,6 +16,20 @@ logger = logging.getLogger("jarvis.agent.process_manager")
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _vram_used_mb() -> Optional[float]:
+    """Total VRAM in use on GPU 0 right now, or None when NVML is unavailable. Best effort."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            return pynvml.nvmlDeviceGetMemoryInfo(handle).used / (1024 * 1024)
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        return None
+
+
 def _reasoning_flag_from_kwargs(kwargs_json: Optional[str]) -> Optional[str]:
     """Extracts an `enable_thinking` bool out of a chat-template-kwargs JSON string and maps it to
     llama-server's `--reasoning on|off` flag. Returns None (leave --reasoning unset, i.e. 'auto')
@@ -76,6 +90,7 @@ class RuntimeProcessManager:
         self.startup_timeout = startup_timeout if startup_timeout is not None else settings.llama_startup_timeout_seconds
         self.extra_args = list(extra_args if extra_args is not None else settings.llama_extra_args)
         self._loaded_projector: Optional[Path] = None
+        self._model_vram_mb: Optional[float] = None  # measured across the launch, see _spawn_and_wait
 
 
         self._process: Optional[subprocess.Popen] = None
@@ -200,6 +215,29 @@ class RuntimeProcessManager:
         if self._process is not None:
             return self._process.poll() is None
         return self._externally_managed
+
+    @property
+    def model_vram_mb(self) -> float:
+        """
+        VRAM this manager's model currently accounts for, in MiB: measured as the card's usage
+        delta across the launch, or estimated from the GGUF sizes for a server Jarvis adopted
+        rather than started (weights + projector + ~600 MiB of KV cache, compute buffers and
+        CUDA context). 0 when nothing is running.
+        """
+        if not self.is_running() or not self._current_model_kind:
+            return 0.0
+        measured = getattr(self, "_model_vram_mb", None)
+        if measured:
+            return float(measured)
+        try:
+            resolved, _ = self.resolve_model_path(self._current_model_kind)
+            size = resolved.stat().st_size
+            projector = self._loaded_projector
+            if projector is not None and projector.exists():
+                size += projector.stat().st_size
+            return round(size / (1024 * 1024) + 600.0, 1)
+        except Exception:
+            return 0.0
 
     def _drain_sync_stream(self, stream, stream_name: str) -> None:
         """
@@ -359,6 +397,7 @@ class RuntimeProcessManager:
             self._recent_output.clear()
 
         logger.info("Spawning llama-server process: %s", " ".join(cmd))
+        vram_before = _vram_used_mb()
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -398,9 +437,17 @@ class RuntimeProcessManager:
                 )
             if await self.health_check(timeout=1.5):
                 self._loaded_projector = projector
+                # What this launch cost the card, so the governor can tell Jarvis's own footprint
+                # from an external workload (see ResourceGovernor.model_vram_mb_provider).
+                vram_after = _vram_used_mb()
+                if vram_before is not None and vram_after is not None and vram_after > vram_before:
+                    self._model_vram_mb = round(vram_after - vram_before, 1)
+                else:
+                    self._model_vram_mb = None
                 logger.info(
-                    "llama-server successfully started and healthy at %s (model: %s, vision: %s)",
+                    "llama-server successfully started and healthy at %s (model: %s, vision: %s, VRAM: %s)",
                     self.base_url, alias, projector.name if projector else "off",
+                    f"{self._model_vram_mb:.0f} MiB" if self._model_vram_mb else "unmeasured",
                 )
                 return True
             await asyncio.sleep(poll_interval)
@@ -424,6 +471,7 @@ class RuntimeProcessManager:
         self._current_model_kind = None
         self._loaded_projector = None
         self._externally_managed = False
+        self._model_vram_mb = None
 
         # 1. Terminate tracked subprocess if present
         if self._process is not None:

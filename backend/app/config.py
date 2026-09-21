@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     governor_sustained_breach_polls: int = Field(default=3, alias="GOVERNOR_SUSTAINED_BREACH_POLLS")
     governor_recovery_polls: int = Field(default=2, alias="GOVERNOR_RECOVERY_POLLS")
     governor_startup_grace_seconds: float = Field(default=20.0, alias="GOVERNOR_STARTUP_GRACE_SECONDS")
+    # VRAM in use beyond Jarvis's own model before the governor treats it as an external
+    # workload worth yielding to (a game, a renderer). A normal desktop is 1-2 GB.
+    governor_external_vram_floor_mb: float = Field(default=2048.0, alias="GOVERNOR_EXTERNAL_VRAM_FLOOR_MB")
     governor_queue_timeout_seconds: float = Field(default=3.0, alias="GOVERNOR_QUEUE_TIMEOUT_SECONDS")
     governor_watchlist_path: str = Field(default=os.path.join(BASE_DIR.parent, "governor_watchlist.json"), alias="GOVERNOR_WATCHLIST_PATH")
     governor_process_poll_interval: float = Field(default=2.0, alias="GOVERNOR_PROCESS_POLL_INTERVAL")
