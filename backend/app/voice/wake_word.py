@@ -12,6 +12,16 @@ DEFAULT_WAKE_WORDS = (
     "hello jarvis",
 )
 
+# What a small Whisper model actually writes when someone says "Jarvis" into a laptop mic. The
+# name is not in tiny.en's vocabulary, so it lands on the nearest English-looking sound. Each
+# alias is a whole word; the detector rewrites it to the canonical spelling before matching so
+# the wake words above stay the single source of truth.
+WAKE_WORD_ALIASES = (
+    "jarvis", "jarves", "jarvus", "jarvess", "jarviss", "jarvis'", "jarvies",
+    "jarbis", "jarves", "jarmes", "jarmis", "jervis", "jervas", "javis", "javas",
+    "jarvas", "jarvic", "charvis", "garvis", "jarvish",
+)
+
 
 class WakeWordDetector:
     """
@@ -32,12 +42,21 @@ class WakeWordDetector:
     def _compile_patterns(self) -> None:
         patterns = [re.escape(w) for w in self.wake_words]
         self._regex = re.compile(rf"\b({'|'.join(patterns)})\b", re.IGNORECASE)
+        aliases = sorted({a for a in WAKE_WORD_ALIASES if a != "jarvis"}, key=len, reverse=True)
+        self._alias_regex = re.compile(
+            rf"\b({'|'.join(re.escape(a) for a in aliases)})\b", re.IGNORECASE
+        )
+
+    def normalize(self, text: str) -> str:
+        """Rewrite STT mishearings of the name ("Jarmes", "Jervis") to "Jarvis"."""
+        return self._alias_regex.sub("Jarvis", text)
 
     def detect_in_text(self, text: str) -> tuple[bool, Optional[str], str]:
         """
         Check if text contains a wake word.
         Returns: (detected, matched_wake_word, remaining_query_text)
         """
+        text = self.normalize(text)
         match = self._regex.search(text)
         if not match:
             return False, None, text

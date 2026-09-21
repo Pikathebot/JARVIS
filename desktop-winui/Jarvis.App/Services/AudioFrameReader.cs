@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Windows.Media;
+using WinRT;
 
 namespace Jarvis_App.Services;
 
@@ -20,13 +21,22 @@ internal unsafe interface IMemoryBufferByteAccess
 /// <summary>Reads the 32-bit float PCM samples out of one AudioFrame into a managed float[].</summary>
 internal static unsafe class AudioFrameReader
 {
+    private static int _logged;
+
     public static float[] ReadSamples(AudioFrame frame)
     {
         using var buffer = frame.LockBuffer(Windows.Media.AudioBufferAccessMode.Read);
         using var reference = buffer.CreateReference();
 
-        ((IMemoryBufferByteAccess)reference).GetBuffer(out var dataInBytes, out var capacityInBytes);
-        var floatCount = (int)(capacityInBytes / sizeof(float));
+        // A plain cast fails under C#/WinRT ("Invalid cast from 'WinRT.IInspectable'"): the
+        // projection's objects are not classic RCWs, so QI for a [ComImport] interface has to go
+        // through CsWinRT's own As<T>().
+        reference.As<IMemoryBufferByteAccess>().GetBuffer(out var dataInBytes, out var capacityInBytes);
+        // Length is what the frame actually holds; capacity is the allocation, which can run past
+        // it with zeros. Averaging those in dragged the RMS under the speech threshold.
+        var validBytes = Math.Min(buffer.Length, capacityInBytes);
+        if (_logged++ < 3) Jarvis_App.App.LogVoice($"frame: length {buffer.Length} bytes, capacity {capacityInBytes}, duration {frame.Duration}");
+        var floatCount = (int)(validBytes / sizeof(float));
         var samples = new float[floatCount];
         var floatPtr = (float*)dataInBytes;
         for (var i = 0; i < floatCount; i++)

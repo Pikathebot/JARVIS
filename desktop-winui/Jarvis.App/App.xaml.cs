@@ -98,6 +98,10 @@ public partial class App : Application
     /// their exceptions (sidebar/project refreshes), so a silent failure is at least findable.</summary>
     public static void Log(string message) => Log("jarvis-app.log", message);
 
+    /// <summary>jarvis-voice.log beside the exe: what the microphone path is doing (graph format,
+    /// levels, utterances, upload results), since none of it is visible in the UI.</summary>
+    public static void LogVoice(string message) => Log("jarvis-voice.log", message);
+
     private static void Log(string file, string message)
     {
         try

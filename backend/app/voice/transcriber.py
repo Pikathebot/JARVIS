@@ -49,7 +49,14 @@ class AudioTranscriber:
             tmp_file.write(audio_data)
 
         try:
-            segments, info = model.transcribe(tmp_path, beam_size=2)
+            # The name is out-of-vocabulary for tiny.en; priming the decoder with it is the
+            # difference between "Jarvis, what's the time" and "Oh, Jarmes. What's the time?".
+            segments, info = model.transcribe(
+                tmp_path,
+                beam_size=2,
+                initial_prompt="Jarvis, what's the time? Hey Jarvis.",
+                vad_filter=True,
+            )
             full_text = " ".join([seg.text.strip() for seg in segments]).strip()
             
             # Clean wake-word prefixes
