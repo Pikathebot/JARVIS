@@ -181,6 +181,29 @@ class ContextCompactor:
         self.max_message_count = max_message_count
         self.tool_pruning_char_threshold = tool_pruning_char_threshold
 
+    @staticmethod
+    def _no_swap_target(target_model: str, provider: Optional[str], client: Any) -> tuple[str, dict[str, Any]]:
+        """
+        Compaction is routed to the fast slot, but a slot switch reloads ~5 GB of weights
+        (~8 s) -- and the user's next turn switches straight back. Summarising a transcript
+        does not need the 4B specifically, it needs *a* model without a thinking preamble.
+        So when the fast slot is not the one loaded, the summary runs on main with thinking
+        turned off for that one request, exactly as the orchestrator does for quick turns.
+        Only real providers understand the ``thinking`` keyword; ad-hoc clients get none.
+        """
+        if target_model != "fast" or (provider and provider != "llama_cpp"):
+            return target_model, {}
+        try:
+            from app.agent.runtime_process_manager import get_runtime_process_manager
+            loaded = get_runtime_process_manager().current_model_kind
+        except Exception:
+            return target_model, {}
+        if loaded == "fast":
+            return target_model, {}
+        from app.agent.model_provider import ModelProvider
+        extra = {"thinking": False} if isinstance(client, ModelProvider) else {}
+        return "main", extra
+
     def should_compact(
         self,
         conversation_id: str,
@@ -375,6 +398,7 @@ class ContextCompactor:
             message="Summarize prior conversation turns for compaction"
         )
         target_model = model or routing.model
+        target_model, chat_extra = self._no_swap_target(target_model, routing.provider, model_provider or client)
         logger.info(
             "Compaction prompt routed to %s (%s) for session '%s'",
             target_model, routing.provider, session_id
@@ -406,7 +430,8 @@ class ContextCompactor:
                 res = await active_client.chat(
                     messages=[{"role": "user", "content": prompt}],
                     model=target_model,
-                    temperature=0.2
+                    temperature=0.2,
+                    **chat_extra,
                 )
                 if isinstance(res, dict):
                     msg_obj = res.get("message", {})

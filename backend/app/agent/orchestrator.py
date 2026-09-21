@@ -421,6 +421,7 @@ class AgentOrchestrator:
         self.memory_store = memory_store or MemoryStore(db_path=settings.memory_db_path)
         self.compactor = compactor or ContextCompactor(
             max_context_tokens=settings.memory_max_context_tokens,
+            max_message_count=settings.memory_max_message_count,
             tool_pruning_char_threshold=settings.memory_tool_pruning_char_threshold
         )
         self.skills_loader = skills_loader or SkillsLoader()

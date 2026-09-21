@@ -66,7 +66,8 @@ def gpu_used_mib() -> float:
 # --------------------------------------------------------------------------------------------
 
 def projector_for(model: Path) -> Path | None:
-    cands = sorted(model.parent.glob("mmproj*.gguf"))
+    # Smallest wins, matching ModelCatalog.projector_for (an F16 and a Q8_0 side by side).
+    cands = sorted(model.parent.glob("mmproj*.gguf"), key=lambda c: c.stat().st_size)
     return cands[0] if cands else None
 
 

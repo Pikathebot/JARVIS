@@ -133,6 +133,7 @@ memory_manager = MemoryManager(memory_store=memory_store, model_router=model_rou
 compactor = ContextCompactor(
     memory_store=memory_store,
     max_context_tokens=settings.memory_max_context_tokens,
+    max_message_count=settings.memory_max_message_count,
     tool_pruning_char_threshold=settings.memory_tool_pruning_char_threshold
 )
 skills_loader = SkillsLoader()

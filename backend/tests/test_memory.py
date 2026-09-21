@@ -257,3 +257,26 @@ async def test_sessions_endpoint_defaults_to_fifty():
         assert len(default.json()) == 50
         everything = await client.get("/sessions", params={"limit": 0})
         assert len(everything.json()) >= 55
+
+
+def test_compaction_summary_never_swaps_models(monkeypatch):
+    """Compaction routes to the fast slot, but a slot switch reloads the weights twice (there
+    and back). When main is loaded the summary runs on main with thinking off; when fast is
+    loaded it stays on fast; cloud routes and ad-hoc clients are untouched."""
+    from unittest.mock import MagicMock
+    import app.agent.runtime_process_manager as rpm
+    from app.agent.model_provider import ModelProvider
+    from app.memory.context_compactor import ContextCompactor
+
+    class Runtime:
+        def __init__(self, kind):
+            self.current_model_kind = kind
+
+    provider = MagicMock(spec=ModelProvider)
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: Runtime("main"))
+    assert ContextCompactor._no_swap_target("fast", "llama_cpp", provider) == ("main", {"thinking": False})
+    assert ContextCompactor._no_swap_target("fast", "llama_cpp", object()) == ("main", {})
+    assert ContextCompactor._no_swap_target("main", "llama_cpp", provider) == ("main", {})
+    assert ContextCompactor._no_swap_target("fast", "openrouter", provider) == ("fast", {})
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: Runtime("fast"))
+    assert ContextCompactor._no_swap_target("fast", "llama_cpp", provider) == ("fast", {})

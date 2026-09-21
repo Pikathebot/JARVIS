@@ -293,3 +293,21 @@ async def test_voice_output_api_endpoints():
         assert res_post_off.status_code == 200
         assert res_post_off.json()["enabled"] is False
         assert settings.voice_output_enabled is False
+
+
+def test_cpu_tts_load_skips_the_vram_gate():
+    """A CPU-resident TTS engine takes system RAM, so the governor's VRAM gate must not veto it;
+    a CUDA load is still gated."""
+    from unittest.mock import MagicMock
+    from app.agent.tts.chatterbox_engine import ChatterboxEngine
+
+    gov = MagicMock()
+    gov.can_allocate_vram.return_value = (False, "VRAM tight")
+
+    cpu = ChatterboxEngine(governor=gov, device="cpu")
+    assert cpu.load_model("chatterbox") is False  # the package is not installed here...
+    gov.can_allocate_vram.assert_not_called()      # ...but the gate was never the reason
+
+    cuda = ChatterboxEngine(governor=gov, device="cuda")
+    assert cuda.load_model("chatterbox") is False
+    gov.can_allocate_vram.assert_called_once_with(cuda.vram_required_mb)

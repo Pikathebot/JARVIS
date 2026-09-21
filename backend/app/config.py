@@ -135,6 +135,7 @@ class Settings(BaseSettings):
     # Memory & Context Compaction Settings
     memory_db_path: str = Field(default=os.path.join(BASE_DIR, "data", "jarvis_memory.db"), alias="MEMORY_DB_PATH")
     memory_max_context_tokens: int = Field(default=8192, alias="MEMORY_MAX_CONTEXT_TOKENS")
+    memory_max_message_count: int = Field(default=20, alias="MEMORY_MAX_MESSAGE_COUNT")
     memory_tool_pruning_char_threshold: int = Field(default=200, alias="MEMORY_TOOL_PRUNING_CHAR_THRESHOLD")
 
     # Safety & Tool Limits Settings (Stage A)

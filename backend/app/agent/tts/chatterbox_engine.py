@@ -37,6 +37,9 @@ class ChatterboxEngine:
 
     # --- 1. Lifecycle Control ---
 
+    def _on_gpu(self) -> bool:
+        return str(self.device or "").lower().startswith("cuda")
+
     def is_loaded(self) -> bool:
         """Reports whether any local TTS model weights are currently resident in memory/VRAM."""
         return self._chatterbox_model is not None or self._kokoro_model is not None
@@ -56,8 +59,9 @@ class ChatterboxEngine:
             if self._chatterbox_model is not None:
                 return True
 
-            # Governor VRAM check gate
-            if self.governor:
+            # Governor VRAM check gate -- only meaningful for a CUDA load; on the CPU the
+            # weights take system RAM and the 8 GB card is left to the language model.
+            if self.governor and self._on_gpu():
                 can_alloc, reason = self.governor.can_allocate_vram(self.vram_required_mb)
                 if not can_alloc:
                     logger.warning(
@@ -83,8 +87,8 @@ class ChatterboxEngine:
             if self._kokoro_model is not None:
                 return True
 
-            # Governor VRAM check gate for Kokoro
-            if self.governor:
+            # Governor VRAM check gate for Kokoro (CUDA loads only, as above)
+            if self.governor and self._on_gpu():
                 can_alloc, reason = self.governor.can_allocate_vram(self.kokoro_vram_required_mb)
                 if not can_alloc:
                     logger.warning(
