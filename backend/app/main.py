@@ -310,6 +310,12 @@ async def lifespan(app: FastAPI):
     if settings.confirmation_timeout_seconds > 0:
         await confirmation_watcher.start()
 
+    # Load the local TTS model off the event loop so the first spoken reply is not the slow one
+    # (~5 s cold vs ~1 s warm). Nothing waits on it; speech simply loads on demand if it is
+    # still running.
+    if synthesizer.active_backend == "kokoro":
+        asyncio.get_running_loop().run_in_executor(None, synthesizer.kokoro.warm_up)
+
     logger.info("==================================================================")
     logger.info("  JARVIS Backend is READY and actively listening for requests!")
     logger.info("  Health endpoint: http://127.0.0.1:8000/health")
@@ -769,6 +775,7 @@ async def voice_status():
         "wake_word_active": wake_detector.is_listening,
         "wake_words": wake_detector.wake_words,
         "synthesizer_voice": synthesizer.voice_name,
+        "synthesizer_backend": synthesizer.active_backend,
         "voice_output_enabled": settings.voice_output_enabled,
         "tts_engine_loaded": chatterbox_engine.is_loaded(),
         "is_playing_audio": is_audio_playing()
@@ -801,9 +808,11 @@ async def voice_neural_tts(req: TTSRequest):
 async def voice_list_neural():
     """List available studio-grade humanlike voices."""
     from app.voice.synthesizer import AVAILABLE_NEURAL_VOICES
+    from app.voice.kokoro_engine import KOKORO_VOICES
     return {
         "current": synthesizer.voice_name,
-        "available": AVAILABLE_NEURAL_VOICES
+        "backend": synthesizer.active_backend,
+        "available": AVAILABLE_NEURAL_VOICES if synthesizer.active_backend == "edge" else KOKORO_VOICES,
     }
 
 

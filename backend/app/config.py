@@ -153,6 +153,21 @@ class Settings(BaseSettings):
     reliability_window_size: int = Field(default=30, alias="RELIABILITY_WINDOW_SIZE")
     reliability_floor: float = Field(default=0.75, alias="RELIABILITY_FLOOR")
 
+    # Spoken replies (/api/voice/say). "kokoro" = Kokoro-82M on the CPU, fully local (default);
+    # "edge" = Microsoft's edge-tts cloud voices. With kokoro selected and its files missing,
+    # speech is skipped unless the cloud fallback is explicitly allowed.
+    voice_tts_backend: str = Field(default="kokoro", alias="VOICE_TTS_BACKEND")
+    voice_tts_cloud_fallback: bool = Field(default=False, alias="VOICE_TTS_CLOUD_FALLBACK")
+    kokoro_model_path: str = Field(
+        default=os.path.join(BASE_DIR.parent, "models", "tts", "kokoro", "kokoro-v1.0.onnx"),
+        alias="KOKORO_MODEL_PATH",
+    )
+    kokoro_voices_path: str = Field(
+        default=os.path.join(BASE_DIR.parent, "models", "tts", "kokoro", "voices-v1.0.bin"),
+        alias="KOKORO_VOICES_PATH",
+    )
+    kokoro_speed: float = Field(default=1.0, alias="KOKORO_SPEED")
+
     # TTS & Voice Output Settings
     voice_output_enabled: bool = Field(default=False, alias="VOICE_OUTPUT_ENABLED")
     tts_engine: str = Field(default="chatterbox", alias="TTS_ENGINE")
