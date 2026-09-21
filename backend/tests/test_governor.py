@@ -747,3 +747,93 @@ def test_collect_metrics_derives_external_share_from_provider():
         pytest.skip("no NVML on this machine")
     assert m.model_vram_mb == 6000.0
     assert m.external_vram_mb == pytest.approx(max(0.0, m.vram_used_mb - 6000.0), abs=0.2)
+
+
+# --- The floor is relative to what the desktop held at launch ---------------------------
+
+def test_vram_rule_measures_growth_against_the_launch_baseline():
+    """The user's ordinary desktop (Steam, Discord, Brave) holds 2.3 GB -- above the absolute
+    floor -- and used to be read as a game on every poll. Only growth past the baseline counts."""
+    gov = ResourceGovernor(enabled=True, vram_threshold=92.0, external_vram_floor_mb=2048.0,
+                           external_vram_growth_mb=1024.0, startup_grace_seconds=0.0)
+
+    def with_baseline(m, baseline):
+        m.external_vram_baseline_mb = baseline
+        return m
+
+    # 2321 external at launch, still 2321 now, card at 93%: steady state, nothing to yield to.
+    assert gov._vram_reasons(with_baseline(_metrics(used=7650.0, model=5329.0), 2321.0)) == []
+    # Grew by 700 MiB: under the limit.
+    assert gov._vram_reasons(with_baseline(_metrics(used=7650.0, model=4629.0), 2321.0)) == []
+    # Grew by 1.1 GB: a game arrived.
+    reasons = gov._vram_reasons(with_baseline(_metrics(used=7650.0, model=4229.0), 2321.0))
+    assert reasons and "grew" in reasons[0] and "2321" in reasons[0]
+    # No baseline for this launch (adopted server): the absolute floor is all there is.
+    reasons = gov._vram_reasons(_metrics(used=7650.0, model=5329.0))
+    assert reasons and "exceeds floor" in reasons[0]
+    # The hardware ceiling still wins regardless of growth.
+    reasons = gov._vram_reasons(with_baseline(_metrics(used=8150.0, model=5829.0), 2321.0))
+    assert reasons and "hardware ceiling" in reasons[0]
+
+
+def test_external_baseline_follows_the_desktop_down_and_resets_per_launch():
+    """Close Steam after launch, start a game later: the game is measured against the quieter
+    desktop, not the launch-time one. A new launch (new reported baseline) starts over."""
+    reported = {"value": 2300.0}
+    gov = ResourceGovernor(enabled=True, external_vram_growth_mb=1024.0, startup_grace_seconds=0.0,
+                           external_vram_baseline_provider=lambda: reported["value"])
+
+    assert gov._track_external_baseline(_metrics(used=7700.0, model=5400.0)) == 2300.0
+    # Desktop quietens to 1200: the baseline tracks it.
+    assert gov._track_external_baseline(_metrics(used=6600.0, model=5400.0)) == 1200.0
+    # Back to 2300 (card at 94%) is now +1100 of growth -- a reason, where the launch-time
+    # baseline would hide it.
+    m = _metrics(used=7700.0, model=5400.0)
+    m.external_vram_baseline_mb = gov._track_external_baseline(m)
+    assert m.external_vram_baseline_mb == 1200.0
+    assert gov._vram_reasons(m) and "grew 1100" in gov._vram_reasons(m)[0]
+    # A relaunch reports a fresh baseline: tracking restarts from it.
+    reported["value"] = 2600.0
+    assert gov._track_external_baseline(_metrics(used=8000.0, model=5400.0)) == 2600.0
+    # No model of ours loaded: no baseline at all.
+    assert gov._track_external_baseline(_metrics(used=2600.0, model=0.0)) is None
+    reported["value"] = None
+    assert gov._track_external_baseline(_metrics(used=8000.0, model=5400.0)) is None
+
+
+def test_baseline_does_not_track_down_while_the_model_is_paged_out():
+    """Seen live: a second process asked for VRAM it could not have, WDDM demoted 3 GB of the
+    9B to shared memory, and the card reported 4188 MiB in use against a 5163 MiB model. The
+    external share reads 0 then; the baseline must not follow it."""
+    gov = ResourceGovernor(enabled=True, external_vram_growth_mb=1024.0, startup_grace_seconds=0.0,
+                           external_vram_baseline_provider=lambda: 2042.0)
+    resident = _metrics(used=7208.0, model=5163.0)
+    resident.model_resident = True
+    assert gov._track_external_baseline(resident) == 2042.0
+
+    paged = _metrics(used=4188.0, model=5163.0)
+    paged.model_resident = False
+    assert paged.external_vram_mb == 0.0
+    assert gov._track_external_baseline(paged) == 2042.0   # unchanged, not 0
+
+    # The desktop coming back to 2 GB is the steady state again, not growth.
+    back = _metrics(used=7700.0, model=5163.0)
+    back.model_resident = True
+    back.external_vram_baseline_mb = gov._track_external_baseline(back)
+    assert back.external_vram_baseline_mb == 2042.0
+    assert gov._vram_reasons(back) == []
+
+
+def test_vram_headroom_is_free_minus_reserve_or_unknown(monkeypatch):
+    from app.governor.resource_governor import SystemMetrics
+
+    gov = ResourceGovernor(enabled=True, startup_grace_seconds=0.0)
+    ok = SystemMetrics(gpu_available=True, vram_total_mb=8188.0, vram_used_mb=2321.0, vram_free_mb=5867.0)
+    monkeypatch.setattr(gov, "collect_metrics", lambda: ok)
+    assert gov.vram_headroom_mb() == 5867.0
+    assert gov.vram_headroom_mb(reserve_mb=384.0) == 5483.0
+    tiny = SystemMetrics(gpu_available=True, vram_total_mb=8188.0, vram_used_mb=8000.0, vram_free_mb=188.0)
+    monkeypatch.setattr(gov, "collect_metrics", lambda: tiny)
+    assert gov.vram_headroom_mb(reserve_mb=384.0) == 0.0
+    monkeypatch.setattr(gov, "collect_metrics", lambda: SystemMetrics(gpu_available=False))
+    assert gov.vram_headroom_mb() is None

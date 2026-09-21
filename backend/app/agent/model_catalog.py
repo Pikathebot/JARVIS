@@ -28,7 +28,7 @@ import json
 import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("jarvis.agent.model_catalog")
 
@@ -119,6 +119,11 @@ class ModelCatalog:
         self.models_dir = Path(models_dir) if models_dir else DEFAULT_MODELS_DIR
         self.state_path = Path(state_path) if state_path else DEFAULT_STATE_PATH
         self._selection: dict[str, str] = {}
+        # What a launch configuration actually cost the card last time, in MiB, keyed by
+        # ``launch_cost_key``. Measured by RuntimeProcessManager across a successful start and
+        # consulted before the next one, so the VRAM budget check works from this machine's
+        # numbers rather than a guess from file sizes.
+        self._launch_costs: dict[str, float] = {}
         self._load_state()
 
     # --- persistence -----------------------------------------------------
@@ -133,17 +138,24 @@ class ModelCatalog:
                     for slot, value in selection.items()
                     if slot in SLOTS and value
                 }
+                costs = data.get("launch_costs", {})
+                self._launch_costs = {
+                    str(key): float(value)
+                    for key, value in costs.items()
+                    if isinstance(value, (int, float)) and value > 0
+                }
         except Exception as exc:
             logger.warning("Could not read model selection from %s: %s", self.state_path, exc)
             self._selection = {}
+            self._launch_costs = {}
 
     def _save_state(self) -> None:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(
-                json.dumps({"selection": self._selection}, indent=2),
-                encoding="utf-8",
-            )
+            state: dict[str, Any] = {"selection": self._selection}
+            if self._launch_costs:
+                state["launch_costs"] = self._launch_costs
+            self.state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         except Exception as exc:
             logger.warning("Could not persist model selection to %s: %s", self.state_path, exc)
 
@@ -274,6 +286,23 @@ class ModelCatalog:
         """Drops a slot's override so it falls back to the configured .env path."""
         if self._selection.pop(slot, None) is not None:
             self._save_state()
+
+    # --- learned launch costs --------------------------------------------
+
+    @staticmethod
+    def launch_cost_key(model_path: Path, projector: Optional[Path], ctx_size: int) -> str:
+        """One launch configuration: which weights, which projector (or none), how much context."""
+        return f"{model_path.name}|{projector.name if projector else 'text'}|{int(ctx_size)}"
+
+    def launch_cost(self, model_path: Path, projector: Optional[Path], ctx_size: int) -> Optional[float]:
+        """MiB this configuration cost the last time it started here, or None if never measured."""
+        return self._launch_costs.get(self.launch_cost_key(model_path, projector, ctx_size))
+
+    def record_launch_cost(self, model_path: Path, projector: Optional[Path], ctx_size: int, mib: float) -> None:
+        if mib <= 0:
+            return
+        self._launch_costs[self.launch_cost_key(model_path, projector, ctx_size)] = round(float(mib), 1)
+        self._save_state()
 
 
 _catalog: Optional[ModelCatalog] = None

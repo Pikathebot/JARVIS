@@ -7,7 +7,7 @@ import subprocess
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 import httpx
 from app.config import settings
 
@@ -91,6 +91,20 @@ class RuntimeProcessManager:
         self.extra_args = list(extra_args if extra_args is not None else settings.llama_extra_args)
         self._loaded_projector: Optional[Path] = None
         self._model_vram_mb: Optional[float] = None  # measured across the launch, see _spawn_and_wait
+        # The card's usage just before our launch: everything on it that is not ours. The
+        # governor judges "an external workload arrived" against this, not against a fixed number.
+        self._external_vram_baseline_mb: Optional[float] = None
+        # What the last launch actually ran, when the budget ladder could not give the slot its
+        # full configuration (see _launch_rungs). None when the slot got exactly what it asked for.
+        self._launch_adjustment: Optional[dict[str, Any]] = None
+        self._served_model: Optional[Path] = None
+        self._served_ctx_size: Optional[int] = None
+        # Wired by the app: MiB the card can still give us (free minus a reserve), or None when
+        # nothing can tell -- in which case the ladder only steps down on an actual failure.
+        self.vram_headroom_provider: Optional[Callable[[], Optional[float]]] = None
+        # Wired by the app: told once whenever the ladder lands somewhere new, so the user hears
+        # "running without vision" from the awareness channel rather than discovering it.
+        self.on_launch_adjusted: Optional[Callable[[dict[str, Any]], None]] = None
 
 
         self._process: Optional[subprocess.Popen] = None
@@ -183,6 +197,31 @@ class RuntimeProcessManager:
     def loaded_projector(self) -> Optional[Path]:
         """The ``--mmproj`` file the Jarvis-spawned server is currently running with, if any."""
         return self._loaded_projector
+
+    @property
+    def external_vram_baseline_mb(self) -> Optional[float]:
+        """VRAM the rest of the machine held when our model was launched, or None if unmeasured
+        (NVML absent, or a server Jarvis adopted rather than started)."""
+        if not self.is_running():
+            return None
+        return self._external_vram_baseline_mb
+
+    @property
+    def launch_adjustment(self) -> Optional[dict[str, Any]]:
+        """How the running launch differs from what the slot is configured for, or None."""
+        if not self.is_running():
+            return None
+        return dict(self._launch_adjustment) if self._launch_adjustment else None
+
+    @property
+    def served_model(self) -> Optional[Path]:
+        """The weights actually serving the current slot (the fallback file, when the ladder
+        had to swap models)."""
+        return self._served_model if self.is_running() else None
+
+    @property
+    def served_ctx_size(self) -> Optional[int]:
+        return self._served_ctx_size if self.is_running() else None
 
     def has_vision(self, model_kind: str = "main") -> bool:
         """
@@ -313,73 +352,247 @@ class RuntimeProcessManager:
 
 
             # 2. Server not running or needs restart with new model
-            ctx_size_for_model = (
-                self.ctx_size
-                if self.ctx_size is not None
-                else (
-                    settings.llama_ctx_size_fast if alias == "fast" else settings.llama_ctx_size_main
-                )
-            )
+            return await self._launch_with_budget(resolved_exe, resolved_model, model_kind, alias)
 
-            cmd = [
-                str(resolved_exe),
-                "--model", str(resolved_model),
-                "--alias", alias,
-                "--host", str(self.host),
-                "--port", str(self.port),
-                "--ctx-size", str(ctx_size_for_model),
-                "--n-gpu-layers", str(self.gpu_layers),
-                "--parallel", "1",
-            ]
-            if not self.use_mmap:
-                cmd.append("--no-mmap")
-            projector = self.resolve_projector_path(resolved_model)
-            projector_args: list[str] = []
-            if projector is not None:
-                projector_args = ["--mmproj", str(projector)]
-                if not settings.llama_mmproj_offload:
-                    projector_args.append("--no-mmproj-offload")
-            cmd.extend(projector_args)
-            if self.extra_args:
-                cmd.extend(self.extra_args)
+    # --- launch budget ladder ------------------------------------------------------------
 
-            # NOTE: this build's llama-server reads chat-template-kwargs from the environment
-            # variable LLAMA_ARG_CHAT_TEMPLATE_KWARGS, not LLAMA_CHAT_TEMPLATE_KWARGS (confirmed via
-            # `llama-server.exe --help`) -- the latter name is silently ignored, which is why the
-            # enable_thinking toggle never actually took effect via .env alone. Passed as a real CLI
-            # arg here instead of relying on getting an env var name exactly right a second time.
-            kwargs_for_alias = (
-                settings.llama_chat_template_kwargs_fast
-                if alias == "fast"
-                else settings.llama_chat_template_kwargs
-            )
-            if kwargs_for_alias:
-                cmd.extend(["--chat-template-kwargs", kwargs_for_alias])
+    def _ctx_size_for(self, alias: str) -> int:
+        if self.ctx_size is not None:
+            return int(self.ctx_size)
+        return int(settings.llama_ctx_size_fast if alias == "fast" else settings.llama_ctx_size_main)
 
-            # Belt-and-suspenders: --reasoning is llama.cpp's own first-class on/off/auto switch,
-            # independent of whether a given jinja template actually honours enable_thinking inside
-            # --chat-template-kwargs. Derived from the same enable_thinking value so .env stays the
-            # single place this is configured.
-            reasoning_flag = _reasoning_flag_from_kwargs(kwargs_for_alias)
-            if reasoning_flag is not None:
-                cmd.extend(["--reasoning", reasoning_flag])
+    def _build_cmd(
+        self,
+        resolved_exe: Path,
+        model: Path,
+        alias: str,
+        ctx_size: int,
+        projector: Optional[Path],
+    ) -> list[str]:
+        cmd = [
+            str(resolved_exe),
+            "--model", str(model),
+            "--alias", alias,
+            "--host", str(self.host),
+            "--port", str(self.port),
+            "--ctx-size", str(ctx_size),
+            "--n-gpu-layers", str(self.gpu_layers),
+            "--parallel", "1",
+        ]
+        if not self.use_mmap:
+            cmd.append("--no-mmap")
+        if projector is not None:
+            cmd.extend(["--mmproj", str(projector)])
+            if not settings.llama_mmproj_offload:
+                cmd.append("--no-mmproj-offload")
+        if self.extra_args:
+            cmd.extend(self.extra_args)
 
-            # The projector is the one part of the launch that is optional: it needs its own
-            # ~0.7-0.9 GB of VRAM (or RAM with --no-mmproj-offload) on top of the model, and on an
-            # 8 GB card with other apps holding memory it can fail to allocate. When that happens
-            # the model is relaunched text-only rather than leaving the user with no model at all;
-            # ``has_vision`` reports the projector as absent so images fall back to file notes.
+        # NOTE: this build's llama-server reads chat-template-kwargs from the environment
+        # variable LLAMA_ARG_CHAT_TEMPLATE_KWARGS, not LLAMA_CHAT_TEMPLATE_KWARGS (confirmed via
+        # `llama-server.exe --help`) -- the latter name is silently ignored, which is why the
+        # enable_thinking toggle never actually took effect via .env alone. Passed as a real CLI
+        # arg here instead of relying on getting an env var name exactly right a second time.
+        kwargs_for_alias = (
+            settings.llama_chat_template_kwargs_fast
+            if alias == "fast"
+            else settings.llama_chat_template_kwargs
+        )
+        if kwargs_for_alias:
+            cmd.extend(["--chat-template-kwargs", kwargs_for_alias])
+
+        # Belt-and-suspenders: --reasoning is llama.cpp's own first-class on/off/auto switch,
+        # independent of whether a given jinja template actually honours enable_thinking inside
+        # --chat-template-kwargs. Derived from the same enable_thinking value so .env stays the
+        # single place this is configured.
+        reasoning_flag = _reasoning_flag_from_kwargs(kwargs_for_alias)
+        if reasoning_flag is not None:
+            cmd.extend(["--reasoning", reasoning_flag])
+        return cmd
+
+    def estimate_launch_cost_mb(self, model: Path, projector: Optional[Path], ctx_size: int) -> float:
+        """
+        MiB a launch configuration will take on the card.
+
+        What it cost last time on this machine wins (``ModelCatalog.launch_cost``, measured across
+        each successful start). Before that there is only a rule of thumb from the file sizes:
+        weights land on the GPU except the token embeddings, a projector brings its own vision
+        compute buffer, and per 1k of context ~20 MiB of KV is a middle value between the hybrid
+        Qwen3.5 (~17) and a dense 2B with 2 KV heads (~21). The constant is compute buffers plus
+        the CUDA context. Deliberately a little high: a first launch that steps down one rung too
+        many is a text-only turn; one that steps down too few is an OOM and a relaunch.
+        """
+        try:
+            from app.agent.model_catalog import get_model_catalog
+
+            learned = get_model_catalog().launch_cost(model, projector, ctx_size)
+            if learned:
+                return float(learned)
+        except Exception:
+            pass
+        mib = 1024 * 1024
+        try:
+            weights = model.stat().st_size / mib * 0.88
+        except OSError:
+            weights = 0.0
+        proj = 0.0
+        if projector is not None:
             try:
-                return await self._spawn_and_wait(cmd, resolved_exe, model_kind, alias, projector)
+                proj = projector.stat().st_size / mib + 250.0
+            except OSError:
+                proj = 250.0
+        return round(weights + proj + ctx_size / 1024 * 20.0 + 500.0, 1)
+
+    def _launch_rungs(self, resolved_model: Path, alias: str) -> list[dict[str, Any]]:
+        """
+        The configurations to try for a slot, best first.
+
+        A slot asks for its model, its projector and its context. On an 8 GB card that shares
+        the desktop with a browser, a chat client and a game launcher, that does not always fit,
+        and the alternative to stepping down is no model at all. The order gives up what costs
+        the user least first: the projector (~600 MiB; image turns fall back to the captioner or
+        to file notes), then half the context (~350 MiB at 32k; long chats compact sooner), and
+        for the main slot, finally the fast slot's model (announced -- a smaller Jarvis beats none).
+        """
+        projector = self.resolve_projector_path(resolved_model)
+        ctx = self._ctx_size_for(alias)
+        rungs: list[dict[str, Any]] = [{"model": resolved_model, "projector": projector, "ctx": ctx, "step": "full"}]
+        if projector is not None:
+            rungs.append({"model": resolved_model, "projector": None, "ctx": ctx, "step": "no_projector"})
+        reduced = max(8192, ctx // 2)
+        if reduced < ctx:
+            rungs.append({"model": resolved_model, "projector": None, "ctx": reduced, "step": "reduced_context"})
+        if alias == "main":
+            try:
+                fallback, _ = self.resolve_model_path("fast")
+            except Exception:
+                fallback = None
+            if fallback is not None and fallback.exists() and fallback.resolve() != resolved_model.resolve():
+                fb_proj = self.resolve_projector_path(fallback)
+                fb_ctx = self._ctx_size_for("fast")
+                rungs.append({"model": fallback, "projector": fb_proj, "ctx": fb_ctx, "step": "fallback_model"})
+                if fb_proj is not None:
+                    rungs.append({"model": fallback, "projector": None, "ctx": fb_ctx, "step": "fallback_model"})
+        return rungs
+
+    def _headroom_mb(self) -> Optional[float]:
+        if self.vram_headroom_provider is None:
+            return None
+        try:
+            value = self.vram_headroom_provider()
+        except Exception as exc:
+            logger.debug("VRAM headroom provider failed: %s", exc)
+            return None
+        return None if value is None else float(value)
+
+    async def _launch_with_budget(
+        self,
+        resolved_exe: Path,
+        resolved_model: Path,
+        model_kind: str,
+        alias: str,
+    ) -> bool:
+        """
+        Walk the ladder: skip a rung whose estimated cost exceeds what the card can give (when
+        that is knowable), and step down past a rung whose child dies at startup -- the way a
+        projector OOM was already handled, generalised. The last rung is always attempted, and
+        only its failure is the caller's error: "could not fit" is a thing to report, not to
+        hide behind a text-only launch that never happened.
+        """
+        rungs = self._launch_rungs(resolved_model, alias)
+        requested = rungs[0]
+        last_error: Optional[Exception] = None
+        for index, rung in enumerate(rungs):
+            is_last = index == len(rungs) - 1
+            headroom = self._headroom_mb()
+            estimate = self.estimate_launch_cost_mb(rung["model"], rung["projector"], rung["ctx"])
+            if headroom is not None and not is_last and estimate > headroom:
+                logger.info(
+                    "Launch budget: skipping %s (%s, %s, ctx %d) -- needs ~%.0f MiB, card can give %.0f MiB.",
+                    rung["step"], rung["model"].name,
+                    rung["projector"].name if rung["projector"] else "text-only", rung["ctx"],
+                    estimate, headroom,
+                )
+                continue
+            cmd = self._build_cmd(resolved_exe, rung["model"], alias, rung["ctx"], rung["projector"])
+            try:
+                ok = await self._spawn_and_wait(cmd, resolved_exe, model_kind, alias, rung["projector"])
             except RuntimeError as exc:
-                if not projector_args:
+                last_error = exc
+                if is_last:
                     raise
                 logger.warning(
-                    "llama-server failed to start with projector %s; retrying text-only. Cause: %s",
-                    projector.name if projector else projector_args, exc,
+                    "llama-server failed to start as %s (%s); stepping down the launch ladder. Cause: %s",
+                    rung["step"], rung["model"].name, exc,
                 )
-                text_only_cmd = [arg for arg in cmd if arg not in projector_args]
-                return await self._spawn_and_wait(text_only_cmd, resolved_exe, model_kind, alias, None)
+                continue
+            if ok:
+                self._served_model = rung["model"]
+                self._served_ctx_size = rung["ctx"]
+                self._remember_launch(rung, requested, alias, headroom, estimate)
+            return ok
+        # Unreachable: the last rung either returned or raised.
+        raise RuntimeError(f"Could not launch {alias}: {last_error}")
+
+    def _remember_launch(
+        self,
+        rung: dict[str, Any],
+        requested: dict[str, Any],
+        alias: str,
+        headroom: Optional[float],
+        estimate: float,
+    ) -> None:
+        """Persist what this configuration cost, and announce if the slot did not get its own."""
+        measured = self._model_vram_mb
+        if measured:
+            try:
+                from app.agent.model_catalog import get_model_catalog
+
+                get_model_catalog().record_launch_cost(rung["model"], rung["projector"], rung["ctx"], measured)
+            except Exception as exc:
+                logger.debug("Could not record launch cost: %s", exc)
+
+        previous = self._launch_adjustment
+        if rung["step"] == "full":
+            self._launch_adjustment = None
+            if previous is not None:
+                # Back to the full configuration: say so once, the way the awareness monitor
+                # announces a recovery, so the earlier notice does not stand forever.
+                self._notify_adjusted({
+                    "slot": alias, "step": "restored", "requested_model": requested["model"].name,
+                    "served_model": rung["model"].name, "projector": bool(rung["projector"]),
+                    "ctx": rung["ctx"], "headroom_mb": None if headroom is None else round(headroom),
+                    "estimate_mb": round(estimate),
+                })
+            return
+
+        adjustment = {
+            "slot": alias,
+            "step": rung["step"],
+            "requested_model": requested["model"].name,
+            "served_model": rung["model"].name,
+            "requested_projector": bool(requested["projector"]),
+            "projector": bool(rung["projector"]),
+            "requested_ctx": requested["ctx"],
+            "ctx": rung["ctx"],
+            "headroom_mb": None if headroom is None else round(headroom),
+            "estimate_mb": round(estimate),
+            "measured_mb": round(measured) if measured else None,
+        }
+        self._launch_adjustment = adjustment
+        same_as_before = previous is not None and all(
+            previous.get(k) == adjustment.get(k) for k in ("slot", "step", "served_model", "projector", "ctx")
+        )
+        if not same_as_before:
+            self._notify_adjusted(adjustment)
+
+    def _notify_adjusted(self, adjustment: dict[str, Any]) -> None:
+        if self.on_launch_adjusted is None:
+            return
+        try:
+            self.on_launch_adjusted(dict(adjustment))
+        except Exception as exc:
+            logger.debug("on_launch_adjusted callback failed: %s", exc)
 
     async def _spawn_and_wait(
         self,
@@ -442,8 +655,10 @@ class RuntimeProcessManager:
                 vram_after = _vram_used_mb()
                 if vram_before is not None and vram_after is not None and vram_after > vram_before:
                     self._model_vram_mb = round(vram_after - vram_before, 1)
+                    self._external_vram_baseline_mb = round(vram_before, 1)
                 else:
                     self._model_vram_mb = None
+                    self._external_vram_baseline_mb = None
                 logger.info(
                     "llama-server successfully started and healthy at %s (model: %s, vision: %s, VRAM: %s)",
                     self.base_url, alias, projector.name if projector else "off",
@@ -472,6 +687,9 @@ class RuntimeProcessManager:
         self._loaded_projector = None
         self._externally_managed = False
         self._model_vram_mb = None
+        self._external_vram_baseline_mb = None
+        self._served_model = None
+        self._served_ctx_size = None
 
         # 1. Terminate tracked subprocess if present
         if self._process is not None:

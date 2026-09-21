@@ -293,3 +293,26 @@ async def test_switch_to_a_missing_model_keeps_the_running_one(monkeypatch):
 
     assert stopped is False
     assert manager._current_model_kind == "main"
+
+
+def test_launch_costs_are_learned_per_configuration_and_survive_reload(catalog, models_dir, tmp_path):
+    """What a launch cost is keyed by weights + projector + context, so a text-only launch at
+    16k does not answer for a launch with the projector at 32k."""
+    model = models_dir / "qwen3.5-4b" / "Qwen3.5-4B-UD-Q4_K_XL.gguf"
+    proj = models_dir / "qwen3.5-4b" / "mmproj-F16.gguf"
+
+    assert catalog.launch_cost(model, proj, 8192) is None
+    catalog.record_launch_cost(model, proj, 8192, 3723.4)
+    catalog.record_launch_cost(model, None, 8192, 3100.0)
+    catalog.record_launch_cost(model, None, 8192, 0.0)  # an unmeasured launch never overwrites
+
+    assert catalog.launch_cost(model, proj, 8192) == 3723.4
+    assert catalog.launch_cost(model, None, 8192) == 3100.0
+    assert catalog.launch_cost(model, proj, 16384) is None
+
+    saved = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
+    assert saved["launch_costs"]["Qwen3.5-4B-UD-Q4_K_XL.gguf|mmproj-F16.gguf|8192"] == 3723.4
+    reloaded = ModelCatalog(models_dir=models_dir, state_path=tmp_path / "models.json")
+    assert reloaded.launch_cost(model, proj, 8192) == 3723.4
+    # Recording a cost does not disturb the selection, and vice versa.
+    assert reloaded.selection() == {"main": None, "fast": None}

@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # passed as --mmproj so image attachments are actually seen. Off = text-only even if a
     # projector exists (saves its VRAM); offload=False keeps the projector on the CPU.
     llama_mmproj_enabled: bool = Field(default=True, alias="LLAMA_MMPROJ_ENABLED")
+    # VRAM a launch leaves untouched on top of its own estimate, so the desktop can grow a
+    # little without pushing the model into shared memory. The launch ladder
+    # (RuntimeProcessManager._launch_rungs) drops the projector, then context, then the model.
+    llama_launch_vram_reserve_mb: float = Field(default=384.0, alias="LLAMA_LAUNCH_VRAM_RESERVE_MB")
+    # VRAM a launch leaves untouched on top of its own estimate, so the desktop can grow a
+    # little without pushing the model into shared memory. The launch ladder
+    # (RuntimeProcessManager._launch_rungs) drops the projector, then context, then the model.
+    llama_launch_vram_reserve_mb: float = Field(default=384.0, alias="LLAMA_LAUNCH_VRAM_RESERVE_MB")
     llama_mmproj_offload: bool = Field(default=True, alias="LLAMA_MMPROJ_OFFLOAD")
     # Image captioner sidecar (app/agent/captioner.py): a small CPU-only vision model that
     # describes image attachments for any model that cannot see them itself. Always cold;
@@ -132,6 +140,12 @@ class Settings(BaseSettings):
     # VRAM in use beyond Jarvis's own model before the governor treats it as an external
     # workload worth yielding to (a game, a renderer). A normal desktop is 1-2 GB.
     governor_external_vram_floor_mb: float = Field(default=2048.0, alias="GOVERNOR_EXTERNAL_VRAM_FLOOR_MB")
+    # How far the external share may grow *beyond what it was when the model launched* before
+    # the governor yields. Relative, because a desktop that already holds 2.3 GB is not a game.
+    governor_external_vram_growth_mb: float = Field(default=1024.0, alias="GOVERNOR_EXTERNAL_VRAM_GROWTH_MB")
+    # How far the external share may grow *beyond what it was when the model launched* before
+    # the governor yields. Relative, because a desktop that already holds 2.3 GB is not a game.
+    governor_external_vram_growth_mb: float = Field(default=1024.0, alias="GOVERNOR_EXTERNAL_VRAM_GROWTH_MB")
     governor_queue_timeout_seconds: float = Field(default=3.0, alias="GOVERNOR_QUEUE_TIMEOUT_SECONDS")
     governor_watchlist_path: str = Field(default=os.path.join(BASE_DIR.parent, "governor_watchlist.json"), alias="GOVERNOR_WATCHLIST_PATH")
     governor_process_poll_interval: float = Field(default=2.0, alias="GOVERNOR_PROCESS_POLL_INTERVAL")

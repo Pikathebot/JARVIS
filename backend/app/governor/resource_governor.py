@@ -104,6 +104,14 @@ class SystemMetrics:
     vram_free_mb: float = 0.0
     model_vram_mb: float = 0.0       # what Jarvis's own loaded model accounts for
     external_vram_mb: float = 0.0    # everything else on the card (desktop, browsers, games)
+    # What the external share was when the model launched (RuntimeProcessManager records it),
+    # tracked downward while the model stays loaded. None when no model of ours is loaded or the
+    # launch went unmeasured; the absolute floor applies then.
+    external_vram_baseline_mb: Optional[float] = None
+    # False when the card reports less in use than our model alone costs: WDDM has demoted part
+    # of the model to shared system memory (another process asked for VRAM it could not have).
+    # The external share is unknowable then -- the subtraction just clamps to zero.
+    model_resident: bool = True
     gpu_temp_c: Optional[float] = None
     raw_throttled: bool = False      # Instantaneous single-poll threshold breach
     throttled: bool = False          # Debounced hysteresis state
@@ -143,12 +151,24 @@ class ResourceGovernor:
         startup_grace_seconds: float = 20.0,
         model_vram_mb_provider: Optional[Callable[[], float]] = None,
         external_vram_floor_mb: float = 2048.0,
+        external_vram_baseline_provider: Optional[Callable[[], Optional[float]]] = None,
+        external_vram_growth_mb: float = 1024.0,
     ):
         self.enabled = enabled
         # How much of the card is Jarvis's own model (RuntimeProcessManager.model_vram_mb): the
         # governor must never evict the model to "yield" VRAM that the model itself is using.
         self.model_vram_mb_provider = model_vram_mb_provider
         self.external_vram_floor_mb = external_vram_floor_mb
+        # What the desktop already held when the model was launched. An absolute floor cannot
+        # tell "this user's ordinary desktop is 2.3 GB" from "a game just started": the first
+        # was read as the second and evicted the model on every poll. Growth *beyond* the
+        # baseline is what says something new wants the card.
+        self.external_vram_baseline_provider = external_vram_baseline_provider
+        self.external_vram_growth_mb = external_vram_growth_mb
+        # (baseline the provider reported, lowest external share seen since it did): the
+        # baseline follows the desktop *down* -- close Steam and later start a game, and the
+        # game is measured against the quieter desktop, not the one from launch time.
+        self._external_baseline: Optional[tuple[float, float]] = None
         self.poll_interval = poll_interval
         self.gpu_threshold = gpu_threshold
         self.vram_threshold = vram_threshold
@@ -692,6 +712,43 @@ class ResourceGovernor:
             logger.warning("Failed to initialize NVML: %s. Continuing with CPU/RAM metrics only.", e)
             self._nvml_initialized = False
 
+    def _track_external_baseline(self, metrics: SystemMetrics) -> Optional[float]:
+        """The external share to measure growth against right now, or None when unknown."""
+        if metrics.model_vram_mb <= 0 or self.external_vram_baseline_provider is None:
+            self._external_baseline = None
+            return None
+        try:
+            reported = self.external_vram_baseline_provider()
+        except Exception as exc:
+            logger.debug("external VRAM baseline provider failed: %s", exc)
+            reported = None
+        if reported is None:
+            self._external_baseline = None
+            return None
+        reported = float(reported)
+        if self._external_baseline is None or self._external_baseline[0] != reported:
+            # A new launch (or the first one): start tracking from what it measured.
+            self._external_baseline = (reported, reported)
+        if metrics.model_resident:
+            # Only a card that holds the whole model gives a real external figure. While part
+            # of the model sits in shared memory the subtraction reads ~0, and latching the
+            # baseline onto that would turn the desktop's ordinary return into "growth".
+            lowest = min(self._external_baseline[1], metrics.external_vram_mb)
+            self._external_baseline = (reported, lowest)
+        return round(self._external_baseline[1], 1)
+
+    def vram_headroom_mb(self, reserve_mb: float = 0.0) -> Optional[float]:
+        """
+        MiB the card can still give a launch: physically free minus a reserve for the desktop
+        to breathe. None when NVML cannot say -- the caller then launches and lets a failure
+        decide. Deliberately not the eviction threshold: a launch that lands at 90% is fine,
+        the threshold exists to notice *growth* afterwards.
+        """
+        metrics = self.collect_metrics()
+        if not metrics.gpu_available or metrics.vram_total_mb <= 0:
+            return None
+        return round(max(0.0, metrics.vram_free_mb - reserve_mb), 1)
+
     def _vram_reasons(self, metrics: SystemMetrics) -> list[str]:
         """
         VRAM is only a reason to evict when something *other than the model* needs the card.
@@ -704,6 +761,12 @@ class ResourceGovernor:
         the model. So the rule looks at the external share (total minus what the runtime manager
         says its model costs): evict when that share grows past the floor (a game, a renderer),
         or when the card is at its hardware ceiling and the model itself is about to page.
+
+        The floor itself is relative when it can be: the user's ordinary desktop (Steam, Discord,
+        a browser) sits at 2.3 GB, above any absolute floor that would still catch a game on a
+        quiet desktop. So the share is compared with what it was when the model launched, and
+        only growth beyond ``external_vram_growth_mb`` counts. The absolute floor remains for a
+        launch whose baseline is unknown.
         """
         if not metrics.gpu_available or metrics.vram_util_percent < self.vram_threshold:
             return []
@@ -712,7 +775,18 @@ class ResourceGovernor:
                 f"VRAM at hardware ceiling ({metrics.vram_util_percent}%, "
                 f"{metrics.external_vram_mb:.0f} MiB external beyond the model's {metrics.model_vram_mb:.0f} MiB)"
             ]
+        if metrics.model_vram_mb > 0 and metrics.external_vram_baseline_mb is not None:
+            growth = metrics.external_vram_mb - metrics.external_vram_baseline_mb
+            if growth >= self.external_vram_growth_mb:
+                return [
+                    f"External VRAM use grew {growth:.0f} MiB beyond the {metrics.external_vram_baseline_mb:.0f} MiB "
+                    f"the desktop held at launch (limit {self.external_vram_growth_mb:.0f} MiB) "
+                    f"at {metrics.vram_util_percent}% utilization"
+                ]
+            return []
         if metrics.model_vram_mb > 0 and metrics.external_vram_mb >= self.external_vram_floor_mb:
+            # No baseline for this launch (adopted server, NVML hiccup): the absolute floor is
+            # all there is to go on.
             return [
                 f"External VRAM use ({metrics.external_vram_mb:.0f} MiB beyond the model's "
                 f"{metrics.model_vram_mb:.0f} MiB) exceeds floor ({self.external_vram_floor_mb:.0f} MiB) "
@@ -764,6 +838,8 @@ class ResourceGovernor:
                     except Exception as exc:
                         logger.debug("model VRAM provider failed: %s", exc)
                 metrics.external_vram_mb = round(max(0.0, metrics.vram_used_mb - metrics.model_vram_mb), 1)
+                metrics.model_resident = metrics.model_vram_mb <= 0 or metrics.vram_used_mb >= metrics.model_vram_mb
+                metrics.external_vram_baseline_mb = self._track_external_baseline(metrics)
 
                 # GPU Temperature
                 try:

@@ -112,6 +112,12 @@ governor = ResourceGovernor(
     on_throttle_unload=auto_unload_models,
     model_vram_mb_provider=lambda: get_runtime_process_manager().model_vram_mb,
     external_vram_floor_mb=settings.governor_external_vram_floor_mb,
+    external_vram_baseline_provider=lambda: get_runtime_process_manager().external_vram_baseline_mb,
+    external_vram_growth_mb=settings.governor_external_vram_growth_mb,
+)
+# The launch ladder asks the governor how much of the card is free before each rung.
+get_runtime_process_manager().vram_headroom_provider = (
+    lambda: governor.vram_headroom_mb(reserve_mb=settings.llama_launch_vram_reserve_mb)
 )
 process_watcher = ProcessWatcher(
     config_path=settings.governor_watchlist_path,
@@ -210,6 +216,71 @@ awareness_monitor = AwarenessMonitor(
     restate_cooldown_seconds=settings.awareness_restate_cooldown_seconds,
 )
 awareness_monitor.enabled = settings.awareness_enabled
+
+
+def _announce_launch_adjustment(adjustment: dict) -> None:
+    """
+    A slot that could not get its full configuration says so through the awareness channel --
+    once per change, like every other thing Jarvis reports unprompted. Silently serving a
+    text-only or smaller model is how "Jarvis got worse" turns into a mystery.
+    """
+    import re
+
+    from app.awareness.observations import Observation, Severity
+
+    def friendly(filename: object) -> str:
+        # "Qwen3.5-9B-UD-IQ3_XXS.gguf" -> "Qwen3.5-9B": the quant suffix is noise when spoken.
+        stem = str(filename or "").removesuffix(".gguf")
+        return re.sub(r"[-_.](?:UD[-_])?(?:I?Q\d[\w]*|F16|BF16|F32)$", "", stem) or stem
+
+    step = adjustment.get("step")
+    served = friendly(adjustment.get("served_model"))
+    requested = friendly(adjustment.get("requested_model"))
+    slot = adjustment.get("slot", "main")
+    headroom = adjustment.get("headroom_mb")
+    why = f" The card had {headroom:,} megabytes to spare." if isinstance(headroom, (int, float)) else ""
+    if step == "restored":
+        title, detail, severity = (
+            f"{slot} model back at full configuration",
+            f"{served} is running with its projector and full context again.",
+            Severity.INFO,
+        )
+        spoken = f"The {slot} model is back to its full configuration."
+    elif step == "no_projector":
+        title, detail, severity = (
+            f"{slot} model running without vision",
+            f"{served} launched text-only: its projector did not fit beside the rest of the desktop.{why}",
+            Severity.NOTICE,
+        )
+        spoken = f"I am running the {slot} model without vision for now; the graphics card is nearly full."
+    elif step == "reduced_context":
+        title, detail, severity = (
+            f"{slot} model running with reduced context",
+            f"{served} launched text-only with {adjustment.get('ctx')} tokens of context instead of "
+            f"{adjustment.get('requested_ctx')}.{why}",
+            Severity.NOTICE,
+        )
+        spoken = f"I am running the {slot} model with a smaller memory window; the graphics card is nearly full."
+    else:
+        title, detail, severity = (
+            f"Running {served} instead of {requested}",
+            f"{requested} would not fit on the graphics card next to the rest of the desktop, so the "
+            f"{slot} slot is being served by {served}.{why}",
+            Severity.WARNING,
+        )
+        spoken = f"I am using the smaller model for now; {requested} does not fit on the graphics card."
+    awareness_monitor.emit(Observation(
+        kind="model_budget",
+        severity=severity,
+        title=title,
+        detail=detail,
+        spoken=spoken,
+        data=dict(adjustment),
+        resolved=step == "restored",
+    ))
+
+
+get_runtime_process_manager().on_launch_adjusted = _announce_launch_adjustment
 
 
 async def _evict_on_vram_critical(observation) -> Optional[str]:
@@ -520,7 +591,11 @@ async def health_check():
             available_models = []
 
     active_backend = getattr(settings, "model_runtime", "llama_cpp")
-    configured_model = settings.llama_main_model_path
+    # What the main slot will actually load: the catalogue's choice (data/models.json) ahead
+    # of .env, the same precedence RuntimeProcessManager.resolve_model_path applies.
+    from app.agent.model_catalog import get_model_catalog
+
+    configured_model = get_model_catalog().selected("main") or settings.llama_main_model_path
 
     throttled, _ = await governor.is_throttled()
     openrouter_client = get_openrouter_client()
@@ -575,6 +650,8 @@ async def governor_status():
             "vram_free_mb": metrics.vram_free_mb,
             "model_vram_mb": metrics.model_vram_mb,
             "external_vram_mb": metrics.external_vram_mb,
+            "external_vram_baseline_mb": metrics.external_vram_baseline_mb,
+            "model_resident": metrics.model_resident,
             "gpu_temp_c": metrics.gpu_temp_c,
             "timestamp": metrics.timestamp,
         },
@@ -582,6 +659,7 @@ async def governor_status():
             "gpu_threshold": governor.gpu_threshold,
             "vram_threshold": governor.vram_threshold,
             "external_vram_floor_mb": governor.external_vram_floor_mb,
+            "external_vram_growth_mb": governor.external_vram_growth_mb,
             "cpu_threshold": governor.cpu_threshold,
             "ram_threshold": governor.ram_threshold,
         }

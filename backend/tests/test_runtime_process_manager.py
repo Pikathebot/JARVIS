@@ -361,3 +361,213 @@ def test_model_vram_mb_measured_then_estimated_then_zero(tmp_path):
 
     pm._model_vram_mb = 5987.3
     assert pm.model_vram_mb == 5987.3
+
+
+# --- launch budget ladder: projector, then context, then the fast model ------------------
+
+
+@pytest.fixture
+def budget_catalog(tmp_path, monkeypatch):
+    """Both slots have a projector; main is the bigger file. Sizes are tiny so the estimate is
+    dominated by its constants: projector +250, KV 20 MiB per 1k ctx, +500 fixed."""
+    import app.agent.model_catalog as mc
+    from app.agent.model_catalog import ModelCatalog
+    from app.config import settings
+
+    root = tmp_path / "models"
+    _gguf(root / "qwen3.5-9b" / "Qwen3.5-9B-UD-IQ3_XXS.gguf")
+    _gguf(root / "qwen3.5-9b" / "mmproj-Q8_0.gguf")
+    _gguf(root / "qwen3.5-2b" / "Qwen3.5-2B-UD-Q4_K_XL.gguf")
+    _gguf(root / "qwen3.5-2b" / "mmproj-F16.gguf")
+    catalog = ModelCatalog(models_dir=root, state_path=tmp_path / "models.json")
+    monkeypatch.setattr(mc, "_catalog", catalog)
+    monkeypatch.setattr(settings, "llama_ctx_size_main", 32768)
+    monkeypatch.setattr(settings, "llama_ctx_size_fast", 8192)
+    monkeypatch.setattr(settings, "llama_mmproj_enabled", True)
+    return root
+
+
+def _budget_pm(root, headroom, announcements=None):
+    pm = RuntimeProcessManager(
+        startup_timeout=5.0,
+        main_model_path=str(root / "qwen3.5-9b" / "Qwen3.5-9B-UD-IQ3_XXS.gguf"),
+        fast_model_path=str(root / "qwen3.5-2b" / "Qwen3.5-2B-UD-Q4_K_XL.gguf"),
+    )
+    pm.vram_headroom_provider = lambda: headroom["mb"]
+    if announcements is not None:
+        pm.on_launch_adjusted = announcements.append
+    return pm
+
+
+async def _launch_and_capture_cmds(pm, model_kind, children=None):
+    """Spawn with mock children (alive by default) and return every argv that was tried."""
+    alive = MagicMock(); alive.poll = MagicMock(return_value=None)
+    alive.stdout = None; alive.stderr = None; alive.pid = 4242
+
+    async def healthy(timeout=None):
+        proc = pm._process
+        return proc is not None and proc.poll() is None
+
+    with patch.object(pm, "health_check", side_effect=healthy), \
+         patch("subprocess.Popen", side_effect=children or [alive]) as mock_spawn:
+        assert await pm.ensure_running(model_kind=model_kind) is True
+    return [call.args[0] for call in mock_spawn.call_args_list]
+
+
+def test_launch_rungs_give_up_the_cheapest_thing_first(budget_catalog):
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    main, _ = pm.resolve_model_path("main")
+    rungs = pm._launch_rungs(main, "main")
+
+    assert [r["step"] for r in rungs] == ["full", "no_projector", "reduced_context", "fallback_model", "fallback_model"]
+    assert rungs[0]["ctx"] == 32768 and rungs[0]["projector"] is not None
+    assert rungs[1]["projector"] is None and rungs[1]["ctx"] == 32768
+    assert rungs[2]["ctx"] == 16384
+    assert rungs[3]["model"].name == "Qwen3.5-2B-UD-Q4_K_XL.gguf" and rungs[3]["ctx"] == 8192
+    assert rungs[4]["projector"] is None
+    # The fast slot never falls back to another model, and 8k is the floor for context.
+    fast, _ = pm.resolve_model_path("fast")
+    assert [r["step"] for r in pm._launch_rungs(fast, "fast")] == ["full", "no_projector"]
+
+
+@pytest.mark.asyncio
+async def test_ladder_skips_the_projector_when_the_estimate_does_not_fit(budget_catalog):
+    """Headroom fits the 9B text-only (~1140 MiB by the size rule at 32k) but not with its
+    projector (+250): one launch, no --mmproj, the step recorded and announced once."""
+    announced = []
+    pm = _budget_pm(budget_catalog, {"mb": 1200.0}, announced)
+
+    cmds = await _launch_and_capture_cmds(pm, "main")
+
+    assert len(cmds) == 1 and "--mmproj" not in cmds[0]
+    assert cmds[0][cmds[0].index("--ctx-size") + 1] == "32768"
+    assert pm.has_vision("main") is False
+    assert pm.served_model.name == "Qwen3.5-9B-UD-IQ3_XXS.gguf"
+    adj = pm.launch_adjustment
+    assert adj["step"] == "no_projector" and adj["requested_projector"] is True and adj["projector"] is False
+    assert adj["headroom_mb"] == 1200
+    assert [a["step"] for a in announced] == ["no_projector"]
+
+
+@pytest.mark.asyncio
+async def test_ladder_halves_context_before_changing_model(budget_catalog):
+    announced = []
+    pm = _budget_pm(budget_catalog, {"mb": 900.0}, announced)  # 16k text-only is ~820
+
+    cmds = await _launch_and_capture_cmds(pm, "main")
+
+    assert len(cmds) == 1
+    assert cmds[0][cmds[0].index("--ctx-size") + 1] == "16384" and "--mmproj" not in cmds[0]
+    assert pm.served_ctx_size == 16384
+    assert pm.launch_adjustment["step"] == "reduced_context"
+    assert pm.launch_adjustment["requested_ctx"] == 32768
+    assert [a["step"] for a in announced] == ["reduced_context"]
+
+
+@pytest.mark.asyncio
+async def test_ladder_serves_main_with_the_fast_model_as_a_last_resort(budget_catalog):
+    """Nothing of the 9B fits; the fast slot's file is launched under the main alias, so the
+    orchestrator's "main" request is still answered -- and the swap is announced."""
+    announced = []
+    pm = _budget_pm(budget_catalog, {"mb": 700.0}, announced)  # fast text-only at 8k is ~660
+
+    cmds = await _launch_and_capture_cmds(pm, "main")
+
+    assert len(cmds) == 1
+    assert Path(cmds[0][cmds[0].index("--model") + 1]).name == "Qwen3.5-2B-UD-Q4_K_XL.gguf"
+    assert cmds[0][cmds[0].index("--alias") + 1] == "main"
+    assert "--mmproj" not in cmds[0]
+    assert pm.current_model_kind == "main"
+    assert pm.served_model.name == "Qwen3.5-2B-UD-Q4_K_XL.gguf"
+    assert pm.launch_adjustment["step"] == "fallback_model"
+    assert pm.launch_adjustment["requested_model"] == "Qwen3.5-9B-UD-IQ3_XXS.gguf"
+    assert [a["step"] for a in announced] == ["fallback_model"]
+    # A request for the main slot keeps being served here without a relaunch.
+    with patch.object(pm, "health_check", new=AsyncMock(return_value=True)), \
+         patch("subprocess.Popen") as mock_spawn:
+        assert await pm.ensure_running("main") is True
+        mock_spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_last_rung_is_tried_even_when_the_estimate_says_no_and_its_failure_is_the_error(budget_catalog):
+    pm = _budget_pm(budget_catalog, {"mb": 10.0})
+    dead = MagicMock(); dead.poll = MagicMock(return_value=1); dead.returncode = 1
+    dead.stdout = None; dead.stderr = None; dead.pid = 1
+
+    async def never_healthy(timeout=None):
+        return False
+
+    with patch.object(pm, "health_check", side_effect=never_healthy), \
+         patch("subprocess.Popen", side_effect=[dead]) as mock_spawn, \
+         pytest.raises(RuntimeError, match="exited prematurely"):
+        await pm.ensure_running("main")
+    assert mock_spawn.call_count == 1  # only the last rung was attempted
+    assert Path(mock_spawn.call_args.args[0][mock_spawn.call_args.args[0].index("--model") + 1]).name == "Qwen3.5-2B-UD-Q4_K_XL.gguf"
+
+
+@pytest.mark.asyncio
+async def test_a_dead_child_steps_down_the_ladder_even_when_the_estimate_fit(budget_catalog):
+    """The estimate said the full launch fits, llama-server disagreed (the real 0xC0000409 /
+    'shared object initialization failed' case): the next rung is tried, not the same one."""
+    announced = []
+    pm = _budget_pm(budget_catalog, {"mb": 99999.0}, announced)
+    dead = MagicMock(); dead.poll = MagicMock(return_value=3221226505); dead.returncode = 3221226505
+    dead.stdout = None; dead.stderr = None; dead.pid = 1
+
+    alive = MagicMock(); alive.poll = MagicMock(return_value=None)
+    alive.stdout = None; alive.stderr = None; alive.pid = 4242
+    cmds = await _launch_and_capture_cmds(pm, "main", children=[dead, alive])
+    assert len(cmds) == 2
+    assert "--mmproj" in cmds[0] and "--mmproj" not in cmds[1]
+    assert [a["step"] for a in announced] == ["no_projector"]
+
+
+@pytest.mark.asyncio
+async def test_adjustment_is_announced_once_and_restoration_is_reported(budget_catalog):
+    announced = []
+    headroom = {"mb": 1200.0}
+    pm = _budget_pm(budget_catalog, headroom, announced)
+
+    await _launch_and_capture_cmds(pm, "main")
+    await pm.stop()
+    await _launch_and_capture_cmds(pm, "main")          # same outcome: no second announcement
+    assert [a["step"] for a in announced] == ["no_projector"]
+
+    await pm.stop()
+    headroom["mb"] = 99999.0
+    await _launch_and_capture_cmds(pm, "main")          # full configuration again
+    assert [a["step"] for a in announced] == ["no_projector", "restored"]
+    assert pm.launch_adjustment is None
+    assert pm.has_vision("main") is True
+
+
+@pytest.mark.asyncio
+async def test_launch_cost_is_measured_recorded_and_preferred_over_the_size_rule(budget_catalog, monkeypatch):
+    import app.agent.runtime_process_manager as rpm
+    from app.agent.model_catalog import get_model_catalog
+
+    readings = iter([2321.0, 7300.0])  # card before launch, card after
+    monkeypatch.setattr(rpm, "_vram_used_mb", lambda: next(readings, 7300.0))
+    pm = _budget_pm(budget_catalog, {"mb": 99999.0})
+
+    await _launch_and_capture_cmds(pm, "main")
+
+    assert pm.model_vram_mb == 4979.0
+    assert pm.external_vram_baseline_mb == 2321.0
+    main, _ = pm.resolve_model_path("main")
+    proj = pm.resolve_projector_path(main)
+    assert get_model_catalog().launch_cost(main, proj, 32768) == 4979.0
+    # The learned figure now drives the estimate for that configuration only.
+    assert pm.estimate_launch_cost_mb(main, proj, 32768) == 4979.0
+    assert pm.estimate_launch_cost_mb(main, None, 32768) < 2000.0
+    await pm.stop()
+    assert pm.external_vram_baseline_mb is None
+
+
+@pytest.mark.asyncio
+async def test_without_a_headroom_provider_only_failures_step_down(budget_catalog):
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    cmds = await _launch_and_capture_cmds(pm, "main")
+    assert len(cmds) == 1 and "--mmproj" in cmds[0]
+    assert pm.launch_adjustment is None

@@ -59,6 +59,12 @@ async def list_models():
         "slots": list(SLOTS),
         "loaded_slot": manager.current_model_kind,
         "loaded_projector": str(manager.loaded_projector.name) if manager.loaded_projector else None,
+        # The file actually serving the slot and how far it is from the slot's configuration:
+        # the launch ladder may have dropped the projector, halved the context, or (main only)
+        # swapped in the fast model when the card was too full. None means "as configured".
+        "served_model": manager.served_model.name if manager.served_model else None,
+        "served_ctx_size": manager.served_ctx_size,
+        "launch_adjustment": manager.launch_adjustment,
         "externally_managed": manager.is_externally_managed,
         "captioner": _captioner_status(),
     }
