@@ -837,3 +837,45 @@ def test_vram_headroom_is_free_minus_reserve_or_unknown(monkeypatch):
     assert gov.vram_headroom_mb(reserve_mb=384.0) == 0.0
     monkeypatch.setattr(gov, "collect_metrics", lambda: SystemMetrics(gpu_available=False))
     assert gov.vram_headroom_mb() is None
+
+
+# --- Compute from our own llama-server is not an external workload ------------------------
+
+def _gpu_only_governor(**kw) -> ResourceGovernor:
+    """GPU compute is the only rule that can fire: every other threshold is out of reach."""
+    return ResourceGovernor(
+        enabled=True, gpu_threshold=0.01, vram_threshold=999.0, cpu_threshold=999.0,
+        ram_threshold=999.0, sustained_breach_polls=1, startup_grace_seconds=0.0, **kw,
+    )
+
+
+def test_gpu_compute_is_not_external_load_while_llama_server_is_processing():
+    if not ResourceGovernor(enabled=False).collect_metrics().gpu_available:
+        pytest.skip("no NVML on this machine")
+
+    gov = _gpu_only_governor()
+    gov._runtime_busy = True
+    busy = gov.collect_metrics()
+    assert busy.raw_throttled is False
+
+    gov._runtime_busy = False
+    idle = gov.collect_metrics()
+    assert idle.raw_throttled is True
+    assert any("GPU compute" in r for r in idle.throttle_reasons)
+
+
+@pytest.mark.asyncio
+async def test_runtime_busy_probe_treats_unknown_as_idle():
+    async def unknown():
+        return None
+
+    async def busy():
+        return True
+
+    async def broken():
+        raise RuntimeError("slots endpoint unreachable")
+
+    assert await _gpu_only_governor()._probe_runtime_busy() is False
+    assert await _gpu_only_governor(runtime_busy_provider=unknown)._probe_runtime_busy() is False
+    assert await _gpu_only_governor(runtime_busy_provider=busy)._probe_runtime_busy() is True
+    assert await _gpu_only_governor(runtime_busy_provider=broken)._probe_runtime_busy() is False

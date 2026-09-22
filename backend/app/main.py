@@ -114,6 +114,7 @@ governor = ResourceGovernor(
     external_vram_floor_mb=settings.governor_external_vram_floor_mb,
     external_vram_baseline_provider=lambda: get_runtime_process_manager().external_vram_baseline_mb,
     external_vram_growth_mb=settings.governor_external_vram_growth_mb,
+    runtime_busy_provider=lambda: get_runtime_process_manager().is_processing(),
 )
 # The launch ladder asks the governor how much of the card is free before each rung.
 get_runtime_process_manager().vram_headroom_provider = (

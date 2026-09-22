@@ -5,7 +5,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Union, Callable
+from typing import Any, Awaitable, Optional, Union, Callable
 import psutil
 
 logger = logging.getLogger("jarvis.governor")
@@ -153,8 +153,17 @@ class ResourceGovernor:
         external_vram_floor_mb: float = 2048.0,
         external_vram_baseline_provider: Optional[Callable[[], Optional[float]]] = None,
         external_vram_growth_mb: float = 1024.0,
+        runtime_busy_provider: Optional[Callable[[], Awaitable[Optional[bool]]]] = None,
     ):
         self.enabled = enabled
+        # Whether our own llama-server is decoding right now (RuntimeProcessManager.is_processing,
+        # from GET /slots). Only requests that come through the orchestrator register an activity;
+        # one sent straight to the server's port -- a curl replay, a script, another client --
+        # drove the GPU to 98% with nothing registered, which read as a game and evicted the
+        # model after the debounce. Compute from our own child is never an external workload.
+        # VRAM pressure from *other* processes is judged separately and still counts.
+        self.runtime_busy_provider = runtime_busy_provider
+        self._runtime_busy = False
         # How much of the card is Jarvis's own model (RuntimeProcessManager.model_vram_mb): the
         # governor must never evict the model to "yield" VRAM that the model itself is using.
         self.model_vram_mb_provider = model_vram_mb_provider
@@ -855,9 +864,15 @@ class ResourceGovernor:
         if self.enabled and not self.is_busy:
             # External GPU Compute Load (games, 3D renderers)
             if metrics.gpu_available and metrics.gpu_util_percent >= self.gpu_threshold:
-                reasons.append(
-                    f"GPU compute utilization ({metrics.gpu_util_percent}%) exceeds threshold ({self.gpu_threshold}%)"
-                )
+                if self._runtime_busy:
+                    logger.debug(
+                        "GPU at %.0f%% but llama-server is processing an unregistered request; not external load",
+                        metrics.gpu_util_percent,
+                    )
+                else:
+                    reasons.append(
+                        f"GPU compute utilization ({metrics.gpu_util_percent}%) exceeds threshold ({self.gpu_threshold}%)"
+                    )
 
             reasons.extend(self._vram_reasons(metrics))
 
@@ -891,6 +906,18 @@ class ResourceGovernor:
 
         return metrics
 
+    async def _probe_runtime_busy(self) -> bool:
+        """True only when the provider positively reports our llama-server decoding; unknown
+        (no provider, nothing running, endpoint unreachable) is treated as not busy so the
+        external-compute rule keeps working for an adopted or absent server."""
+        if self.runtime_busy_provider is None:
+            return False
+        try:
+            return bool(await self.runtime_busy_provider())
+        except Exception as exc:
+            logger.debug("runtime busy probe failed: %s", exc)
+            return False
+
     async def _poll_loop(self) -> None:
         logger.info(
             "Governor V2 polling loop started (interval=%.1fs, breach_debounce=%dp, recovery_debounce=%dp)",
@@ -910,7 +937,8 @@ class ResourceGovernor:
                 # 2. Clean up any expired unload reasons
                 self._cleanup_expired_unload_reasons()
 
-                # 3. Collect metrics
+                # 3. Collect metrics (asking the runtime first whether the compute is its own)
+                self._runtime_busy = await self._probe_runtime_busy()
                 metrics = self.collect_metrics()
                 async with self._lock:
                     self._current_metrics = metrics

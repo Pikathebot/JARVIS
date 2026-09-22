@@ -249,6 +249,27 @@ class RuntimeProcessManager:
         except Exception:
             return False
 
+    async def is_processing(self, timeout: float = 0.5) -> Optional[bool]:
+        """
+        Whether llama-server is decoding for *anyone* right now, from GET /slots
+        (``is_processing`` per slot). The governor asks this before it reads high GPU compute as
+        an external workload: a request sent straight to the server's port (a curl replay, a
+        script, a second client) never registers an activity with the governor, so its compute
+        looked like a game and evicted the model after a few polls. None when nothing is running
+        or the endpoint is unreachable, so a caller can tell "idle" from "unknown".
+        """
+        if not self.is_running():
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(f"{self.base_url}/slots")
+            if resp.status_code != 200:
+                return None
+            slots = resp.json()
+            return any(bool(slot.get("is_processing")) for slot in slots) if isinstance(slots, list) else None
+        except Exception:
+            return None
+
     def is_running(self) -> bool:
         """Check if child process is active and has not terminated."""
         if self._process is not None:
