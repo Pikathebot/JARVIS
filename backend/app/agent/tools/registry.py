@@ -1,5 +1,6 @@
 import inspect
 import logging
+import re
 from typing import Callable, Any, Literal, Optional
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ from app.agent.tools.process_control import list_processes, kill_process
 from app.agent.tools.notify import send_toast
 from app.agent.tools.audio_playback import play_audio, stop_playback
 from app.agent.tools.artifacts import create_artifact, update_artifact, read_artifact
+from app.agent.tools.system_status import get_system_status
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -49,6 +51,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "send_toast": send_toast,
     "play_audio": play_audio,
     "stop_playback": stop_playback,
+    "get_system_status": get_system_status,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -80,6 +83,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # play_audio is deliberately absent: it takes raw audio bytes, which no model can supply
     # (a string from a model just raises). It stays in TOOL_FUNCTIONS for the backend's own use.
     stop_playback,
+    get_system_status,
 ]
 
 
@@ -202,6 +206,10 @@ class StopPlaybackArgs(BaseModel):
     pass
 
 
+class GetSystemStatusArgs(BaseModel):
+    pass
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "list_directory": ListDirectoryArgs,
@@ -230,6 +238,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "send_toast": SendToastArgs,
     "play_audio": PlayAudioArgs,
     "stop_playback": StopPlaybackArgs,
+    "get_system_status": GetSystemStatusArgs,
 }
 
 
@@ -279,6 +288,14 @@ def execute_tool(
     except Exception as e:
         logger.error("Unhandled error in tool '%s': %s", tool_name, e)
         return f"Error executing tool '{tool_name}': {str(e)}"
+
+
+_SYSTEM_STATUS_RE = re.compile(
+    r"\b(?:system (?:usage|status|state|load|resources?)|resource usage|usage|performance|"
+    r"vram|gpu|graphics card|cpu|ram|memory|temperature|temps?|how hot|disk space|storage|"
+    r"battery|loaded model|which model|throttl\w*|hardware|"
+    r"how(?:'s| is) (?:the |my )?(?:machine|system|pc|laptop|computer))\b"
+)
 
 
 def get_relevant_tools(
@@ -358,6 +375,11 @@ def get_relevant_tools(
         tools.add(kill_process)
         tools.add(send_toast)
         tools.add(execute_command)
+
+    # 5. Machine state -- the prompt no longer carries a hardware line, so a deliberate question
+    # about the machine has to be able to measure it. Word boundaries: "ram" is in "program".
+    if _SYSTEM_STATUS_RE.search(q):
+        tools.add(get_system_status)
 
     if tools:
         return list(tools)

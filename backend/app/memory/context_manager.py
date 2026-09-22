@@ -236,7 +236,7 @@ class ContextManager:
         ``vision`` says the model that will serve this turn has a multimodal projector loaded;
         image attachments are then sent as ``image_url`` parts rather than described as files.
 
-        ``turn_context`` is the per-turn block (measured system state, matched skills). It and
+        ``turn_context`` is the per-turn block (current time, matched skills). It and
         the RAG chunks change from one message to the next, so they are emitted as a *trailing*
         system message after the stored history, never in the head system message: llama-server
         reuses the KV cache for the longest common prefix of consecutive prompts, and a prefix

@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, AsyncIterator, Optional
 from sqlmodel import select
 
@@ -249,32 +250,6 @@ def _with_system_prompt(system_prompt: str, conversation: list[dict[str, Any]]) 
     return [{"role": "system", "content": system_prompt}] + body
 
 
-def _measured_system_state() -> str:
-    """
-    The awareness monitor's latest hardware sample as one line, or "" when unavailable.
-    Read lazily from app.main to avoid an import cycle; never raises.
-    """
-    try:
-        from app.awareness.briefing import system_state_line
-        from app.main import awareness_monitor
-
-        snapshot = awareness_monitor.last_snapshot
-        if snapshot is None:
-            return ""
-        loaded = None
-        try:
-            from app.agent.runtime_process_manager import get_runtime_process_manager
-            manager = get_runtime_process_manager()
-            if manager.is_running() and manager.current_model_kind:
-                resolved, _ = manager.resolve_model_path(manager.current_model_kind)
-                loaded = f"{resolved.stem} ({manager.current_model_kind} slot)"
-        except Exception:
-            pass
-        return system_state_line(snapshot, loaded_model=loaded)
-    except Exception:
-        return ""
-
-
 def build_system_prompt(persona: Optional[Any] = None) -> str:
     """
     Compose the system prompt: persona voice first, then the invariant tool protocol. The
@@ -283,7 +258,7 @@ def build_system_prompt(persona: Optional[Any] = None) -> str:
     Only content that is identical from one turn to the next belongs here. llama-server reuses
     the KV cache for the longest common prefix of consecutive prompts, and the system message is
     the head of every prompt (the chat template renders the tool schemas inside it too). One
-    changing line up here -- a hardware reading, a matched skill -- and the whole conversation is
+    changing line up here -- the clock, a matched skill -- and the whole conversation is
     re-prefilled every turn: measured 2389 of 2389 tokens re-processed on a turn that changed one
     number, versus 516 with the same number placed after the history. Anything per-turn goes
     through ``build_turn_context`` instead.
@@ -292,30 +267,33 @@ def build_system_prompt(persona: Optional[Any] = None) -> str:
     return "\n\n".join([active.build_prompt_preamble(), TOOL_PROTOCOL_RULES])
 
 
-def build_turn_context(skill_injection: str = "", system_state: Optional[str] = None) -> str:
+def current_time_line(now: Optional[datetime] = None) -> str:
     """
-    The per-turn block: the measured system state and whatever skills this message matched.
+    The wall clock as one line, minute resolution, with the local zone name. A model has no idea
+    what "today" is otherwise and phrases searches for current affairs around its training year.
+    Minute resolution keeps the line identical across the several requests a single turn can make.
+    """
+    moment = now or datetime.now().astimezone()
+    zone = moment.tzname() or ""
+    return moment.strftime("%A %Y-%m-%d %H:%M") + (f" {zone}" if zone else "")
+
+
+def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None) -> str:
+    """
+    The per-turn block: the current date and time, and whatever skills this message matched.
     ``ContextManager`` places it as a trailing system message after the stored history, right
     before the user turn, so it never disturbs the cached prefix (see ``build_system_prompt``).
 
-    The SYSTEM STATE block exists because a persona that asks for "concrete numbers" without
-    supplying any gets numbers invented for it -- a 4B model greeted with "hi" would report a
-    VRAM figure it never read. With the real sample in the prompt there is nothing to make up.
+    Hardware state is deliberately *not* here any more. It used to be, so the model had real
+    numbers instead of invented ones -- but that put the machine's vitals in front of every
+    turn, and the persona's "concrete numbers" directive pulled them into replies that never
+    asked. A deliberate question now offers ``get_system_status``, which measures on demand;
+    with no figures in the prompt there is nothing to volunteer.
     """
-    state = _measured_system_state() if system_state is None else system_state
-    sections = []
-    if state:
-        sections.append(
-            "SYSTEM STATE (measured moments ago; the only hardware figures you may quote unless a tool "
-            f"reports newer ones):\n{state}\n"
-            "Mention these figures only when the user asks about the machine, a model, or performance — "
-            "never in a greeting or an unrelated reply."
-        )
-    else:
-        sections.append(
-            "SYSTEM STATE: no hardware sample is available right now. Do not state any hardware "
-            "figures; say you have not checked if asked."
-        )
+    sections = [
+        f"CURRENT TIME: {current_time_line(now)}. Use this for anything date-relative (today, "
+        "this week, latest, recent) and when searching for current events."
+    ]
     if skill_injection and skill_injection.strip():
         sections.append(skill_injection.strip())
     return "\n\n".join(sections)
