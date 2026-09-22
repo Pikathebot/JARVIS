@@ -67,7 +67,18 @@ async def list_models():
         "launch_adjustment": manager.launch_adjustment,
         "externally_managed": manager.is_externally_managed,
         "captioner": _captioner_status(),
+        "embedder": _embedder_status(),
     }
+
+
+def _embedder_status() -> dict:
+    """The CPU embedding sidecar behind workspace RAG (app/rag/embedding_sidecar.py)."""
+    try:
+        from app.rag.embedding_sidecar import get_embedding_sidecar
+
+        return get_embedding_sidecar().status()
+    except Exception as e:  # pragma: no cover - defensive
+        return {"enabled": False, "available": False, "running": False, "error": str(e)}
 
 
 def _captioner_status() -> dict:

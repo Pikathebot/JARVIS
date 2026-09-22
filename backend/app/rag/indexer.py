@@ -69,6 +69,24 @@ class ProjectIndexer:
         self.keyword_store = keyword_store or KeywordSearchService(session_factory=self._get_session)
         self.workspace_root = workspace_root
 
+    def ensure_embedding_generation(self, project_id: str) -> bool:
+        """
+        Make sure the project's index lives in the current embedding space. When it was built
+        by a different embedding service (the hashed engine before the sidecar existed, or a
+        model swap), everything indexed is discarded -- document rows, FTS rows and vectors --
+        so the hash check below re-embeds every file on this pass instead of mixing spaces.
+        Returns True when a wipe happened.
+        """
+        if self.vector_store is None or self.vector_store.generation_matches(project_id):
+            return False
+        logger.info(
+            "Project %s index is from another embedding space; re-indexing with %s.",
+            project_id, self.embedding_service.identity,
+        )
+        self.delete_project_index(project_id)
+        self.vector_store.mark_generation(project_id)
+        return True
+
     def _get_session(self) -> Session:
         if self._session_factory:
             return self._session_factory()
@@ -171,6 +189,7 @@ class ProjectIndexer:
             logger.info("Not indexing %s: not a text type the indexer understands.", file_path.name)
             return []
 
+        self.ensure_embedding_generation(project_id)
         rel_path_str = str(file_path)
         current_hash = self.compute_sha256(file_path)
         stat = file_path.stat()
@@ -331,6 +350,7 @@ class ProjectIndexer:
         Scan and index all files in a project workspace.
         Returns indexing summary statistics.
         """
+        self.ensure_embedding_generation(project_id)
         files = self.scan_project_paths(project_id)
         indexed_count = 0
         total_chunks = 0

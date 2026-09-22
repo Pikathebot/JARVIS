@@ -1,12 +1,59 @@
 import logging
+import re
+import threading
 from typing import Any, Optional
 
 from app.config import settings
-from app.rag.embeddings import EmbeddingService, RerankerService
+from app.rag.embeddings import EmbeddingService, RerankerService, _query_terms
 from app.rag.vector_store import VectorStoreService
 from app.rag.keyword_store import KeywordSearchService
 
 logger = logging.getLogger("jarvis.rag.retriever")
+
+# A short command aimed at the machine is not a question about the workspace. "delete
+# probe.txt" used to pull 5 KB of repo code about deleting attachments into the turn because
+# retrieval ran on every WORKSPACE message and something always ranks first. These are the
+# verbs the OS/file tools act on; the length cap keeps "delete the function that handles
+# attachment uploads" (a request that needs the code) on the retrieval path.
+_IMPERATIVE_VERBS = frozenset("""
+delete remove open launch start run execute kill close stop play pause mute unmute set copy paste
+focus switch turn press restart reboot shutdown lock notify remind volume type click minimize
+maximize
+""".split())
+_LEADING_FILLER = frozenset("please jarvis hey ok okay can could would you now just quickly".split())
+_CHITCHAT = frozenset((
+    "hi", "hello", "hey", "sup", "yo", "greetings", "thanks", "thank you", "ok", "okay", "cool",
+    "nice", "great", "bye", "goodbye", "good morning", "good evening", "good night",
+    "how are you", "who are you", "what are you", "help",
+))
+_QUESTION_WORDS = frozenset("how what why which where who whose explain describe about".split())
+_MAX_IMPERATIVE_WORDS = 6
+
+
+def should_retrieve(query: str) -> bool:
+    """False for turns that cannot benefit from workspace context: chit-chat, and short
+    imperatives that name an action rather than ask about anything."""
+    q = (query or "").strip().lower()
+    if len(q) < 4:
+        return False
+    words = re.findall(r"[a-z0-9_.'/\\-]+", q)
+    if not words:
+        return False
+    if " ".join(words) in _CHITCHAT or q.rstrip("!?.") in _CHITCHAT:
+        return False
+    if not _query_terms(q):  # "why?", "what is it?": nothing to look for
+        return False
+    body = list(words)
+    while body and body[0] in _LEADING_FILLER:
+        body.pop(0)
+    if (
+        body
+        and body[0] in _IMPERATIVE_VERBS
+        and len(body) <= _MAX_IMPERATIVE_WORDS
+        and not any(w in _QUESTION_WORDS for w in body[1:])  # "open questions about the monitor"
+    ):
+        return False
+    return True
 
 
 def reciprocal_rank_fusion(
@@ -65,6 +112,28 @@ class HybridRetriever:
         self.vector_store = vector_store or VectorStoreService(embedding_service=self.embedding_service)
         self.keyword_store = keyword_store or KeywordSearchService()
         self.reranker = reranker or RerankerService()
+        self._reindexing: set[str] = set()
+
+    def _reindex_in_background(self, project_id: str) -> None:
+        """One rebuild per project per process; the indexer wipes the stale space first."""
+        if project_id in self._reindexing:
+            return
+        self._reindexing.add(project_id)
+        logger.info("Project %s index is from another embedding space; rebuilding in the background.", project_id)
+
+        def _run() -> None:
+            try:
+                from app.rag.indexer import WorkspaceIndexer
+                WorkspaceIndexer(
+                    embedding_service=self.embedding_service, vector_store=self.vector_store,
+                    keyword_store=self.keyword_store,
+                ).index_project(project_id)
+            except Exception as e:
+                logger.warning("Background re-index of project %s failed: %s", project_id, e)
+            finally:
+                self._reindexing.discard(project_id)
+
+        threading.Thread(target=_run, name=f"reindex-{project_id[:8]}", daemon=True).start()
 
     def retrieve(
         self,
@@ -73,7 +142,8 @@ class HybridRetriever:
         top_k: int = 5,
         semantic_limit: int = 20,
         keyword_limit: int = 20,
-        filters: Optional[dict[str, Any]] = None
+        filters: Optional[dict[str, Any]] = None,
+        gate: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Execute full hybrid retrieval pipeline:
@@ -85,8 +155,18 @@ class HybridRetriever:
         """
         if not query or not query.strip():
             return []
+        if gate and not should_retrieve(query):
+            logger.debug("Skipping retrieval for %r: not a question about the workspace.", query)
+            return []
+
+        # An index built in another embedding space is noise against this query; rebuild it
+        # in the background (once) and serve nothing rather than junk until it is ready.
+        if not self.vector_store.generation_matches(project_id):
+            self._reindex_in_background(project_id)
+            return []
 
         # 1. Semantic search
+        query_vector: list[float] = []
         try:
             query_vector = self.embedding_service.embed_query(query)
             semantic_results = self.vector_store.search_semantic(
@@ -122,6 +202,20 @@ class HybridRetriever:
 
         # Take up to 40 candidates for CPU reranking
         rerank_candidates = fused_candidates[:40]
+
+        # Every candidate gets the same relevance scale: the semantic hits already carry their
+        # cosine; keyword-only hits get theirs from the vector stored for them at index time.
+        if self.embedding_service.semantic and query_vector:
+            missing = [c for c in rerank_candidates if c.get("similarity_score") is None]
+            read_back = self.vector_store.similarities_for(
+                project_id, [c.get("chunk_id") or c.get("id") for c in missing], query_vector
+            ) if missing else {}
+            for c in rerank_candidates:
+                sim = c.get("similarity_score")
+                if sim is None:
+                    sim = read_back.get(c.get("chunk_id") or c.get("id"))
+                if sim is not None:
+                    c["semantic_score"] = float(sim)
 
         # 4. CPU-Only Reranking
         final_chunks = self.reranker.rerank(

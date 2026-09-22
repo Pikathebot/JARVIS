@@ -200,8 +200,30 @@ class Settings(BaseSettings):
     model_runtime: str = Field(default="llama_cpp", alias="MODEL_RUNTIME")
 
     # Context Engine & RAG Settings (CPU-Only)
-    rag_embedding_model: str = Field(default="Qwen/Qwen3-Embedding-0.6B", alias="RAG_EMBEDDING_MODEL")
-    rag_reranker_model: str = Field(default="Qwen/Qwen3-Reranker-0.6B", alias="RAG_RERANKER_MODEL")
+    # Embedding sidecar (app/rag/embedding_sidecar.py): a small embedding GGUF served by
+    # llama-server on the CPU, started on the first vector and stopped after the idle window.
+    # Without it (disabled, or no model file) vectors come from a hashed bag of words, which
+    # has no semantic signal and cannot be thresholded.
+    rag_embedding_sidecar_enabled: bool = Field(default=True, alias="RAG_EMBEDDING_SIDECAR_ENABLED")
+    rag_embedding_model_path: str = Field(
+        default="models/embeddings/nomic-embed-text-v1.5.Q8_0.gguf", alias="RAG_EMBEDDING_MODEL_PATH"
+    )
+    rag_embedding_port: int = Field(default=8003, alias="RAG_EMBEDDING_PORT")
+    rag_embedding_idle_seconds: float = Field(default=300.0, alias="RAG_EMBEDDING_IDLE_SECONDS")
+    rag_embedding_threads: int = Field(default=0, alias="RAG_EMBEDDING_THREADS")  # 0 = llama-server default
+    rag_embedding_pooling: str = Field(default="mean", alias="RAG_EMBEDDING_POOLING")
+    # nomic-embed is trained with these task prefixes; other models want others (or none).
+    rag_embedding_query_prefix: str = Field(default="search_query: ", alias="RAG_EMBEDDING_QUERY_PREFIX")
+    rag_embedding_document_prefix: str = Field(default="search_document: ", alias="RAG_EMBEDDING_DOCUMENT_PREFIX")
+    # Three cuts on the reranked cosine score, measured on nomic-embed against this repo's own
+    # code (497 chunks): a real question peaks at 0.71-0.97 while everything unrelated sits at
+    # 0.52-0.65. Nothing below the floor reaches the prompt; nothing more than the gap below
+    # the best chunk does either; and when the top six are within the peak of each other the
+    # query has no target in the workspace ("why?", "what is the weather" all score 0.55-0.63
+    # flat) and nothing is injected at all.
+    rag_min_relevance: float = Field(default=0.62, alias="RAG_MIN_RELEVANCE")
+    rag_relevance_gap: float = Field(default=0.15, alias="RAG_RELEVANCE_GAP")
+    rag_min_peak: float = Field(default=0.04, alias="RAG_MIN_PEAK")
     rag_device: str = Field(default="cpu", alias="RAG_DEVICE")
     rag_chunk_size: int = Field(default=1024, alias="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=128, alias="RAG_CHUNK_OVERLAP")

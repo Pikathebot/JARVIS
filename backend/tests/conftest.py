@@ -8,6 +8,9 @@ import tempfile
 _TEST_DB = os.path.join(tempfile.mkdtemp(prefix="jarvis-tests-"), "jarvis_memory.db")
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + _TEST_DB.replace("\\", "/"))
 os.environ.setdefault("MEMORY_DB_PATH", _TEST_DB)
+# Tests never spawn the embedding sidecar (a llama-server on :8003): the hashed engine is
+# deterministic and needs no model. Sidecar-specific tests construct one explicitly.
+os.environ.setdefault("RAG_EMBEDDING_SIDECAR_ENABLED", "false")
 
 import pytest
 from unittest.mock import patch

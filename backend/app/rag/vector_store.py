@@ -180,6 +180,67 @@ class VectorStoreService:
 
         return matched_chunks
 
+    def similarities_for(
+        self,
+        project_id: str,
+        chunk_ids: list[str],
+        query_vector: list[float],
+    ) -> dict[str, float]:
+        """
+        Cosine similarity between the query and the *stored* vector of each chunk, keyed by
+        chunk id. Keyword hits that were not in the semantic top-k still have a vector on disk;
+        reading it back is far cheaper than embedding the chunk again, and it gives every
+        candidate the same relevance scale so the floor applies to all of them.
+        """
+        if not chunk_ids or not query_vector:
+            return {}
+        from app.rag.embeddings import cosine
+
+        client, collection_name = self.get_client(project_id)
+        by_point = {self._ensure_valid_uuid(c): c for c in chunk_ids}
+        try:
+            points = client.retrieve(
+                collection_name=collection_name,
+                ids=list(by_point.keys()),
+                with_payload=False,
+                with_vectors=True,
+            )
+        except Exception as e:
+            logger.debug("Vector read-back failed for project %s: %s", project_id, e)
+            return {}
+        out: dict[str, float] = {}
+        for pt in points:
+            vec = pt.vector
+            if isinstance(vec, dict):  # named vectors; we only ever store the default one
+                vec = next(iter(vec.values()), None)
+            if vec is None:
+                continue
+            out[by_point.get(str(pt.id), str(pt.id))] = cosine(query_vector, list(vec))
+        return out
+
+    # --------------------------------------------------------- generation
+
+    def _generation_marker(self, project_id: str) -> Path:
+        return self.workspace_root / "projects" / project_id / "indexes" / "embedding_model.txt"
+
+    def generation_matches(self, project_id: str) -> bool:
+        """
+        Whether this project's vectors were produced by the embedding service in use now. A
+        different model is a different space: comparing a nomic query against hashed-bag-of-
+        words vectors yields noise, and Qdrant cannot tell as long as the dimensions agree.
+        A project with no marker (indexed before markers existed, or never) does not match.
+        """
+        try:
+            marker = self._generation_marker(project_id)
+            return marker.is_file() and marker.read_text(encoding="utf-8").strip() == self.embedding_service.identity
+        except Exception:
+            return False
+
+    def mark_generation(self, project_id: str) -> None:
+        marker = self._generation_marker(project_id)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(self.embedding_service.identity, encoding="utf-8")
+
     def delete_chunks(self, project_id: str, chunk_ids: list[str]) -> None:
         """Remove specific points (a file being un-indexed)."""
         if not chunk_ids:
@@ -205,3 +266,7 @@ class VectorStoreService:
         if qdrant_dir.exists():
             shutil.rmtree(qdrant_dir, ignore_errors=True)
             logger.info("Purged local Qdrant directory for project %s", project_id)
+        try:
+            self._generation_marker(project_id).unlink(missing_ok=True)
+        except Exception:
+            pass

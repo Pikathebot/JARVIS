@@ -415,6 +415,11 @@ async def lifespan(app: FastAPI):
         await get_image_captioner().stop()
     except Exception as e:
         logger.debug("Captioner shutdown: %s", e)
+    try:
+        from app.rag.embedding_sidecar import get_embedding_sidecar
+        get_embedding_sidecar().stop()
+    except Exception as e:
+        logger.debug("Embedding sidecar shutdown: %s", e)
     if settings.governor_enabled:
         await process_watcher.stop()
         await governor.stop()

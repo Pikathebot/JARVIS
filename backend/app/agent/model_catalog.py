@@ -73,10 +73,10 @@ class ModelInfo:
     sitting in the same directory), or None when the model is text-only."""
 
 
-# Folders under models/ that hold sidecar models rather than chat models. The image captioner
+# Folders under models/ that hold sidecar models rather than chat models. The image captioner and the embedding sidecar
 # lives in its own folder with its projector beside it, exactly like a chat model would, so
 # without this it would be listed as a (tiny, useless) chat candidate.
-SIDECAR_DIRS: frozenset[str] = frozenset({"captioner"})
+SIDECAR_DIRS: frozenset[str] = frozenset({"captioner", "embeddings"})
 
 
 def _is_sidecar(path: Path, models_dir: Path) -> bool:

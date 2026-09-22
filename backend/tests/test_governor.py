@@ -842,9 +842,10 @@ def test_vram_headroom_is_free_minus_reserve_or_unknown(monkeypatch):
 # --- Compute from our own llama-server is not an external workload ------------------------
 
 def _gpu_only_governor(**kw) -> ResourceGovernor:
-    """GPU compute is the only rule that can fire: every other threshold is out of reach."""
+    """GPU compute is the only rule that can fire (a 0% reading breaches a 0.0 threshold, so
+    an idle card still counts); every other threshold is out of reach."""
     return ResourceGovernor(
-        enabled=True, gpu_threshold=0.01, vram_threshold=999.0, cpu_threshold=999.0,
+        enabled=True, gpu_threshold=0.0, vram_threshold=999.0, cpu_threshold=999.0,
         ram_threshold=999.0, sustained_breach_polls=1, startup_grace_seconds=0.0, **kw,
     )
 
