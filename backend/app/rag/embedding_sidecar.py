@@ -12,8 +12,9 @@ This runs a small embedding GGUF (nomic-embed-text-v1.5 by default, 137M paramet
 dims) through the same ``llama-server.exe`` as the chat model, on its own port and on the CPU
 only, the way the image captioner does. A query embeds in ~35 ms; a batch of eight 1k-token
 chunks in ~0.4 s, so indexing a workspace is seconds, not minutes. Cosine similarities come
-out with real separation -- relevant chunks at 0.6-0.8, unrelated ones at 0.35-0.55 -- which
-is what makes ``RAG_MIN_RELEVANCE`` mean something.
+out with real separation -- against this repo's code a question's answer scores 0.71-0.97
+while everything unrelated sits flat at 0.52-0.65 -- which is what makes the reranker's
+floor, gap and peak cuts mean something.
 
 Cold like the captioner: spawned on the first embedding, stopped after ``idle_seconds`` without
 one. Synchronous, because the indexer and retriever are synchronous.
@@ -173,7 +174,13 @@ class EmbeddingSidecar:
             with self._output_lock:
                 self._recent_output.clear()
             try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+                # CPU-only means no CUDA context either: with the card merely *visible*, the CUDA
+                # build creates one at startup and holds ~170 MB of VRAM it never uses -- enough
+                # to be the margin by which the chat model's projector no longer fits. Hiding the
+                # device ("-1", not "": empty is ignored) makes ggml report no CUDA device and
+                # stay on the CPU, which is where this process belongs anyway.
+                env = {**os.environ, "CUDA_VISIBLE_DEVICES": "-1"}
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, env=env)
             except Exception as e:
                 logger.warning("Could not start embedding sidecar (%s): %s", self.server_exe, e)
                 return False

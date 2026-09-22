@@ -194,7 +194,13 @@ class ImageCaptioner:
             with self._output_lock:
                 self._recent_output.clear()
             try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+                # CPU-only means no CUDA context either: with the card merely *visible*, the CUDA
+                # build creates one at startup and holds ~170 MB of VRAM it never uses -- enough
+                # to be the margin by which the chat model's projector no longer fits. Hiding the
+                # device ("-1", not "": empty is ignored) makes ggml report no CUDA device and
+                # stay on the CPU, which is where this process belongs anyway.
+                env = {**os.environ, "CUDA_VISIBLE_DEVICES": "-1"}
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, env=env)
             except Exception as e:
                 logger.warning("Could not start image captioner (%s): %s", self.server_exe, e)
                 return False
