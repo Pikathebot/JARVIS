@@ -670,6 +670,22 @@ public sealed partial class MainWindow : Window
         SettingsHost.Visibility = Visibility.Visible;
     }
 
+    private void NewWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        SetWorkspaceDropdownOpen(false);
+        if (SettingsHost.Children.Count > 0) return;
+        var pane = new NewWorkspacePane(ProjectsViewModel, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        pane.CloseRequested += () =>
+        {
+            SettingsHost.Children.Clear();
+            SettingsHost.Visibility = Visibility.Collapsed;
+        };
+        // Nothing else to wire: the pane activates the new project, and ActiveProjectChanged
+        // rescopes the chat and rebuilds the dropdown's rows.
+        SettingsHost.Children.Add(pane);
+        SettingsHost.Visibility = Visibility.Visible;
+    }
+
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();
 
     /// <summary>Set while the switch is being synced FROM the view model, so the Toggled it

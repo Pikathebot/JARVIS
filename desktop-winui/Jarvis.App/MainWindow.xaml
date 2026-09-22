@@ -443,8 +443,12 @@
             ShadowOffsetY="8"
             Padding="6"
             MinWidth="220">
-            <!-- Rows + the sliding puck are the vertical segmented control; Items set from code. -->
-            <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" DragPullChanged="WorkspaceMenu_DragPullChanged" />
+            <StackPanel Spacing="6">
+                <!-- Rows + the sliding puck are the vertical segmented control; Items set from code. -->
+                <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" DragPullChanged="WorkspaceMenu_DragPullChanged" />
+                <!-- Not a row of the menu: creating is an action, not a selection the puck should land on. -->
+                <glass:GlassButton x:Name="NewWorkspaceButton" Text="＋ New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
+            </StackPanel>
         </glass:GlassSlab>
 
         <!-- Settings sheet overlay (see Views/SettingsPane.xaml); filled on demand by Settings_Click. -->
