@@ -80,6 +80,12 @@ internal sealed class D3D11Context : IDisposable
 
         Device = device!;
         ImmediateContext = context!;
+        // The capture callback copies frames on a thread-pool thread while the render tick uses
+        // the same immediate context on the UI thread; a D3D11 context is not free-threaded.
+        using (var multithread = ImmediateContext.QueryInterface<ID3D11Multithread>())
+        {
+            multithread.SetMultithreadProtected(true);
+        }
         DxgiDevice = Device.QueryInterface<IDXGIDevice>();
 
         using var adapter = DxgiDevice.GetAdapter();

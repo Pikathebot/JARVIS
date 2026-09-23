@@ -42,7 +42,11 @@ public sealed class GlassHost : IDisposable
     private Vector4 _uvRect = new(0, 0, 1, 1);
     private bool _captureReady;
     private bool _rendering;
-    private (int Frame, int Scene, Vector4 Uv, int W, int H) _lastRendered = (-1, -1, default, 0, 0);
+    private (int Capture, int Scene, Vector4 Uv, int W, int H) _lastRendered = (-1, -1, default, 0, 0);
+    private readonly CaptureChangeDetector _detector;
+    private CropRect _crop;
+    private int _insideChecked = -1;
+    private int _confirmedInsideChanges;
     private bool _disposed;
 
     public GlassScene Scene { get; } = new();
@@ -69,6 +73,7 @@ public sealed class GlassHost : IDisposable
         _swapChain2 = _d3d.SwapChain.QueryInterface<IDXGISwapChain2>();
         _capture = new LiveCaptureSource(_d3d);
         _renderer = new GlassRenderer(_d3d.Device, _d3d.ImmediateContext, Path.Combine(AppContext.BaseDirectory, "Shaders"));
+        _detector = new CaptureChangeDetector(_d3d.Device, _d3d.ImmediateContext, Path.Combine(AppContext.BaseDirectory, "Shaders"));
 
         // The glass panel goes under the window's existing content. Hit-testing stays with the
         // XAML above it (and falls through to nothing where there is no XAML, same as before).
@@ -208,18 +213,14 @@ public sealed class GlassHost : IDisposable
     {
         if (_disposed) return;
         var visible = PInvoke.IsWindowVisible(_windowHwnd) && !PInvoke.IsIconic(_windowHwnd);
-        if (!visible)
-        {
-            _visible = false;
-            return;
-        }
-
         var client = ClientRectOnScreen();
-        if (client.Width <= 0 || client.Height <= 0)
+        if (!visible || client.Width <= 0 || client.Height <= 0)
         {
             _visible = false;
+            _capture.Paused = true;
             return;
         }
+        _capture.Paused = false;
 
         var resized = client.Width != _d3d.Width || client.Height != _d3d.Height;
         if (resized)
@@ -268,23 +269,61 @@ public sealed class GlassHost : IDisposable
             (float)(rect.Y - originY) / item.Height,
             (float)rect.Width / item.Width,
             (float)rect.Height / item.Height);
+
+        // The same rect in capture pixels, clipped to the display: what the capture source
+        // classifies dirty rects against and the change detector compares.
+        var left = Math.Clamp(rect.X - originX, 0, item.Width);
+        var top = Math.Clamp(rect.Y - originY, 0, item.Height);
+        var right = Math.Clamp(rect.X - originX + rect.Width, 0, item.Width);
+        var bottom = Math.Clamp(rect.Y - originY + rect.Height, 0, item.Height);
+        _crop = new CropRect(left, top, right - left, bottom - top);
+        _capture.WatchRect = _crop;
     }
 
     private void RenderTick()
     {
-        if (_disposed || !_visible || _rendering) return;
+        if (_disposed || _rendering) return;
+        // AppWindow.Changed does not reliably report a minimize, and a minimized window kept
+        // rendering every capture frame. Two cheap calls per tick settle it either way.
+        var shown = PInvoke.IsWindowVisible(_windowHwnd) && !PInvoke.IsIconic(_windowHwnd);
+        if (shown != _visible)
+        {
+            if (shown) SyncToWindow(); // renders the first frame back itself
+            else { _visible = false; _capture.Paused = true; }
+            return;
+        }
+        if (!_visible) return;
         var srv = _capture.TryGetLiveFrameSrv();
         if (srv is null) return;
+
+        // Frames whose changes all lie inside the window are usually our own Present echoing
+        // back through capture; count them only once the GPU confirms the pixels behind the
+        // window differ from what was last rendered (see CaptureChangeDetector).
+        if (_detector.TryTakeResult(out var changed) && changed) _confirmedInsideChanges++;
+        var inside = _capture.InsideWindowVersion;
+        if (inside != _insideChecked && !_detector.Pending)
+        {
+            _insideChecked = inside;
+            if (_detector.Begin(srv, _crop)) _confirmedInsideChanges++;
+        }
+
         // Rendering fires every display frame, but the inputs only change when the desktop under
-        // the window changed (a new capture frame), a control published, or the window moved or
-        // resized. Re-rendering an identical frame is pure GPU heat -- the full pipeline is
-        // several passes per layer over every pixel -- so skip it.
-        var key = (_capture.FrameCount, Scene.Version, _uvRect, _d3d.Width, _d3d.Height);
+        // the window changed, a control published, or the window moved or resized. Re-rendering
+        // an identical frame is pure GPU heat -- the full pipeline is several passes per layer
+        // over every pixel -- so skip it.
+        var captureVersion = _capture.ContentVersion + _confirmedInsideChanges;
+        var key = (Capture: captureVersion, Scene: Scene.Version, Uv: _uvRect, W: _d3d.Width, H: _d3d.Height);
         if (key == _lastRendered) return;
+        // Layer 0 is rebuilt from the capture only when one of these changed (a scene-only change
+        // is served from the renderer's layer cache), so only then does the detector's reference
+        // move -- otherwise a check still in flight for an unrendered change would be lost.
+        var backdropChanged = key.Capture != _lastRendered.Capture || key.Uv != _lastRendered.Uv
+            || key.W != _lastRendered.W || key.H != _lastRendered.H;
         _lastRendered = key;
         _rendering = true;
         try
         {
+            if (backdropChanged) _detector.Snapshot(_capture, _crop);
             // Layer 0 is a flat, invisible pane over the whole window: no bezel, tint or rim,
             // just an identity copy of the capture. Every layer refracts the layer below it, so
             // without this the slabs on layer 1 would be bending layer 0's transparent nothing
@@ -299,7 +338,7 @@ public sealed class GlassHost : IDisposable
                 cornerRadius: 0f, bezelWidth: 0f, GlassBezelProfile.Squircle, refractionScale: 0f, specularIntensity: 0f,
                 layer: 0, tintColor: Vector3.One, tintAmount: 0f);
             scene.AsSpan(0, shapes.Length - 1).CopyTo(shapes.AsSpan(1));
-            _renderer.Draw(_d3d.RenderTargetView, srv, _capture.FrameCount, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
+            _renderer.Draw(_d3d.RenderTargetView, srv, captureVersion, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
             _d3d.Present();
         }
         finally
@@ -317,6 +356,7 @@ public sealed class GlassHost : IDisposable
         PInvoke.RemoveWindowSubclass(_windowHwnd, _subclassProc, SubclassId);
         GlassScene.Unregister(_windowId);
         _capture.Dispose();
+        _detector.Dispose();
         _renderer.Dispose();
         _swapChain2.Dispose();
         _d3d.Dispose();

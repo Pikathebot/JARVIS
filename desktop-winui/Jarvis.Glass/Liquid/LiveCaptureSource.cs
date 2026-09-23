@@ -50,6 +50,75 @@ internal sealed class LiveCaptureSource : IDisposable
 
     public int FrameCount => Volatile.Read(ref _frameCount);
 
+    // ---- What a frame changed, relative to the window ----------------------------------------
+    // Capture delivers a frame whenever anything on the display changes: the taskbar, another
+    // app, or -- despite the exclusion -- our own window presenting. Only some of those matter to
+    // the glass, so each frame is classified by its dirty rects against the window's rect.
+
+    private enum FrameChange { Irrelevant, Relevant, InsideWindow }
+
+    /// <summary>How far outside the window a change still matters: the refraction and frost
+    /// passes sample the capture a little beyond the window's own crop.</summary>
+    private const int WatchMargin = 96;
+
+    private int _contentVersion;
+    private int _insideWindowVersion;
+    private CropRect _watch;
+
+    /// <summary>Bumped by frames that changed pixels the glass samples (near or partly under the
+    /// window), or whose dirty rects are unknown.</summary>
+    public int ContentVersion => Volatile.Read(ref _contentVersion);
+
+    /// <summary>Bumped by frames whose changes all lie inside the window's rect. That is what our
+    /// own Present looks like, so these are only a *maybe*: the host confirms them with
+    /// <see cref="CaptureChangeDetector"/>.</summary>
+    public int InsideWindowVersion => Volatile.Read(ref _insideWindowVersion);
+
+    /// <summary>The window's client rect in capture pixels, set by the host whenever it moves.
+    /// Empty = unknown, and every frame counts as relevant.</summary>
+    public CropRect WatchRect
+    {
+        get { lock (_gate) return _watch; }
+        set { lock (_gate) _watch = value; }
+    }
+
+    /// <summary>While set (the window is hidden or minimized) frames are dropped uncopied. On
+    /// return the window's own first Present makes capture deliver a fresh full frame.</summary>
+    public volatile bool Paused;
+
+    private FrameChange Classify(Direct3D11CaptureFrame frame)
+    {
+        var watch = WatchRect;
+        if (watch.Width <= 0 || watch.Height <= 0) return FrameChange.Relevant;
+        IReadOnlyList<Windows.Graphics.RectInt32> dirty;
+        try { dirty = frame.DirtyRegions; }
+        catch { return FrameChange.Relevant; }
+        if (dirty.Count == 0) return FrameChange.Relevant;
+
+        var inside = false;
+        foreach (var rect in dirty)
+        {
+            if (watch.Contains(rect)) inside = true;
+            else if (watch.Intersects(rect, WatchMargin)) return FrameChange.Relevant;
+        }
+        return inside ? FrameChange.InsideWindow : FrameChange.Irrelevant;
+    }
+
+    /// <summary>Copies <paramref name="crop"/> of the live capture into <paramref name="dest"/>'s
+    /// origin. False if there is no capture yet or the crop falls outside it.</summary>
+    public bool CopyRegionTo(ID3D11Texture2D dest, CropRect crop)
+    {
+        lock (_gate)
+        {
+            if (_sharedTexture is null) return false;
+            var desc = _sharedTexture.Description;
+            if (crop.X < 0 || crop.Y < 0 || crop.X + crop.Width > desc.Width || crop.Y + crop.Height > desc.Height) return false;
+            var box = new Vortice.Mathematics.Box(crop.X, crop.Y, 0, crop.X + crop.Width, crop.Y + crop.Height, 1);
+            _d3d.ImmediateContext.CopySubresourceRegion(dest, 0, 0, 0, 0, _sharedTexture, 0, box);
+            return true;
+        }
+    }
+
     /// <summary>The frozen periodic snapshot's SRV, or null before the first one is captured. This
     /// is what the renderer actually draws -- not the continuously-updating <see cref="_sharedSrv"/>
     /// -- since <see cref="_sharedSrv"/> keeps flowing even while our own windows are visible (and
@@ -294,6 +363,9 @@ internal sealed class LiveCaptureSource : IDisposable
 #pragma warning disable CA1416 // guarded by try/catch for older WindowsAppSDK, matching Jarvis.Glass's approach
         try { _session.IsBorderRequired = false; } catch { /* older WindowsAppSDK: property absent */ }
         try { _session.IsCursorCaptureEnabled = false; } catch { /* same */ }
+        // ReportOnly: frames still carry the whole display (the shared texture is refreshed with
+        // a full copy), the dirty rects just tell Classify what changed.
+        try { _session.DirtyRegionMode = GraphicsCaptureDirtyRegionMode.ReportOnly; } catch { /* pre-24H2: every frame counts as relevant */ }
 #pragma warning restore CA1416
         _session.StartCapture();
     }
@@ -329,7 +401,7 @@ internal sealed class LiveCaptureSource : IDisposable
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
         using var frame = sender.TryGetNextFrame();
-        if (frame is null)
+        if (frame is null || Paused)
         {
             return;
         }
@@ -348,6 +420,11 @@ internal sealed class LiveCaptureSource : IDisposable
                 _d3d.ImmediateContext.CopyResource(_sharedTexture!, capturedTexture);
             }
 
+            switch (Classify(frame))
+            {
+                case FrameChange.Relevant: Interlocked.Increment(ref _contentVersion); break;
+                case FrameChange.InsideWindow: Interlocked.Increment(ref _insideWindowVersion); break;
+            }
             var count = Interlocked.Increment(ref _frameCount);
             if (count == 1)
             {

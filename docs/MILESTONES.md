@@ -189,3 +189,19 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   `MAIN_MODEL`, `FAST_MODEL`, `EMBEDDING_MODEL`, `RERANKER_MODEL` settings are gone. `README.md`
   corrected (models, local speech, close-to-tray, launch via the script); the pre-WinUI design
   docs carry a "historical" banner. 498 tests pass and leave the repo root untouched.
+
+- [x] **Idle GPU: the capture echo (2026-09-23)** — Jarvis.App sat at ~40% 3D load with nothing
+  on screen changing, and kept it while minimized. The render gate keyed on the capture frame
+  count, and our own window, although excluded from capture, still makes DWM report its rect
+  dirty and deliver a frame on every Present: render -> Present -> frame -> render, ~36 fps over
+  a static desktop (the dirty rect was exactly our client rect). And `AppWindow.Changed` does not
+  reliably report a minimize, so a minimized window rendered every frame too. Now
+  `LiveCaptureSource` classifies each frame by its `DirtyRegions` (`ReportOnly`) against the
+  window's rect: far away = ignored, near/overlapping (96 px margin) = render, wholly inside =
+  "maybe", which `CaptureChangeDetector` settles by comparing the window's crop against a
+  snapshot taken at the last backdrop render (ChangeDetect.hlsl discards identical texels inside
+  an occlusion query, read back without stalling). `RenderTick` polls visibility itself and
+  capture copies pause while hidden. The D3D device is now multithread-protected (the capture
+  callback and the render tick shared the immediate context unguarded). Measured 40% -> 0.6%
+  idle, ~1.5% with a window streaming behind; the user confirmed the glass still follows the
+  desktop and is current after restore. `Jarvis.GlassLab`'s capture copy is unchanged.
