@@ -44,7 +44,10 @@ public sealed partial class GlassButton : UserControl
         public static float LiftScale = 1.06f;
         public static float LiftRefraction = 13f;
         public static float LiftSpecular = 1.1f;
-        public static float LiftTint = 0.05f;
+        /// <summary>Pressed white wash. iOS glass BRIGHTENS when pressed: the recording's Control
+        /// Center button goes from luminance 41 to 90 (x2.2, a wash of roughly 5% -> 27%), so the
+        /// pressed wash sits ~0.2 above rest. (It used to fall to 0.05 -- darker when pressed.)</summary>
+        public static float LiftTint = 0.30f;
         public static float LiftChromatic = 0.03f;
         public static float LiftShadow = 0.32f;
         public static float LiftShadowRadius = 14f;
@@ -65,6 +68,17 @@ public sealed partial class GlassButton : UserControl
             if (weak.TryGetTarget(out var button)) button.PublishShape();
         }
     }
+
+    // Press and release, measured off a Control Center glass button in the iPad recording
+    // (t=30.8-33.2, 60 fps, no dropped frames; radius fitted with a damped step response):
+    //  press   66 -> 79.5 px pop, back to 76.5: w 25 rad/s, zeta 0.40 (~25% overshoot, 10-90% 58 ms)
+    //  release 83 -> 62.5 px (below its 66 px rest) and back: w 17, zeta 0.45 (~21%, 10-90% 91 ms)
+    // Unlike the switch and slider, iOS buttons DO bounce. The bounce shows in the slab's size
+    // (the raw spring value drives the growth); material values use the value clamped to 0..1.
+    // Size itself is not taken from the recording: that button is a round Control Center module
+    // growing to 1.2x (1.27x held), far too much for a wide pill -- LiftScale stays ours.
+    private const float PressStiffness = 630f, PressDamping = 20f;
+    private const float ReleaseStiffness = 284f, ReleaseDamping = 15f;
 
     // Hover is a slower, softer spring than the press so it reads as a glow rather than a snap.
     private const float HoverStiffness = 260f;
@@ -168,7 +182,10 @@ public sealed partial class GlassButton : UserControl
 
         var liftTarget = _pressed ? 1f : 0f;
         var hoverTarget = _pointerOver || _pressed ? 1f : 0f;
-        Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.SpringStiffness, GlassToggle.SpringDamping);
+        if (_pressed)
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, PressStiffness, PressDamping);
+        else
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, ReleaseStiffness, ReleaseDamping);
         Spring(ref _hover, ref _hoverVelocity, hoverTarget, dt, HoverStiffness, HoverDamping);
 
         PublishShape();
@@ -185,11 +202,19 @@ public sealed partial class GlassButton : UserControl
         }
     }
 
+    /// <summary>Semi-implicit Euler in steps of at most 1/240 s, so a dropped frame (dt up to
+    /// 50 ms) cannot make a spring ring harder than it should.</summary>
     private static void Spring(ref float value, ref float velocity, float target, float dt, float stiffness, float damping)
     {
-        var accel = (target - value) * stiffness - velocity * damping;
-        velocity += accel * dt;
-        value += velocity * dt;
+        const float MaxStep = 1f / 240f;
+        var steps = Math.Max(1, (int)MathF.Ceiling(dt / MaxStep));
+        var h = dt / steps;
+        for (var i = 0; i < steps; i++)
+        {
+            var accel = (target - value) * stiffness - velocity * damping;
+            velocity += accel * h;
+            value += velocity * h;
+        }
     }
 
     private void PublishShape()
@@ -213,8 +238,11 @@ public sealed partial class GlassButton : UserControl
         if (bounds.Width <= 0 || bounds.Height <= 0 || GlassSlab.IsCollapsedInTree(this)) { _scene.Remove(this); return; } // collapsed (or in a collapsed parent): take the glass with it
         var clip = GlassSlab.ClipFor(this, scale);
 
-        var m = Math.Max(_lift, GlassToggle.Material.ForceLift); // rest -> lift blend
-        var grow = 1f + (Material.LiftScale - 1f) * m;
+        // Raw spring value for the size, so the measured bounce overshoots on press and dips below
+        // rest on release; clamped for everything else (a negative fringe or shadow is nonsense).
+        var raw = Math.Max(_lift, GlassToggle.Material.ForceLift);
+        var grow = 1f + (Material.LiftScale - 1f) * raw;
+        var m = Math.Clamp(raw, 0f, 1f); // rest -> lift blend for the material
 
         var center = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
         var half = new Vector2((float)bounds.Width * 0.5f, (float)bounds.Height * 0.5f) * scale * grow;
