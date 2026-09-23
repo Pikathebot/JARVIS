@@ -1,207 +1,176 @@
-# Jarvis Assistant — System Master Plan & Architecture Roadmap
+# Jarvis -- Plan
 
-**Stack:** FastAPI + native `llama-server.exe` (Qwen3.5-9B / Qwen3.5-4B) + WinUI 3 native client with a D3D11 liquid-glass renderer (`desktop-winui/`) + OpenRouter (Heavy Mode)  
-**Target Machine:** Windows 11, Intel i7-14700HX (20 threads), NVIDIA RTX 4060 Laptop GPU (8GB VRAM), 16GB DDR5 RAM  
-**Repository:** `d:/JARVIS`  
+**Stack:** FastAPI backend + native `llama-server.exe` (llama.cpp, CUDA) + WinUI 3 client with a
+D3D11 Liquid Glass renderer (`desktop-winui/`). Optional OpenRouter "Heavy Mode", off by default.
+**Machine:** Windows 11, i7-14700HX (20 threads), RTX 4060 Laptop **8 GB**, 16 GB DDR5.
+**Repo:** `D:\JARVIS`. How to build, run and not break it: `CLAUDE.md`. What was built and why:
+`docs/MILESTONES.md`. This file is the current state and what comes next -- keep §4 accurate.
 
 ---
 
-## 0. Project Vision & Core Principles
+## 0. What Jarvis is for
 
-Jarvis is a private, lightning-fast, hardware-governed AI assistant for Windows 11. Designed specifically for local RTX 4060 GPU offload, it provides native llama.cpp execution, process-based VRAM eviction, deterministic $O(1)$ safety permissions, project workspace switching, durable artifacts versioning, and real-time SSE streaming.
+A private assistant that lives on this one laptop: it answers and acts (files, apps, media, web,
+shell) with every risky action gated behind an explicit yes, speaks and listens without the cloud,
+notices things about the machine on its own and says so once, and never lets its own model starve
+the rest of the desktop of VRAM. The UI should feel like Apple's Liquid Glass, measured against a
+real iPadOS 26 recording rather than eyeballed.
+
+Principles that have held up:
+- **Local first, fail silent rather than fail to cloud.** Cloud paths (OpenRouter, edge-tts)
+  exist only as explicit opt-ins.
+- **Measure, then change.** Model quants, KV types, VRAM budgets, spring timings and glass
+  constants were all settled by measurement on this machine; guesses have repeatedly been wrong.
+- **The backend decides meaning, the client renders.** The seam is plain HTTP + SSE.
+- **One channel for anything unprompted** (`AwarenessMonitor.emit`).
+
+## 1. Architecture as it actually runs (2026-09-23)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          JARVIS UNIFIED AGENT GATEWAY                       │
-│                                                                             │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │   WinUI 3 Native Client (desktop-winui/: Jarvis.App + Jarvis.Core +   │  │
-│  │   Jarvis.Glass) — HTTP + SSE; supervises the backend process itself   │  │
-│  └───────────────────────────────────┬───────────────────────────────────┘  │
-│                                      ▼                                      │
-│                        FastAPI Orchestrator & Router                        │
-│                 (Hardware Resource Governor + Safety Gating)                │
-│                                      │                                      │
-│  ┌───────────────────────────────────┴───────────────────────────────────┐  │
-│  │                     Expanded Tools & Engine Ecosystem                 │  │
-│  │                                                                       │  │
-│  │  ┌─────────────────────────┐  ┌────────────────────────────────────┐  │  │
-│  │  │   Web & Research Engine │  │     File & Workspace Engine        │  │  │
-│  │  │   • DuckDuckGo Search   │  │     • read_file / write_file       │  │  │
-│  │  │   • Fast HTML Scraper   │  │     • patch_file                   │  │  │
-│  │  │   • URL Fetch & Parse   │  │     • Project Files & Attachments  │  │  │
-│  │  └─────────────────────────┘  └────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────┐  ┌────────────────────────────────────┐  │  │
-│  │  │  Windows OS Power Tools │  │   SQLModel Relational Store        │  │  │
-│  │  │   • App Launcher/Focus  │  │     • Projects (Section 7 folders) │  │  │
-│  │  │   • Media & Volume Ctrl │  │     • Sessions & Messages          │  │  │
-│  │  │   • Active Clipboard    │  │     • Attachments & Artifacts      │  │  │
-│  │  │   • Process Management  │  │     • Artifact Versions            │  │  │
-│  │  └─────────────────────────┘  └────────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────┐  ┌────────────────────────────────────┐  │  │
-│  │  │ Voice & TTS Engine      │  │     Hardware Resource Governor     │  │  │
-│  │  │   • Wake-Word Detection │  │     • PyNVML VRAM/GPU Telemetry    │  │  │
-│  │  │   • Chatterbox TTS      │  │     • Adaptive Request Queue       │  │  │
-│  │  └─────────────────────────┘  │     • Auto-throttle Under Load     │  │  │
-│  │                               └────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
+ WinUI 3 app (Jarvis.App + Jarvis.Core + Jarvis.Glass)
+   |  starts & supervises uvicorn in a Job Object (BackendHost)
+   |  HTTP + SSE
+   v
+ FastAPI :8000 ── orchestrator ── tool selection ─ router ─ permissions ─ tool pipeline
+   |                   |                                               (worker thread, timeouts)
+   |                   ├── llama-server :8001  main: Qwen3.5-9B IQ3_XXS + Q8_0 mmproj, 32k ctx
+   |                   |                       fast: MiniCPM5-2B Q4_K_M (text-only)
+   |                   ├── captioner  :8002  SmolVLM-500M, CPU, only for models without vision
+   |                   └── RAG ── embedder :8003  nomic-embed-text-v1.5, CPU ── FTS5 + Qdrant(local)
+   ├── governor (NVML/psutil + per-process GPU counters) ── launch ladder, eviction
+   ├── awareness monitor ── rules, routines, proactive actions ── SSE /api/awareness/stream
+   ├── voice: faster-whisper tiny.en (CPU) in, Kokoro-82M (CPU) out, wake word + follow-up window
+   └── SQLite (SQLModel + Alembic) + per-project workspace trees + JSON state in data/
 ```
 
----
+| Area | What runs | Notes |
+|---|---|---|
+| Inference | `llama-server.exe` build 10689, `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--no-mmap`, `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
+| Main model | Qwen3.5-9B UD-IQ3_XXS + Q8_0 projector @ 32k | ~5.0 GB; 25-29 tok/s decode. Chosen over Q3_K_XL (+4.7% PPL) because the real desktop holds ~2.3 GB VRAM. |
+| Fast model | MiniCPM5-2B Q4_K_M | 5/5 on the tool-chain bench, 2.5x faster than the 4B. EN/ZH only, no vision. |
+| Model choice | `data/models.json` via Settings -> Models | Overrides `.env`, which is stale on model paths. |
+| Speech | STT faster-whisper `tiny.en` beam 2; TTS Kokoro-82M fp32 | Both CPU. edge-tts only with `VOICE_TTS_BACKEND=edge`. |
+| RAG | nomic-embed sidecar + BM25 FTS5, relevance floor/gap/peak cuts | Hashed-vector fallback if the GGUF is missing. |
+| Client | WinUI 3, .NET 10, WindowsAppSDK 2.4, packaged dev MSIX | Glass = SwapChainPanel under XAML, live desktop capture, layered HLSL passes. |
+| Tests | pytest, 584 pass / 9 skip | No automated tests for the C# client. |
 
-## 1. System Architecture Truth
+## 2. Status
 
-| Component | Technology | Rationale |
-| :--- | :--- | :--- |
-| **Primary Inference Runtime** | **native `llama-server.exe` (llama.cpp)** | Maximum inference throughput on port 8001; 100% GPU offload (`-ngl 99`) and `--no-mmap` to conserve 16GB system RAM. |
-| **Primary LLM Models** | **Qwen3.5-9B Q4_K_M (Main) / Qwen3.5-4B Q4_K_M (Fast)** | High intelligence, strong coding, native tool calling, fits comfortably in 8GB VRAM. |
-| **Heavy Reasoning Fallback** | **OpenRouter (Cloud)** | Used for ultra-complex multi-file architectural reasoning when requested or auto-routed. |
-| **Backend API** | **FastAPI + SSE (`/chat/stream`)** | High-performance asynchronous endpoint emitting token streams, tool events, and structured metadata. |
-| **Database & Migrations** | **SQLModel + Alembic** | Single unified database layer (`data/jarvis_memory.db`) with automatic migrations on startup. |
-| **Frontend UI** | **WinUI 3 / C# (`desktop-winui/`, `Jarvis.slnx`)** | Native shell (`Jarvis.App`) + API/SSE client (`Jarvis.Core`) + liquid-glass renderer (`Jarvis.Glass`: D3D11 glass in a `SwapChainPanel` under the transparent WinUI window's XAML tree, live desktop capture, layered refraction/specular shaders, glass controls). The only client — the Next.js/Tauri and pywebview UIs were deleted 2026-09-19. |
-| **VRAM Management** | **Process-based eviction via `RuntimeProcessManager.stop()`** | Cleanly frees 100% GPU memory on demand without lingering zombie processes. |
+Everything in `docs/MILESTONES.md` is built and committed. In short: streaming tool-calling agent
+with honest tool turns; deterministic permissions with voice/typed confirmations and timeouts;
+governor with relative VRAM floor and launch ladder; model catalogue with vision projectors and a
+captioner fallback; stable prompt prefix, n-gram speculation, 32k context with compaction;
+persona, hands-free voice, HUD, ambient awareness, routines and proactive actions; RAG with real
+embeddings and a relevance floor; the WinUI client with Liquid Glass panels, controls, sheets,
+workspace creation and image attachments.
 
----
-
-## 2. Implemented Milestones (Status: Complete)
-
-- [x] **Phase 0 — FastAPI Core & SSE Streaming**: Real-time `/chat/stream` SSE generator and `/chat` endpoints.
-- [x] **Phase 1 — Native Tool Calling**: Inspect-based signature introspection, tool registration, and parameter validation.
-- [x] **Phase 2 — Deterministic Safety Permissions**: $O(1)$ hardcoded security tiering (`LOW_RISK`, `CONFIRMATION_REQUIRED`, `HIGH_RISK`) with SHA256 action tokens.
-- [x] **Phase 3 — Hardware Resource Governor (V2)**: PyNVML GPU/VRAM telemetry + `psutil` CPU/RAM monitoring with automatic load throttling.
-- [x] **Phase 4 — Model Router & Runtime Process Manager**: Local llama.cpp process manager with `-ngl 99 --no-mmap` execution flags.
-- [x] **Phase 5 — Database Unification (SQLModel + Alembic)**: Unified schema across projects, sessions, messages, attachments, and artifacts.
-- [x] **Phase 6 — Project Workspaces & Section 7 Filesystem**: Directory hierarchy under `workspace/projects/{project_id}/` (`files/`, `knowledge/`, `artifacts/`, `memory/`, `indexes/`).
-- [x] **Phase 7 — Artifacts, Attachments & Context Injection**: Versioned artifact storage, secure attachment uploads, and automatic LLM context turn injection.
-- [x] **Phase 8 — Next.js Desktop Application** (superseded, deleted 2026-09-19): `desktop-app/` was the canonical client until the WinUI 3 migration. Once the WinUI client covered every backend surface, it, the pywebview `desktop/` fallback, `run_jarvis.py`/`Jarvis.bat` and the `/ui` static mount in `main.py` were removed; `Start Jarvis.bat` → `scripts/start-jarvis.ps1` is the launcher and `BackendHost` starts uvicorn.
-- [x] **Phase 10 — WinUI 3 native client + liquid glass (2026-09-14)**: `desktop-winui/` replaces the web client. `Jarvis.Glass/Liquid/` puts a D3D11 glass `SwapChainPanel` under any WinUI window's content (`GlassHost`), renders per-layer displacement → refraction → specular-rim passes over a live `Windows.Graphics.Capture` of the desktop, and ships glass controls (`GlassToggle`, `GlassSlider`, `GlassButton`, `GlassSegmented`, `GlassTextField`) plus DirectWrite text on the glass layers. Settings is an inline glass pane; controls nested in a slab/ScrollViewer clip and layer correctly and stay in step with scrolling (`GlassScroll`). Slabs cast shadows; the glass moves with the window in the same DWM frame (SwapChainPanel, 2026-09-15); rendering is change-driven with per-layer output caching, scissored control layers and reduced-res frost (~6% GPU idle under a changing desktop). Message bubbles, session rows and the workspace menu (a floating glass card with a vertical `GlassSegmented` puck) are glass too (2026-09-15).
-- [x] **Phase 9 — Context Engine & RAG**: Syntax-aware chunking, local CPU embeddings, hybrid keyword + vector retrieval, and per-project workspace scoping for tools and permissions.
-
----
-
-## 3. The JARVIS Behaviour Layer
-
-Everything above makes Jarvis *capable*. This layer is what makes it behave like Jarvis rather than a chat window with tools.
-
-- [x] **Persona** (`backend/app/persona/`) — Three profiles (`jarvis`, `assistant`, `operator`), each with an address term, voice, tone directives and a spoken-length cap. The system prompt is composed as *persona preamble + invariant tool protocol*: a persona changes manner, never capability. Active persona and user overrides persist to `data/persona.json`.
-
-- [x] **Hands-free voice** (`backend/app/voice/session.py`, `desktop-winui/Jarvis.App/ViewModels/VoiceViewModel.cs`) — The client owns the microphone and does local voice-activity detection, so only whole utterances are uploaded; the backend owns what an utterance *means*. A wake word dispatches immediately; a bare "Jarvis" arms the session and speaks the greeting; for 15 seconds after a reply, follow-ups need no wake word. Talking over a spoken reply cuts it off.
-
-- [x] **Ambient awareness** (`backend/app/awareness/`) — Pure rules over a hardware snapshot (VRAM, thermals, RAM, CPU, disk, battery, model eviction, heavy external apps), with the monitor owning all restraint: announce once, escalate through the cooldown, stay quiet on de-escalation, restate at most every 5 minutes, and announce recovery exactly once. Observations stream over SSE and are spoken only while hands-free voice is on. Briefings are assembled from telemetry rather than generated, so they are instant and their numbers are always real.
-
-- [x] **HUD overlay** (`desktop-winui/Jarvis.App/HudWindow.xaml.cs`) — A transparent, always-on-top window summoned from anywhere with `Ctrl+Shift+J`. Voice orb, two telemetry rings, and the last thing said in either direction. It runs its own voice session so an ambient question does not interleave with the main window's work.
-
-- [x] **Scheduled routines** (`backend/app/routines/`) — Time-of-day briefings and custom messages ("every weekday at 8am, give me the status briefing"), persisted to `data/routines.json`. The scheduler polls the wall clock and fires through the awareness monitor's own `emit()` channel, so a routine is delivered, spoken, and shown in the tray exactly like any other observation — no separate frontend plumbing needed. Managed from Settings → Scheduled Routines (`SettingsDialog.tsx`); `POST /api/routines/{id}/run` previews one immediately.
-
-- [x] **Proactive tool use** (`AwarenessMonitor.actions`, `backend/app/main.py`) — A kind of observation can carry a registered action: when it first escalates to CRITICAL, the monitor awaits the action, then emits a follow-up observation announcing what it did. Ships with one wired case — VRAM critical now evicts the model itself (`auto_unload_models()`) rather than only warning that eviction is imminent, which fires independently of and earlier than the governor's own reactive throttle (which additionally needs high GPU compute or ≥99% raw VRAM). An action fires once per escalation, never every poll, and re-arms after recovery. Toggle: Settings → "Proactive actions" (`PATCH /api/awareness/config {actions_enabled}`), default on (`PROACTIVE_ACTIONS_ENABLED`).
-
-- [x] **Voice-driven confirmations** (`build_confirmation_prompt` in `backend/app/agent/permissions.py`; client-side yes/no interception is `ConfirmationIntentParser` in `desktop-winui/Jarvis.Core/Voice/`, see the 2026-09-19 entry below) — A `CONFIRMATION_REQUIRED` tool call now carries a TTS-ready `spoken` prompt ("I need your approval to run a command: git push origin main. Say yes to proceed, or no to cancel, sir.") alongside the existing approve/deny card, on both `/chat` and `/chat/stream`. The main window speaks it when the turn was voice-initiated; the HUD speaks it always, since every HUD turn is voice. A spoken "yes"/"no" (`parseConfirmationIntent`) is intercepted before it reaches the model — "yes" resubmits the original prompt with all pending action ids approved, "no" cancels, anything else re-asks rather than being treated as a new command.
-- [x] **Confirmation timeouts** (`backend/app/agent/confirmations.py`, `POST /api/confirmations/{id}/deny`) — `CONFIRMATION_TIMEOUT_ACTION=deny` used to be a constant with nothing behind it: an unanswered ask just went quiet, and an `act_<hash>` token never expired, so a "yes" minutes later still ran the action. Every ask is now registered with a deadline (`CONFIRMATION_TIMEOUT_SECONDS`, default 90; 0 = never). A watcher sweeps the registry and announces lapsed asks through `AwarenessMonitor.emit()` as a `confirmation_timeout` warning — "I did not hear back about whether to execute command: git push, so I have not done it, sir. Ask again if you still want it." — so it is spoken and shown like any other unprompted remark, one sentence per session however many actions lapsed. A lapsed token arriving in `approved_action_ids` is refused: the action is re-evaluated, comes back as `confirmation_required`, and the prompt says the earlier approval timed out. Tokens the running process never issued (a restart) pass through to the hash check as before. Denying in the WinUI client now tells the backend (`ChatViewModel.DenyAction` → `DenyConfirmationAsync`), so a declined action is dropped quietly instead of being announced as a timeout later. Verified live end-to-end with a 20-second window.
-- [x] **Proactive follow-ups** (`backend/app/awareness/actions.py`) — Two more things Jarvis does about an observation rather than just naming it, both read-only. A heavy external app (`heavy_external_app`) that stays open past `Thresholds.heavy_app_nudge_seconds` (10 min) escalates from the initial notice to a spoken WARNING with the numbers that matter: "Blender has held 3.9 gigabytes of VRAM and 1.3 gigabytes of RAM for 11 minutes; the GPU has only 0.6 gigabytes free, so my model has little headroom. Closing it would give that back, sir." The monitor keeps a first-seen clock per app; per-process VRAM comes from the Windows `GPU Process Memory` counter via `win32pdh` (on WDDM, NVML reports every process as N/A), with readings above the card's total discarded — the NVIDIA overlay's counter is known to claim ~90 GB on an 8 GB card. Jarvis never closes the app itself. When `disk_space` goes CRITICAL the `disk_space` action scans the project workspace and `models/` for the five largest files and speaks them ("The largest things I manage are models/qwen3.5-9b/… at 4.7 gigabytes, …") — instant on this tree, capped at 200k entries so it can never pin the CPU.
-
-- [x] **Model selection** (`backend/app/agent/model_catalog.py`, `backend/app/routers/models.py`) — the two model slots used to be pinned by `LLAMA_MAIN_MODEL_PATH` / `LLAMA_FAST_MODEL_PATH` and could only be changed by editing `.env` and restarting; there was no endpoint for it at all. The catalogue enumerates every GGUF under `models/`, remembers a per-slot choice in `data/models.json`, and is consulted by `RuntimeProcessManager` ahead of the configured paths, so a choice survives restarts without anyone hand-editing configuration. `main` (what chat runs on) and `fast` (the router's smaller fallback) are chosen independently. Models at most one folder deep under `models/` (`models/qwen3.5-9b/…`) are marked `recommended` and returned first — that is where deliberately installed models live, one per folder, whereas deeper trees are vendor download mirrors (`models/unsloth/<repo>/…`) holding duplicates and companion files. `mmproj-*.gguf` projectors are reported separately and cannot be selected as chat models; each model is paired (`projector`) with the projector sitting in its own folder, which is the one signal on disk saying which model it was converted from. Selecting activates by default, restarting llama-server onto the model — including sweeping a server that was started outside Jarvis, which otherwise keeps serving the old weights and makes the switch a silent no-op. A model that will not load keeps its selection and returns the reason rather than discarding the choice. Managed from Settings → Models.
-- [x] **Vision** (`backend/app/agent/runtime_process_manager.py`, `backend/app/memory/context_manager.py`) — a model launched with an `mmproj-*.gguf` beside it gets `--mmproj` automatically, so image attachments are seen rather than just stored. The orchestrator asks `RuntimeProcessManager.has_vision(slot)` per turn and, when the serving model has a projector loaded, `ContextManager` sends PNG/JPEG/WebP/GIF/BMP attachments (≤4 per turn, ≤10 MB each) as `image_url` data-URI parts on the user message; a text-only model, or a cloud turn, gets the file-path note as before. The projector is the one optional part of the launch: on an 8 GB card it needs its own ~0.7–0.9 GB, so a launch that fails with it is retried text-only rather than leaving no model at all, and `has_vision` then reports what actually loaded. `LLAMA_MMPROJ_ENABLED=false` keeps things text-only; `LLAMA_MMPROJ_OFFLOAD=false` keeps the projector on the CPU. Verified live on both slots: the 4B + F16 projector sits at ~6.4 GB, the 9B + F16 projector at ~7.6 GB of 8.2 — it fits, but with little headroom for other GPU-holding apps. Stale `.env` model paths (the per-folder move) fall back through the catalogue by family.
-- [x] **Image captioner sidecar** (`backend/app/agent/captioner.py`, `models/captioner/`) — A projector only helps the model it was trained for, so anything else (a text-only GGUF on `fast`, a Heavy Mode turn, a launch that dropped its projector) saw images as file paths. A second `llama-server` on port 8002 runs SmolVLM-500M-Instruct with its own `mmproj`, CPU-only (`-n-gpu-layers 0`, `--no-mmproj-offload`), and turns each image attachment into a description that goes on the turn as attachment text ("Image contents (as seen by a vision model; treat this as what the picture shows): …"). The orchestrator only calls it when `has_vision()` is false for the serving slot, so a model with a projector still gets the real pixels. Always cold: spawned on the first image (~5 s), ~0.6 s per caption after that, stopped after `CAPTIONER_IDLE_SECONDS` (300) idle, zero VRAM. The captioner folder is hidden from the chat-model catalogue (`SIDECAR_DIRS`), its pid is in `PROTECTED_PIDS` so the emergency llama-server sweep leaves it alone, and it reaps stale copies of itself before starting. A 500M model's captions are accurate but terse (subject and text, not background colours); `CAPTIONER_MODEL_PATH` swaps in a bigger one. Status on `GET /api/models` under `captioner`, next to the new `loaded_projector`.
-- [x] **Children die with the backend** (`backend/app/agent/process_guard.py`) — Both llama-server children are assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so a crash or `Stop-Process -Force` no longer leaves the old weights serving on :8001 for the next backend to adopt. Found because a 10:43 Qwen-4B server survived every restart and select all morning: on Windows a second `llama-server` binds an occupied port *without error* and sits unreachable behind the first, so `select` reported success while the old model kept answering. `RuntimeProcessManager.reload()` now also probes the port for a foreign server instead of trusting a flag it only learns from a health check.
-- [x] **Tool execution pipeline** (`backend/app/agent/tool_pipeline.py`) — Borrowed from the shape of DeepSeek Harness's `tools/pre-execute → execute → post-execute → tool/result` waterfall. Native tools were synchronous functions called straight from the async loop, so a hung command blocked the whole backend (SSE, awareness, voice), and results reached the model verbatim however large. Now every tool, native or MCP, runs through one path: native tools on a worker thread, MCP tools awaited, both under a per-tool timeout (`TOOL_TIMEOUTS` per tool, `TOOL_DEFAULT_TIMEOUT_SECONDS` otherwise; `execute_command` 180 s, `unreal.build` 15 min). A timeout returns an error the model can read and the turn moves on — the thread cannot be killed, so the tool may finish in the background, and the model is told not to repeat the call. Ordered post-execute hooks may replace or block a result before the model sees it; the built-in one caps output at `TOOL_RESULT_MAX_CHARS` keeping head and tail. `tool_end` events and `tools_used` now carry `duration_ms`, `timed_out`, `truncated`, and a `timeout` status distinct from `error`. Verified live: a 30-second ping under a 3-second limit came back as `timeout` at 3.0 s with the loop still serving.
-- [x] **Image offload on overflow** (`backend/app/agent/image_offload.py`) — Image tokens are decided by the projector at encode time, so the context manager's per-image reservation is a guess; when it is low, llama-server rejects the whole request. `LlamaCppProvider` now recognises that rejection on both `chat` and `stream_chat`, replaces every `image_url` part with a placeholder, and retries once — the model answers without the pictures and says why, instead of the turn failing.
-- [x] **Real numbers in the prompt, real apps from the launcher** — Two things found by asking the 4B ordinary things. "hi" produced *"Temperatures nominal, VRAM at 2.4GB free"*: the persona told the model to "refer to system state in concrete numbers" and nothing gave it any, so it invented them. `build_system_prompt` now carries a SYSTEM STATE line from the awareness monitor's latest sample (GPU/VRAM/temp/RAM/CPU/disk/battery/loaded model, ≤20 s old) with the rule that those are the only hardware figures it may quote and that they belong in answers about the machine, not greetings; the persona directive says the same. Verified: "how much vram is free and how hot is the gpu" → 6.3/8.0 GB, 1.7 GB free, 53 °C, identical to `/api/awareness/status` at that moment; "hi" → "Good day, sir."; CPU temperature (not sampled) → "has not been checked". "open settings" / "open discord" did nothing because `resolve_executable` returned the bare word for anything not on PATH and `launch_app` always demanded confirmation. `app_control` now resolves Windows URI apps (`ms-settings:`, `ms-windows-store:`, …), then PATH, then Start Menu shortcuts (exact → prefix → contains, uninstallers skipped), and opens shortcuts/URIs via the shell; unknown names return a clear error instead of a failed `Popen`. `launch_app` is argument-aware in `permissions.py`: an installed app by name is LOW_RISK, an explicit path, script, or anything under Downloads/Temp still asks. Verified live: both opened without a card.
-
-- [x] **Structured reasoning channel + Reasoning tab (2026-09-07)** — the 4B/fast slot's thinking is now off entirely (`LLAMA_CHAT_TEMPLATE_KWARGS_FAST={"enable_thinking":false}`); the 9B/main slot keeps it on but reasoning tokens are no longer interleaved with answer tokens in the live stream. `llamacpp_provider.stream_chat()` gained `ThinkTagStreamScanner`, a stateful classifier that splits `<think>...</think>` content (tags can straddle SSE deltas) into distinct `reasoning_delta`/`text_delta` events, reconciled with the native `reasoning_content` delta field where a backend populates it. `orchestrator.run_stream` forwards these as a new `"reasoning"` SSE event and persists `reasoning_content` alongside `content` (new `messages.reasoning_content` column, migration `006`). The WinUI client has a new right-panel "Reasoning" tab (badge-only — never auto-opens) bound to `ChatViewModel.ActiveReasoningMessage`; `ChatMessage.HasStructuredReasoning` discriminates new structured messages (rendered only in the tab) from pre-feature history (still rendered via `MarkdownRenderer`'s legacy inline `<think>` `Expander`), so old sessions are unaffected.
-
-### Key endpoints
+## 3. Key endpoints
 
 | Area | Endpoints |
 | :--- | :--- |
+| Chat | `POST /chat`, `POST /chat/stream` (SSE), `GET /sessions`, `GET/DELETE /sessions/{id}...` |
+| Projects & files | `/api/projects...`, `POST /api/upload`, `/api/artifacts...` |
+| Models | `GET /api/models`, `POST /api/models/select`, `DELETE /api/models/select/{slot}`, `POST /models/{load,unload}` |
+| Governor | `GET /governor/status`, `POST /governor/{pause,resume,force-reload,...}`, `GET /health` |
+| Confirmations | `POST /api/confirmations/{id}/deny` |
 | Persona | `GET/POST /api/persona`, `PATCH/DELETE /api/persona/overrides`, `POST /api/persona/speech-preview` |
 | Voice | `POST /api/voice/listen`, `POST /api/voice/say`, `POST /api/voice/session/{id}/{start,stop,arm,state}`, `GET /api/voice/hands-free` |
 | Awareness | `GET /api/awareness/{status,observations,briefing,config,stream}`, `POST /api/awareness/poll`, `PATCH /api/awareness/config` |
 | Routines | `GET/POST /api/routines`, `PATCH/DELETE /api/routines/{id}`, `POST /api/routines/{id}/run` |
-| Models | `GET /api/models`, `POST /api/models/select`, `DELETE /api/models/select/{slot}` |
 
 ---
 
-- [x] **Typed and spoken yes/no for confirmations in the WinUI client (2026-09-19)** (`desktop-winui/Jarvis.Core/Voice/ConfirmationIntent.cs`, `ChatViewModel`, `HudWindow`) — `ChatViewModel.SendMessageAsync` used to attach *every* pending `act_<hash>` id to whatever the next message was, so "no", an unrelated question or a stray voice utterance all approved the action. While an ask is pending, the composer and the HUD now read the reply through `ConfirmationIntentParser` first: a clear yes ("yes", "go ahead", "do it", a trailing "ok") resubmits the prompt that led to the ask with every pending id attached — the same thing the approve button does, since `/chat/stream` rejects an empty message — and the user's own words stay in the transcript; a no ("no", "cancel", "don't", "stop") tells the backend via `POST /api/confirmations/{id}/deny` so no timeout is announced later, and the voice loop hears "Understood, cancelled." (`ChatViewModel.SpokenFeedback`); anything else goes to the model with nothing approved and the card stays until it is answered or the backend's window lapses. A negation up front wins when both appear ("don't do it"), "yes… actually no" is treated as unclear, and "ok"/"sure"/"fine" only count as the whole answer or its last word so "ok so what does that do?" is a question. Resolving by text or voice takes the card off its bubble (`ChatMessage.ResolveConfirmation`) and clicking a card that a typed "yes" already resolved is a no-op, so an id is never sent twice. `confirmation_required` is also treated as the turn's completion on the client — the backend ends the stream there without a `done` — so the caret goes away and the spoken prompt is actually spoken. `scripts/start-jarvis.ps1` now runs the winapp CLI's `RunPackagedApp` target with `WinAppRunNoLaunch=true` after a build, because a plain `dotnet build` leaves the AppX layout stale and the launcher would run the previous build.
-- [x] **Vision in the WinUI client (2026-09-16)** (`desktop-winui/Jarvis.App/Services/ImageAttachmentService.cs`) — thumbnail chips for image attachments, Ctrl+V pastes a clipboard bitmap as an attachment, anything over 1568 px on its longest side is downscaled to a JPEG before upload (Qwen3.5 uses dynamic resolution, so a 4K capture would cost thousands of tokens), and a hint line under the composer says whether the loaded model will see the image itself (`loaded_projector` on `GET /api/models`) or the captioner will describe it. Uploading into a brand-new session used to fail its foreign key because the client uploads before the first message — the session row is now created on upload.
-
-- [x] **Honest tool turns (2026-09-20)** (`backend/app/agent/orchestrator.py`, `persona/profiles.py`, `llamacpp_provider.py`) — "delete probe_delete_me.txt" came back *"Sir, the file has been deleted."* with `tools_used: []`. Replaying the exact request against llama-server (new `LLAMA_PAYLOAD_DUMP_DIR` writes every request as JSON) found three things stacked up. The prompt shipped twice: `ContextManager.build_context` already puts its assembled system prompt at the head of `messages`, and every provider loop prepended the same text again — ~10 KB of persona, rules and RAG context in duplicate on every local turn since the first commit (`_with_system_prompt` now sends exactly one). The Jarvis persona line *"Never narrate what you are about to do — do it, then report what happened"* was the actual trigger: with it the 4B called the tool 1 time in 6, without it 6 in 6, so it now says to call the tool and report only from its result. And the router only sees prose, so a short command landed on the fast slot; tools are now chosen before routing and a turn whose tool set includes anything above LOW_RISK (`delete_file`, `execute_command`, `launch_app`, clipboard) goes to main (`_prefer_capable_slot`, explicit model choice respected). The 9B then showed the other failure — think block *"Found it. Now I'll delete the file."* and stop — which the provider used to promote to the reply; the stream loop now nudges once ("call the tool now, or give your answer") with the tools still offered, and only then falls back to prose. Each loop logs the tools offered and what the model returned (`Offering 9 tools to 'main': [...]` / `Model 'main' replied: tool_calls=['delete_file']`). Verified live: auto route → main → `find_files` → `delete_file` → confirmation card → approve → "Done. The file is gone."; the 4B forced by `model=fast` now asks for confirmation too. Pinned by `backend/tests/test_orchestrator_tool_turns.py`.
-
-- [x] **Hardware on demand, the clock on every turn (2026-09-22)** (`backend/app/agent/tools/system_status.py`, `build_turn_context`) — The SYSTEM STATE line gave the model real numbers, but it also put the machine's vitals in front of every turn and the persona's "concrete numbers" directive pulled them into replies that never asked. The line is gone; a question about the machine ("how hot is the GPU", "what's my system usage", "how's my pc" — word-boundary matched, so "program" does not trip "ram") now offers `get_system_status`, a LOW_RISK tool that takes a fresh sample through `AwarenessMonitor.collect_snapshot()` rather than the ≤20 s-old poll, and returns the same one-line summary plus governor state and throttle reasons. The persona says to call it and quote only what it returned, never to volunteer figures. In its place the per-turn block carries `CURRENT TIME: Tuesday 2026-09-22 14:07 India Standard Time` (minute resolution, so the several requests inside one turn share a prefix) — the model had no idea what "today" was and phrased current-affairs searches around its training year. Still placed after the history, never in the cached head. Pinned by `backend/tests/test_system_status_tool.py`.
-
-- [x] **New workspace from the WinUI client (2026-09-22)** (`desktop-winui/Jarvis.App/Views/NewWorkspacePane.xaml`) — `ProjectsViewModel.CreateAsync` and `POST /api/projects` both worked, but nothing in the client called them: the workspace dropdown only listed and switched projects. A "New workspace" button under the menu's rows (a button, not a row — the puck should not land on an action) opens an in-window glass sheet shaped like `SettingsPane`: name, description, standing instructions, and local folders to index (FolderPicker). Creating also activates the workspace, since the backend only activates the very first project on its own.
-- [x] **Our own compute is not an external workload (2026-09-22)** (`RuntimeProcessManager.is_processing`, `ResourceGovernor.runtime_busy_provider`) — Only requests that come through the orchestrator register a governor activity; anything sent straight to `:8001` (a payload replay with curl, a script, a second client) drove the GPU to 98% with nothing registered, which the governor read as a game and — after the 4-tick debounce — evicted the model. Each poll now asks llama-server first (`GET /slots`, `is_processing` per slot, 0.5 s timeout, awaited in the poll loop so `collect_metrics` stays synchronous) and, when it is decoding, the GPU-compute breach is not counted. Only the compute rule is exempted: VRAM growth from *other* processes is still judged as before, since that is the signal that actually says something else wants the card. Unknown (no server, endpoint unreachable, adopted server without `/slots`) is treated as not busy, so the compute rule keeps protecting against a real external load. Verified against the live server: `is_processing` False idle, True mid-request, False after. Pinned in `backend/tests/test_governor.py`.
-
-- [x] **RAG relevance floor (2026-09-22)** (`backend/app/rag/embedding_sidecar.py`, `embeddings.py`, `retriever.py`, `vector_store.py`) — Workspace context went into every WORKSPACE turn because something always ranks first and nothing could gate it: `sentence_transformers` was never installed, so "semantic" vectors were a hashed bag of words with no signal, and the lexical reranker's scores meant nothing. Four changes. (1) Real vectors: a CPU-only llama-server embedding sidecar (nomic-embed-text-v1.5 Q8, 137M, 768-dim, `models/embeddings/`, port 8003) in the captioner's shape — cold, spawned on the first vector, stopped after 300 s idle, zero VRAM; ~35 ms per query, `backend/app` (497 chunks) indexes in 20 s. Without the model file it degrades to the hashed engine. (2) An embedding-generation marker beside each project's index (`indexes/embedding_model.txt`): an index built in another vector space is wiped and rebuilt rather than compared against — the indexer does it on the next pass, the retriever kicks a background rebuild off once and serves nothing until then. (3) Every candidate gets the same cosine scale (keyword-only hits read their stored vector back from Qdrant), then three cuts calibrated on this repo's own code, where a real question peaks at 0.71–0.97 and everything unrelated sits flat at 0.52–0.65: nothing below `RAG_MIN_RELEVANCE` (0.62), nothing more than `RAG_RELEVANCE_GAP` (0.15) under the best chunk, and nothing at all when the top six are within `RAG_MIN_PEAK` (0.04) of each other — "what is the weather", "write me a poem about cats" and "why?" all score 0.55–0.63 flat against the code and now inject zero chunks; "how does the wake word get detected" keeps exactly `WakeWordDetector` at 0.893. (4) `should_retrieve`: chit-chat, a message with no content terms ("why?"), and a short imperative aimed at the machine ("delete probe.txt", "open discord", "set volume to 50", ≤6 words starting with an OS/file verb and containing no question word) skip retrieval outright — those score 0.62–0.68 flat against `delete_*` handlers and would otherwise need the peak rule to catch them. `GET /api/models` reports the sidecar under `embedder`. Pinned by `backend/tests/test_rag_relevance_floor.py` (the sidecar test runs only where the GGUF is installed).
-
-- [x] **Sidecars hold no VRAM (2026-09-22)** (`captioner.py`, `embedding_sidecar.py`) — `models/captioner/` had gone missing from disk, so the image captioner was `available: false`; re-downloaded SmolVLM-500M-Instruct Q8 + its projector from `ggml-org` and verified the fallback end-to-end with a genuinely text-only model: MiniCPM5-2B on `main` (`loaded_projector: null`) answered "a blue sign with a red square and a yellow circle, and the text reads 'Jarvis Test 42'" for exactly that image, 4.0 s including the sidecar's cold start. Found while checking: the CUDA build of llama-server creates a device context even with `-n-gpu-layers 0`, so each CPU sidecar held ~170 MB of dedicated VRAM it never used (181 MB embedder, 161 MB captioner via the `GPU Process Memory` counter) — and 178 MB was precisely the margin by which the 9B's projector had just failed to fit (5194 needed, 5016 free). Both sidecars now launch with `CUDA_VISIBLE_DEVICES=-1` (`""` is ignored by CUDA); ggml logs "no CUDA-capable device is detected", the counter reads 0 MB, and captions and embeddings are unchanged.
-
-- [x] **Glass interaction and layering fixes (2026-09-22, verified on device)** — two bugs found from
-  the user's report that the sheets blended into the window and that a toggle flipped when a drag
-  ended on the side it started from. (1) `ReleasePointerCapture` raises `PointerCaptureLost`
-  *synchronously* and that handler clears `_dragging`, so every release that read `_dragging`
-  afterwards saw false: `GlassToggle` took the tap branch on every release (a drag that crossed
-  sides looked correct by accident; one ending where it began flipped wrongly) and `GlassSegmented`
-  always picked the row under the pointer rather than the dragged-to one. The drag state is now read
-  before capture is released, in `Jarvis.Glass` and `Jarvis.GlassLab` alike. (2) Both sheets were
-  declared `Layer="2"` in XAML — the same layer as every control inside every panel, and a layer
-  only covers and only frosts what is *below* it, so a sheet could do neither to the controls behind
-  it however high its `Frost` went. Sheets are now layer 4 via `GlassLayers`, which documents the
-  whole census; no glass layer is a bare integer in XAML any more. XAML text still needs the
-  separate `SheetBackdropOpacity` fade, because XAML always paints above the swapchain.
-
 ## 4. Next Milestones
 
-- **Voice accuracy** (user-reported 2026-09-22, deferred): the WinUI mic path now hears speech and wake-word works on device, but pickup is inconsistent and Whisper transcripts are often wrong. Candidates: model size / beam settings, `VoiceViewModel` AudioGraph gain and VAD thresholds, noise gating.
+In priority order. Each item says what "done" means and what still needs the user.
 
-- **Liquid Glass fidelity -- apply the measured material values** (2026-09-22, ready to work):
-  the user's iPad screen recording of iPadOS 26 was measured frame-by-frame, so the guesswork is
-  over. Source: `ScreenRecording_09-22-2026 19-38-02_1.mp4`, 2778x1940 HEVC, 141.5s -- **keep this
-  file**; the WhatsApp copy is 672x464 and far too compressed to measure. Regenerate any frame with
-  `ffmpeg -ss <t> -i <video> -frames:v 1 -q:v 1 out.png`. The decisive moments are **t=72.0** (an
-  iOS 26 switch caught with its puck lifted mid-drag -- the exact state `GlassToggle` models; the
-  switch is at approximately x 2444..2610, y 596..676) and **t=36.5 / t=41.0** (the Liquid Glass
-  slider's thumb at rest and lifted).
+### 4.1 Liquid Glass fidelity (in progress)
 
-  Measured against `GlassToggle.Material`, from the switch at t=72 (track height 56px, lens 116x80px):
+Source of truth: the user's iPad recording `ScreenRecording_09-22-2026 19-38-02_1.mp4`
+(2778x1940 HEVC, in Downloads -- **keep it**; the WhatsApp copy is too compressed to measure).
+Frames: `ffmpeg -ss <t> -i <video> -frames:v 1 -q:v 1 out.png`, then measure with PIL/numpy.
+**t=72.0** = the switch with its puck lifted mid-drag (x 2444..2610, y 596..676);
+**t=36.5 / 41.0** = the slider thumb at rest / lifted (not the switch -- different aspect);
+**t=83.0 -> 85.0** = folder-open transition (background dim/blur).
 
-  | Quantity | Measured | Constant | Status |
+**a. Confirm today's two changes on device, then commit** (built clean, *unverified on device*):
+- `GlassToggle.Material` set to the t=72 measurements (both `Jarvis.Glass` and `Jarvis.GlassLab`):
+
+  | Quantity | Measured | Was | Now |
   |---|---|---|---|
-  | rim band / lens half-height | 0.45 | `ToggleLiftBezelFraction` 0.46 | correct |
-  | rim bend direction | outward (content 56->44px) | `ToggleLiftRefraction` -9 | sign correct |
-  | interior white wash | ~6% | `ToggleLiftTint` 0.08 | -> 0.06 |
-  | lens height / track height | 1.43 | 1.23 (ThumbRadius 13.5 x 1.46 x 2 / 32) | -> `ToggleLiftScale` ~1.69 |
-  | lens aspect w/h | 1.45 | `ToggleLiftAspect` 1.83 | -> 1.45 |
-  | chromatic fringing | none (R-B within +/-2) | `ToggleLiftChromatic` 0.12 | -> 0 |
-  | magnification | none | `ToggleLiftMagnify` 0.2 | -> 0 |
+  | interior white wash | ~6% | `ToggleLiftTint` 0.08 | 0.06 |
+  | lens height / track height | 1.43 | `ToggleLiftScale` 1.46 (=1.23) | 1.69 |
+  | lens aspect w/h | 1.45 | `ToggleLiftAspect` 1.83 | 1.45 |
+  | chromatic fringing | none | `ToggleLiftChromatic` 0.12 | 0 |
+  | magnification | none | `ToggleLiftMagnify` 0.2 | 0 |
+  | rim band / half-height | 0.45 | `ToggleLiftBezelFraction` 0.46 | unchanged |
+  | rim bend | outward | `ToggleLiftRefraction` -9 | unchanged |
 
-  The 1.83 aspect was almost certainly measured off the *slider* (which measures 1.79 lifted), not
-  the switch -- the same trap Gemini fell into when asked about "the slider thumb". The
-  magnification finding is the cleanest measurement in the recording: the slider's blue rail is 8px
-  thick at an identical y inside and outside the lens, so content passes through the centre
-  undistorted and all the bending lives in the rim band.
+  The lens now overhangs the 32-DIP track by ~7 DIP each side; a toggle within 7 DIP of a
+  ScrollViewer edge would have its lens clipped -- check the Settings sheet's first/last rows.
+- Tap slop (`TapSlopDip` = 6) in `GlassToggle` and `GlassSegmented`, both copies. The 09-22 drag
+  fix made any press that moved >=2 DIP a "drag"; a touchpad click's wobble then settled back
+  where it started and the click was lost ("the button is not responsive like before"). A release
+  is now a drag only if the pointer got >= 6 DIP away at some point.
 
-  Decided but not yet applied: the five rows above marked with an arrow.
+**b. Spring timing -- needs a decision with the user.** The recording gives lift ~130 ms, settle
+~130-140 ms, **no overshoot** (lens height tracked over 120 frames through two press-drag-release
+cycles). Ours is stiffness 520 / damping 30: ~270 ms with deliberate overshoot, and the code
+comment claims that overshoot came from a recording. Critically damped at ~130 ms is roughly
+stiffness 2000 / damping 90. Only the lift channel was measured; measure the travel channel (puck
+sliding side to side) before changing it -- it may legitimately differ.
 
-  Still open, needs discussion before changing:
-  - **Spring timing.** Tracking the lens height across 120 frames at 30fps through two
-    press-drag-release cycles gives **lift ~130ms, settle ~130-140ms, no overshoot**. Ours
-    (stiffness 520, damping 30) settles in ~270ms *with* deliberate overshoot, and the code comment
-    claims that overshoot came from a recording. Critically damped at ~130ms is roughly stiffness
-    2000 / damping 90. Only the lift/scale channel was measured -- the travel channel (the puck
-    sliding side to side) is still unmeasured and may legitimately differ.
-  - `ThumbStretch` 0.012 -- no velocity stretch was observed, but only the height channel was
-    checked, not width-against-velocity.
-  - `ToggleLiftFrost` 5 (the milky phase on release) -- never independently verified.
-  - `GlassSlider`'s own constants (rest aspect measures 1.54, lifted 1.79) and everything about
-    `GlassSegmented` were not measured at all.
+**c. Still unmeasured:** `ThumbStretch` 0.012 (no velocity stretch seen, but width-vs-velocity was
+not checked); `ToggleLiftFrost` 5 (the milky phase on release); all of `GlassSlider` (rest aspect
+measures 1.54, lifted 1.79 vs our `ThumbAspect` 1.4) and `GlassSegmented`.
 
-- **Sheet backdrop dim** (2026-09-22, optional polish — the user judged the layering "good"
-  on device, so this is no longer a defect): `SheetBackdropOpacity` in
-  `MainWindow.xaml.cs` fades the window's XAML content to 0.08 while a sheet is open. That was set
-  before the layer fix below, when glass-layer content was also bleeding through, so it is likely
-  far too aggressive now. For reference Apple dims the background behind an opened folder by **19%**
-  (measured across the t=83.0 -> t=85.0 transition, same underlying content) with a background blur
-  of sigma ~30-35px, about 1.6% of screen height. Ours is not imitating Apple here though -- it is
-  compensating for XAML always painting above the swapchain -- so 0.81 is not the answer either.
+**d. Sheet backdrop dim (optional polish).** `SheetBackdropOpacity` (`MainWindow.xaml.cs`) fades
+the window's XAML to 0.08 while a sheet is open -- set before the layer fix, likely too aggressive
+now. Apple dims behind an opened folder by 19% with a ~30-35 px sigma blur, but ours compensates
+for XAML painting above the swapchain, so the right value is a judgement on device, not 0.81.
 
+### 4.2 Voice accuracy (user-reported 2026-09-22, deferred by the user)
+
+Mic pickup is inconsistent and transcripts are often wrong. What the code does today: client VAD
+in `VoiceViewModel` (RMS threshold 0.045, 850 ms silence, 320 ms min, 12 s max), whole utterance
+uploaded, backend transcribes with faster-whisper **`tiny.en`, beam 2, on CPU**
+(`voice/transcriber.py`) with a prompt that teaches it the name. The cheapest real lever is the
+model size -- `base.en`/`small.en` on the 20-thread CPU -- measured for latency and word error on
+a few recorded utterances before picking; then VAD thresholds / gain. Wait for the user to pick
+this up.
+
+### 4.3 Housekeeping (needs the user's go-ahead; nothing is broken without it)
+
+- **Dead second tool stack.** `backend/app/tools/` (21 `BaseTool`s: git, unreal, terminal, patch,
+  web, vision) is registered in `main.py` but consumed only by `AgentLoop`, which is never run --
+  the model has never been offered these tools. Options: delete them with `agent/loop.py`, their
+  tests and the `tool_registry` wiring; or port the useful ones (git status/diff/log) into
+  `app/agent/tools/` with risk tiers and triggers. Same question for `ollama_provider.py`,
+  `lmstudio_client.py` (engines not installed) and `agent/tts/chatterbox_engine.py` (disabled).
+- **Stale configuration and docs.** `backend/.env` and `.env.example` name models that are not
+  what runs (`LLAMA_*_MODEL_PATH`, `MAIN_MODEL`, `FAST_MODEL`, `EMBEDDING_MODEL`, `RAG_*_MODEL`);
+  `docs/ARCHITECTURE.md`, `AI_AGENT_CONTEXT.md`, `API_REFERENCE.md`, `README.md` predate the
+  model changes. Either correct them or mark them historical.
+- **Repo-root debris.** `DIFF.md`, `STAGE_B_AND_GOVERNOR_V2_DIFF_REPORT.md`,
+  `JARVIS_PROJECT_SUMMARY.md`, `jarvis_project/` + `.zip`, `dist/`, `build/`, `*.spec`,
+  root `workspace/` (tests write `MagicMock`/`p` project dirs there -- a test-isolation bug worth
+  fixing on its own), old `*.log` files.
+
+### 4.4 Robustness backlog
+
+- **Paged-out model.** When another app claims VRAM, WDDM demotes our model to shared memory
+  (`model_resident=False`) and inference crawls. The governor only avoids corrupting its baseline
+  in that state; it should reload once the pressure passes.
+- **Tool selection is keyword matching** (`get_relevant_tools`). Phrasings without a trigger word
+  get no tools, and "do/check/show..." offers all of them. Worth revisiting once there are real
+  misses to measure against.
+- **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
+  goes through `AwarenessMonitor` actions.
+
+### 4.5 Waiting on the device
+
+Built and committed, not yet confirmed by the user on screen: creating a workspace from the
+dropdown (c9d16c1), RAG relevance floor + embedder (b6fee7a), sidecars holding 0 VRAM (b45513f,
+live since the 2026-09-23 10:36 restart), and 4.1a above. Older reports whose status is unknown:
+an intermittent white slab the HUD card's size at launch (2026-09-20), and the narrow-mode right
+panel covering its own close button.

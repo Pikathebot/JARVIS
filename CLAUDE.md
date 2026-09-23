@@ -1,132 +1,181 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository. Rewritten 2026-09-23 from a read of the code itself;
+where this file and older docs disagree, trust this file and `PLAN.md`, then verify in code.
 
 ## What this is
 
-Jarvis is a private, local-first AI assistant for Windows 11. A FastAPI backend drives native
-`llama-server.exe` (llama.cpp) inference (Qwen3.5-9B main / Qwen3.5-4B fast, full GPU offload on an
-8GB RTX 4060), with tool calling, deterministic safety permissions, a hardware resource governor,
-project workspaces with versioned artifacts, RAG, MCP, voice, and proactive/ambient behavior.
+Jarvis is a private, local-first AI assistant for one Windows 11 laptop (i7-14700HX, RTX 4060
+Laptop **8 GB**, 16 GB RAM). A FastAPI backend drives native `llama-server.exe` (llama.cpp) with
+tool calling, deterministic permission gating, a hardware governor that keeps the model inside
+the VRAM the desktop leaves free, project workspaces with RAG and versioned artifacts, local voice
+(Whisper in, Kokoro out) and unprompted "ambient" remarks. The only client is a native WinUI 3 app
+(`desktop-winui/`) with a hand-built D3D11 Liquid Glass renderer modelled on iOS/iPadOS 26.
 
-**The frontend is `desktop-winui/`** (WinUI 3 / C#, solution `Jarvis.slnx`) — the only client;
-the earlier Next.js/Tauri and pywebview UIs and the `run_jarvis.py` launcher were deleted in
-September 2026, so don't look for them. The app supervises the backend process itself
-(`BackendHost`). The backend (`http://127.0.0.1:8000`) is UI-agnostic — the seam to any frontend
-is pure HTTP + SSE, so backend changes should not assume a particular client.
+The whole project has been written by Claude sessions; the user directs, tests on the device and
+reports back. `PLAN.md` is the roadmap (§4 = what's next); `docs/MILESTONES.md` is the detailed
+log of what was built and why. Everything else in `docs/` (ARCHITECTURE, AI_AGENT_CONTEXT,
+API_REFERENCE, Build plan, the GOVERNOR/STAGE specs) is **historical** -- written before the
+WinUI port and the model changes, and wrong about models, clients and paths in places.
 
 ## Commands
 
-**Backend (from repo root — `pytest.ini` sets `pythonpath = backend .`):**
+Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
+so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                          # full suite
-.\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py   # single file
-.\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name  # single test
+.\.venv\Scripts\python.exe -m pytest                                   # ~2 min; 584 pass, 9 skip (2026-09-23)
+.\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-`asyncio_mode = strict` — async tests need explicit `@pytest.mark.asyncio`.
 
-**Launch full app (backend + UI):**
+Full app -- this is how the user runs it, and the only launch that is reliably current:
 ```powershell
-.\"Start Jarvis.bat"            # → scripts/start-jarvis.ps1: build if needed, register dev package, launch by AUMID
-.\"Start Jarvis.bat" -Build     # force a rebuild first
+.\"Start Jarvis.bat"          # -> scripts/start-jarvis.ps1: kill stale app, rebuild if sources are
+.\"Start Jarvis.bat" -Build   #    newer than the AppX layout, register dev package, launch by AUMID
 ```
-The app finds the repo root by walking up from its exe (`backend/app/main.py` + `desktop-winui/`)
-and starts uvicorn from `.venv` inside a Job Object, so no separate backend launch is needed.
+The app finds the repo root from its own exe and starts uvicorn itself (`BackendHost`, in a Job
+Object, cwd `backend/`), so no separate backend launch is needed.
 
-**WinUI native client** (from `desktop-winui/`):
+WinUI, from `desktop-winui/`:
 ```powershell
-dotnet build Jarvis.slnx
-dotnet run -c Debug --no-build --project Jarvis.App
+Get-Process -Name 'Jarvis.App' -ErrorAction SilentlyContinue | Stop-Process -Force   # else MSB3027
+dotnet build Jarvis.slnx            # App + Core + Glass only
+dotnet build Jarvis.GlassLab        # NOT in the solution -- build it separately after touching it
 ```
-Kill any running `Jarvis.App` process first (`Get-Process -Name 'Jarvis.App' | Stop-Process -Force`)
-— a live instance locks the AppX output and `dotnet run` fails with an unhelpful MSB3027.
+A plain `dotnet build` does **not** refresh the registered AppX layout; launching afterwards by
+AUMID runs the previous build. Use the launcher script, which detects this and rebuilds.
 
-## Architecture
+## Runtime reality (check before trusting config)
 
-### Backend layout (`backend/app/`)
-- `main.py` — FastAPI app, router mounting, startup migrations.
-- `config.py` — Pydantic Settings; env vars documented in `backend/.env.example`.
-- `agent/` — the agent loop:
-  - `orchestrator.py` — multi-turn tool-calling loop, attachment injection, SSE event emission.
-  - `runtime_process_manager.py` — spawns/manages `llama-server.exe` (per-slot model paths, extra
-    args, `--no-mmap`); consults `model_catalog.py` before configured `.env` paths so a runtime
-    model choice (`data/models.json`) survives restarts.
-  - `llamacpp_provider.py` — OpenAI-compatible client to llama-server; `ThinkTagStreamScanner`
-    splits `<think>` reasoning out of the token stream into separate `reasoning_delta`/`text_delta`
-    SSE events (reasoning is a distinct channel, not inline text — see `messages.reasoning_content`).
-  - `model_router.py` — local vs. OpenRouter "Heavy Mode" routing. Tools are selected *before*
-    routing; a turn offering any non-LOW_RISK tool is pulled onto `main` (`_prefer_capable_slot`).
-    To see exactly what a model was sent, set `LLAMA_PAYLOAD_DUMP_DIR` — every request lands there
-    as JSON, replayable with curl against `:8001`.
-  - `permissions.py` — deterministic O(1) safety tiers (`LOW_RISK` / `CONFIRMATION_REQUIRED` /
-    `HIGH_RISK`); confirmation-required actions get a SHA-256 `act_<hash>` token the user must
-    approve, and can carry a TTS-ready `spoken` prompt for voice-initiated turns.
-  - `tools/` — built-in native tools (file I/O, patch, web, OS control, etc.), registered via
-    signature introspection (`validator.py`).
-- `governor/` — Hardware Resource Governor V2: PyNVML GPU/VRAM + psutil CPU/RAM telemetry,
-  threshold-based request throttling (`resource_governor.py`, `process_watcher.py`).
-- `awareness/` — `AwarenessMonitor` is the **single shared channel** for anything Jarvis says
-  unprompted (hardware warnings, scheduled briefings, proactive tool actions). Rules over a
-  telemetry snapshot produce `Observation`s; the monitor owns all restraint (announce once,
-  escalate through cooldown, quiet on de-escalation, announce recovery once). A kind of observation
-  can carry a registered action (e.g. VRAM-critical evicts the model itself). **Any new
-  "Jarvis says/does something on its own" feature should emit through `monitor.emit(...)`
-  rather than inventing new SSE/voice plumbing** — the frontend already renders/speaks anything
-  delivered this way.
-- `routines/` — scheduled briefings/messages, persisted to `data/routines.json`, delivered through
-  the awareness monitor's own channel.
-- `persona/` — `jarvis` / `assistant` / `operator` profiles; persona changes manner (address term,
-  voice, tone, spoken-length cap) via a system-prompt preamble, never the tool protocol itself.
-- `database/` — SQLModel models + session factory; schema changes go through Alembic
-  (`backend/alembic/versions/`), auto-applied on FastAPI startup.
-- `memory/` — `MemoryStore` (sessions/messages) and progressive context compaction.
-- `mcp/` — JSON-RPC 2.0 stdio client/manager for external MCP tool servers.
-- `skills/` — dynamic Markdown+YAML-frontmatter skill loader (`skills/*.md`), trigger-keyword matched.
-- `voice/` — wake-word spotting, TTS text sanitization; the browser/client does mic capture and VAD
-  locally and uploads whole utterances — the backend decides what an utterance *means* (wake vs.
-  follow-up-window vs. barge-in), not the client.
-- `rag/` — local CPU embeddings + hybrid keyword/vector retrieval, scoped per project workspace.
-- `routers/` — one APIRouter module per resource area (projects, artifacts, models, persona,
-  routines, awareness, voice, ...).
+- **Models actually served** come from `data/models.json` (per-slot selection) ahead of `.env`.
+  As of 2026-09-23: main = `models/qwen3.5-9b/Qwen3.5-9B-UD-IQ3_XXS.gguf` (+ Q8_0 projector, 32k
+  ctx, ~5.0 GB), fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only). `backend/.env`'s
+  `LLAMA_*_MODEL_PATH` / `MAIN_MODEL` still name the older Q3_K_XL and 4B -- stale, not live.
+  `GET /api/models` is the truth at runtime.
+- **Ports:** 8000 backend, 8001 llama-server (the chat model), 8002 image-captioner sidecar,
+  8003 embedding sidecar. Both sidecars are CPU-only llama-servers launched with
+  `CUDA_VISIBLE_DEVICES=-1`, cold-started on first use and stopped after 300 s idle.
+- **State paths** (the backend's cwd is `backend/`, so relative paths resolve there):
+  `data/{models,persona,routines}.json` at the **repo root** (resolved from `__file__`);
+  the live SQLite DB is `backend/data/jarvis_memory.db`; live workspaces are
+  `backend/workspace/projects/{id}/`. The repo-root `workspace/` holds test debris.
+- **Logs:** `backend.log` (repo root) for the backend; `launcher-winui.log` for the launcher;
+  `AppX\jarvis-glass.log` and `AppX\jarvis-app-crash.log` under
+  `desktop-winui\Jarvis.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\AppX\`.
+- **Payload replay:** set `LLAMA_PAYLOAD_DUMP_DIR` and every request to llama-server is written as
+  JSON, replayable with curl. Best tool for "why did the model do X".
 
-State that must survive restarts (persona overrides, model selection, routines) follows one
-pattern throughout: a small JSON file under `data/` (gitignored), loaded in `__init__`, rewritten
-on every mutation — see `persona/manager.py` or `routines/scheduler.py` before inventing a new one.
+## How a chat turn flows (backend)
 
-### Project workspaces
-Each project gets a directory tree under `${WORKSPACE_PATH}/projects/{project_id}/`
-(`files/`, `knowledge/`, `artifacts/`, `memory/`, `indexes/`), managed via `/api/projects`. User
-attachments upload into `files/` and are tracked in the `attachments` table; AI-produced artifacts
-are versioned (`artifacts` + `artifact_versions` tables).
+`POST /chat/stream` (`main.py`) -> `AgentOrchestrator.run_stream` (`agent/orchestrator.py`):
+1. Session + project resolved; skills matched (`skills/loader.py`, keyword triggers).
+2. **Tools chosen before routing**: `get_relevant_tools()` in `agent/tools/registry.py` is a
+   keyword heuristic over the message; `_offered_tools` then unions it with every tool this
+   session has already been offered (keeps the prompt prefix byte-stable).
+3. `ModelRouter.evaluate` (regex heuristics) gives a verdict, then three overrides in order:
+   `_prefer_seeing_slot` (images -> a slot with vision), `_prefer_capable_slot` (any non-LOW_RISK
+   tool offered -> main), `_prefer_loaded_slot` (a "fast" verdict never swaps models: it runs on
+   whatever is loaded, with thinking off per request).
+4. RAG (WORKSPACE mode only, gated by `should_retrieve` and a relevance floor), then
+   `ContextManager.build_context` assembles messages.
+5. Provider loop (`_run_provider_stream_loop`, `llamacpp_provider.py`): stream, split `<think>`
+   into `reasoning` events, run tool calls through `permissions.py` then `tool_pipeline.py`
+   (worker thread, per-tool timeout, output truncation), loop until a final answer.
+6. SSE events to the client: `token`/`text_delta`, `reasoning`, `tool_draft`/`tool_call`,
+   `tool_start`/`tool_end`, `retrieval_context`, `confirmation_required`, `done`, `error`.
+   A confirmation **ends the stream without `done`**.
 
-### Model selection
-Models are enumerated from whatever GGUFs exist under `models/` (`agent/model_catalog.py`), not
-hardcoded — a per-slot (`main`/`fast`) choice persists to `data/models.json` and is consulted ahead
-of `.env`'s `LLAMA_MAIN_MODEL_PATH`/`LLAMA_FAST_MODEL_PATH`. Selecting a model restarts
-`llama-server` onto it, including sweeping any server that was started outside Jarvis. Don't assume
-the model paths in `.env`/`backend/.env.example` reflect what's actually configured at runtime —
-check `data/models.json` and `GET /api/models`.
+OpenRouter "Heavy Mode" exists but is off (`CLOUD_ROUTING_ENABLED=false`); on failure the local
+path runs instead.
 
-### WinUI client (`desktop-winui/`)
-Three projects: `Jarvis.Core` (DTOs mirroring the backend's JSON contracts, `JarvisApiClient`,
-SSE readers), `Jarvis.Glass` (the liquid-glass rendering system — panels, wallpaper/live-capture
-backdrops, Win2D shader layer), `Jarvis.App` (the shell: `MainWindow`, `HudWindow`, view models,
-services). Talks to the backend purely over HTTP/SSE.
+## Contracts that are easy to break
 
-Known gotchas (see memory `winui_migration_status` for full detail if working in this area):
-- JSON wire contract requires `JsonNamingPolicy.SnakeCaseLower` on `JarvisJson.Options` — case-
-  insensitive matching alone is not enough (`session_id` vs `SessionId`).
-- `x:Bind` with a `Converter=` does not compile when the XAML root is `Window` (unlike WPF, WinUI's
-  `Window` isn't a `FrameworkElement`); do converter-driven binding in code-behind instead. Same
-  restriction applies to binding non-`FrameworkElement` targets like `ColumnDefinition.Width`.
-- To screenshot the running app: `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` for the window's
-  own content; `CopyFromScreen` is unreliable (grabs whatever's on top at those coordinates, and
-  can't be trusted to have actually brought the target window to the foreground first) — but
-  `PrintWindow` also can't see a `SystemBackdrop`, so for judging glass/backdrop rendering use a
-  foreground-asserted `CopyFromScreen` instead (bring window to front, verify
-  `GetForegroundWindow() == target`, abort if not, then capture).
+- **Prompt prefix is a KV-cache contract.** The head system message (persona preamble +
+  `TOOL_PROTOCOL_RULES` + project instructions + the tool schemas the template renders there) must
+  be byte-identical turn to turn. Anything per-turn (current time, skill text, RAG chunks) goes
+  through `build_turn_context()` and rides on the *current user turn*, never stored. Qwen3.5's
+  template rejects a second system message. Breaking this silently re-prefills the whole
+  conversation every turn (measured 1363->1642 tokens vs 112-198). Pinned by
+  `test_per_turn_material_rides_on_the_user_turn_not_the_prefix`.
+- **Anything Jarvis says unprompted goes through `AwarenessMonitor.emit(Observation)`**
+  (`awareness/monitor.py`). The monitor owns restraint (announce once, escalate, recover once) and
+  the client already renders and speaks whatever arrives on that channel. Don't add new SSE/voice
+  plumbing for a proactive feature.
+- **Restart-surviving state** = a small JSON file under repo-root `data/`, loaded in `__init__`,
+  rewritten on every mutation (`persona/manager.py`, `routines/scheduler.py`). DB schema changes go
+  through Alembic (`backend/alembic/versions/`), auto-applied at startup.
+- **Adding a tool the model can call** means all three of: the function + entry in
+  `TOOL_FUNCTIONS`/`AVAILABLE_TOOLS` (`agent/tools/registry.py`), a tier in `BASE_TOOL_RISK_MAP`
+  (`agent/permissions.py`; unlisted tools default to CONFIRMATION_REQUIRED), and a trigger in
+  `get_relevant_tools` -- otherwise it is never offered. Schemas come from signature
+  introspection, so type hints and docstrings are the tool's contract.
+- **Permissions:** `LOW_RISK` runs; `CONFIRMATION_REQUIRED` and `HIGH_RISK` are handled
+  *identically* (both need an approval token; nothing is hard-blocked). Tiers are argument-aware
+  (`execute_command`, file paths, `launch_app`, `kill_process`, URLs). The `act_<hash>` token is a
+  deterministic SHA-256 of tool+normalised args; `agent/confirmations.py` adds expiry
+  (`CONFIRMATION_TIMEOUT_SECONDS`, 90) and refuses late approvals.
+- **The governor watches the whole card.** It evicts the model when *other* processes grow VRAM
+  (relative to a baseline taken at launch) or real external compute appears; our own llama-server
+  decoding is exempted via its `/slots` endpoint. Model launch walks a ladder (full -> no
+  projector -> half context -> fast model under main's name) sized to free VRAM, and announces
+  any downgrade through the awareness channel.
 
-## Tests
-`backend/tests/` (200+ tests), run via `pytest` from repo root. `norecursedirs` excludes
-`jarvis_project`, `.venv`, `desktop-winui`, `dist`, `build`.
+## Traps in the backend
+
+- **Two tool systems; only one is live.** `app/agent/tools/` (functions, `get_relevant_tools`)
+  is what the model sees. `app/tools/` (`BaseTool` classes: git, unreal, terminal, patch, web,
+  vision -- 21 registered in `main.py` as `tool_registry`) is consumed only by `AgentLoop`
+  (`agent/loop.py`), which the orchestrator constructs but **never runs**. Those tools have tests
+  but are unreachable at runtime; the "Registered tool: ..." lines in the log are from them.
+  Likewise `ollama_provider`/`lmstudio_client` (fallbacks for engines not installed) and
+  `agent/tts/chatterbox_engine.py` (`VOICE_OUTPUT_ENABLED=false`) are legacy. Don't extend them;
+  removal is a pending decision in `PLAN.md`.
+- Hitting `:8001` directly while the backend runs is fine for compute now, but a second model
+  load or a big VRAM grab from a script still reads as an external workload.
+- `0xC0000409` at llama-server start = CUDA lazy module load failing under VRAM pressure, not a
+  flag problem. The launch ladder handles it; `CUDA_MODULE_LOADING=EAGER` is the manual workaround.
+- On Windows a second llama-server binds an occupied port *silently*. If a model switch seems to
+  do nothing, look for a stale `llama-server.exe` (children are in a KILL_ON_JOB_CLOSE job now).
+
+## WinUI client (`desktop-winui/`)
+
+- `Jarvis.Core` -- DTOs mirroring the backend JSON, `JarvisApiClient`, SSE readers,
+  `ConfirmationIntentParser` (typed/spoken yes/no). `JarvisJson.Options` must keep
+  `JsonNamingPolicy.SnakeCaseLower`; case-insensitive matching alone breaks every request.
+- `Jarvis.App` -- `MainWindow` (sidebar, chat, composer, right panel, inline sheets in
+  `SettingsHost`), `HudWindow` (Ctrl+Shift+J overlay with its own voice session), view models,
+  `BackendHost`, `VoiceViewModel` (AudioGraph mic, client-side VAD, whole utterances to
+  `/api/voice/listen`; the backend decides what an utterance means).
+- `Jarvis.Glass` -- the renderer. `GlassHost` puts a premultiplied `SwapChainPanel` at the bottom
+  of a window's XAML tree; `LiveCaptureSource` captures the desktop (the window is excluded from
+  capture); `GlassRenderer` draws per **layer**: displacement field -> refraction -> specular rim,
+  each layer sampling the finished layer below, optional Gaussian frost pre-pass, DirectWrite text
+  composited per layer. Controls (`GlassToggle`, `GlassSlider`, `GlassSegmented`, `GlassButton`,
+  `GlassTextField`) and panels (`GlassSlab`) publish shapes to the window's `GlassScene` each tick.
+- `Jarvis.GlassLab` -- standalone tuning bench with **its own copies** of the controls and
+  shaders. Material/interaction fixes are usually applied to both copies; it is not in
+  `Jarvis.slnx`.
+
+Glass rules learned the hard way:
+- Layers come from `GlassLayers` (named constants), never a bare integer in XAML. A shape only
+  covers and frosts what is on a *lower* layer; same-layer shapes draw in arbitrary order.
+- XAML always paints **above** the swapchain, so glass can never frost XAML text; sheets fade the
+  window's XAML instead (`SetSheetOpen`). Popups/`ContentDialog`/`Flyout` paint above the window,
+  so glass controls inside them are invisible -- use inline panes.
+- `ReleasePointerCapture` raises `PointerCaptureLost` synchronously: read drag state before
+  releasing. Taps and drags are separated by a max-distance tap slop, not by "moved at all".
+- `x:Bind` with `Converter=` (or targeting `ColumnDefinition.Width`) doesn't compile under a
+  `Window` root -- do it in code-behind.
+- Material constants are measured, not guessed: the reference is the user's iPad recording (see
+  memory `liquid_glass_reference`); measure frames numerically, never trust a video model.
+- **You cannot screenshot the glass.** The window is excluded from capture (turning that off makes
+  the renderer capture itself and pin the GPU); `PrintWindow` returns black. Ask the user to look.
+
+## Working with the user
+
+- Ask before every commit, with a short summary of what was verified. Keep unrelated working-tree
+  files (`.agents/`, `Jarvis.lnk`) out of commits unless asked.
+- The user verifies on the device; say plainly what is build/test-verified versus seen working on
+  screen, and record anything unconfirmed as "unverified on device" in `PLAN.md`.
+- After finishing a milestone, move it from `PLAN.md` §4 into `docs/MILESTONES.md` (with the why)
+  and update §4 so the next session starts from accurate state.
