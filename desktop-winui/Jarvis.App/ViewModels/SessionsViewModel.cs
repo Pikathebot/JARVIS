@@ -24,6 +24,11 @@ public partial class SessionsViewModel : ObservableObject
     [ObservableProperty]
     public partial string? ProjectId { get; set; }
 
+    /// <summary>Which space's sessions to list. The two never share a list: Freeform sessions
+    /// have no project, and the Workspace list (one project's) leaves them out.</summary>
+    [ObservableProperty]
+    public partial ChatSpace Space { get; set; } = ChatSpace.Workspace;
+
     public event Func<string, Task>? SessionSelected;
 
     public SessionsViewModel(JarvisApiClient api, DispatcherQueue dispatcher)
@@ -37,7 +42,9 @@ public partial class SessionsViewModel : ObservableObject
     {
         try
         {
-            var sessions = await _api.FetchSessionsAsync(ProjectId).ConfigureAwait(false);
+            var sessions = Space == ChatSpace.Freeform
+                ? await _api.FetchSessionsAsync(chatMode: "FREEFORM").ConfigureAwait(false)
+                : await _api.FetchSessionsAsync(ProjectId, "WORKSPACE").ConfigureAwait(false);
             _dispatcher.TryEnqueue(() =>
             {
                 Sessions.Clear();

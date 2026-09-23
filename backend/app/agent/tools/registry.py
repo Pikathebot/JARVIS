@@ -307,6 +307,12 @@ def execute_tool(
         logger.warning("Attempted to execute unregistered tool: '%s'", tool_name)
         return f"Error: Tool '{tool_name}' is not registered."
     
+    if context and str(context.get("chat_mode") or "").upper() == FREEFORM_MODE and tool_name in WORKSPACE_BOUND_TOOLS:
+        return (
+            f"Error: '{tool_name}' works on project files, and this is a Freeform conversation "
+            "with no workspace. Ask the user to switch to a Workspace for that."
+        )
+
     func = TOOL_FUNCTIONS[tool_name]
     try:
         # Filter arguments based on function signature
@@ -350,6 +356,17 @@ _GIT_RE = re.compile(
 )
 
 
+# A Freeform conversation has no project and no working directory, so nothing that reads,
+# writes or runs inside a workspace is offered there -- and execute_tool refuses it even if the
+# model calls one anyway (a model can name a tool it was never offered).
+FREEFORM_MODE = "FREEFORM"
+WORKSPACE_BOUND_TOOLS = frozenset({
+    "read_file", "write_file", "patch_file", "delete_file", "find_files", "grep_in_files",
+    "list_directory", "execute_command", "create_artifact", "update_artifact", "read_artifact",
+    "git_status", "git_diff", "git_log", "git_commit", "git_checkout",
+})
+
+
 def get_relevant_tools(
     query: str,
     chat_mode: str = "WORKSPACE",
@@ -359,6 +376,17 @@ def get_relevant_tools(
     Intelligently filters tool schemas to reduce prompt prefill token bloat.
     Returns the minimal subset of relevant tools based on query intent.
     """
+    tools = _select_tools(query, chat_mode, matched_skills)
+    if (chat_mode or "").upper() == FREEFORM_MODE:
+        tools = [t for t in tools if t.__name__ not in WORKSPACE_BOUND_TOOLS]
+    return tools
+
+
+def _select_tools(
+    query: str,
+    chat_mode: str = "WORKSPACE",
+    matched_skills: Optional[list] = None
+) -> list[Callable[..., Any]]:
     if matched_skills and len(matched_skills) > 0:
         return AVAILABLE_TOOLS
 

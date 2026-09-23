@@ -17,8 +17,10 @@ public sealed class StreamChatOptions
     /// <summary>"auto" | "normal" | "heavy"</summary>
     public string Mode { get; init; } = "auto";
 
-    /// <summary>"WORKSPACE" | "SYSTEM"</summary>
+    /// <summary>"WORKSPACE" | "FREEFORM" | "SYSTEM"</summary>
     public string ChatMode { get; init; } = "WORKSPACE";
+
+    public bool Ephemeral { get; init; }
 
     public string? SystemPrompt { get; init; }
     public List<string>? ApprovedActionIds { get; init; }
@@ -50,6 +52,7 @@ public sealed class ChatStreamClient
             SystemPrompt = options.SystemPrompt,
             ApprovedActionIds = options.ApprovedActionIds,
             Attachments = options.Attachments,
+            Ephemeral = options.Ephemeral,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/chat/stream")

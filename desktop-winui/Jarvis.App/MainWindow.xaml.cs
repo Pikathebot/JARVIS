@@ -156,11 +156,26 @@ public sealed partial class MainWindow : Window
         {
             ChatViewModel.ProjectId = project?.Id;
             SessionsViewModel.ProjectId = project?.Id;
-            RightPanelViewModel.ProjectId = project?.Id;
-            SessionLabel.Text = project?.Name ?? "Default Workspace";
+            UpdateSpaceChrome();
             UpdateWorkspaceHighlight();
             _ = SessionsViewModel.RefreshAsync();
         };
+        // Space and ephemeral state can change from inside the view model too (opening a stored
+        // session leaves ephemeral mode), so the chrome follows the properties, not the clicks.
+        ChatViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ViewModels.ChatViewModel.Space) or nameof(ViewModels.ChatViewModel.IsEphemeral))
+            {
+                DispatcherQueue.TryEnqueue(UpdateSpaceChrome);
+            }
+        };
+        // Reopen in the space it was left in. Ephemeral is deliberately not restored: a
+        // scratchpad never outlives the run it was started in.
+        if (LoadSavedSpace() == ChatSpace.Freeform)
+        {
+            SessionsViewModel.Space = ChatSpace.Freeform;
+            _ = ChatViewModel.SwitchSpaceAsync(ChatSpace.Freeform);
+        }
         ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() => _ = SessionsViewModel.RefreshAsync());
         ChatViewModel.PropertyChanged += (_, args) =>
         {
@@ -329,6 +344,7 @@ public sealed partial class MainWindow : Window
         var showCaptions = width >= 700;
         GovernorLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
         MicLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
+        EphemeralLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
         VoiceStateText.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
         var showExtras = width >= 560;
         HudButton.Visibility = showExtras ? Visibility.Visible : Visibility.Collapsed;
@@ -525,6 +541,85 @@ public sealed partial class MainWindow : Window
     }
 
     private void NewChat_Click(object sender, RoutedEventArgs e) => ChatViewModel.NewChat();
+
+    // ---- Spaces and ephemeral mode ---------------------------------------------------------
+
+    /// <summary>True while UpdateSpaceChrome writes the switch/toggle back from the view model:
+    /// both glass controls raise their change events for programmatic changes too.</summary>
+    private bool _syncingSpaceChrome;
+
+    private async void SpaceSwitch_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        // SelectedIndex="1" in XAML fires this inside InitializeComponent.
+        if (ChatViewModel is null || _syncingSpaceChrome) return;
+        var target = SpaceSwitch.SelectedIndex == 0 ? ChatSpace.Freeform : ChatSpace.Workspace;
+        if (target == ChatViewModel.Space) return;
+        SetWorkspaceDropdownOpen(false);
+        SessionsViewModel.Space = target;
+        SaveSpace(target);
+        SessionsViewModel.Sessions.Clear(); // don't show the other space's list while it loads
+        await ChatViewModel.SwitchSpaceAsync(target);
+        _ = SessionsViewModel.RefreshAsync();
+    }
+
+    private async void EphemeralToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (ChatViewModel is null || _syncingSpaceChrome) return;
+        await ChatViewModel.SetEphemeralAsync(EphemeralToggle.IsOn);
+    }
+
+    private const string SpaceSettingKey = "ChatSpace";
+
+    private static ChatSpace LoadSavedSpace()
+    {
+        try
+        {
+            return Windows.Storage.ApplicationData.Current.LocalSettings.Values[SpaceSettingKey] is string saved
+                && Enum.TryParse<ChatSpace>(saved, out var space) ? space : ChatSpace.Workspace;
+        }
+        catch (Exception ex)
+        {
+            App.Log($"reading saved space failed: {ex.GetType().Name}: {ex.Message}");
+            return ChatSpace.Workspace;
+        }
+    }
+
+    private static void SaveSpace(ChatSpace space)
+    {
+        try
+        {
+            Windows.Storage.ApplicationData.Current.LocalSettings.Values[SpaceSettingKey] = space.ToString();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"saving space failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Brings the sidebar and header in line with the chat's space and ephemeral state:
+    /// the switch and toggle positions, the workspace picker (Workspace only), the header label,
+    /// and the right panel's project (none in Freeform, so it shows no project files).</summary>
+    private void UpdateSpaceChrome()
+    {
+        var freeform = ChatViewModel.Space == ChatSpace.Freeform;
+        _syncingSpaceChrome = true;
+        try
+        {
+            SpaceSwitch.SelectedIndex = freeform ? 0 : 1;
+            EphemeralToggle.IsOn = ChatViewModel.IsEphemeral;
+        }
+        finally
+        {
+            _syncingSpaceChrome = false;
+        }
+        WorkspaceButton.Visibility = freeform ? Visibility.Collapsed : Visibility.Visible;
+        if (freeform) SetWorkspaceDropdownOpen(false);
+        var place = freeform ? "Freeform" : ProjectsViewModel.ActiveProject?.Name ?? "Default Workspace";
+        SessionLabel.Text = ChatViewModel.IsEphemeral ? $"{place} · Ephemeral (not saved)" : place;
+        RecentSessionsHeader.Text = freeform ? "Freeform Sessions" : "Recent Sessions";
+        RightPanelViewModel.ProjectId = ChatViewModel.TurnProjectId;
+        UpdateSessionHighlight();
+    }
 
     private void WorkspaceButton_Click(object sender, RoutedEventArgs e)
     {
@@ -885,7 +980,7 @@ public sealed partial class MainWindow : Window
                     // Big screenshots are downscaled first; the projector's token cost grows with
                     // resolution long after the text stopped getting more legible.
                     var toUpload = await ImageAttachmentService.PrepareForUploadAsync(path);
-                    uploaded.Add(await _api.UploadAttachmentAsync(toUpload, ChatViewModel.ActiveSessionId, ChatViewModel.ProjectId));
+                    uploaded.Add(await _api.UploadAttachmentAsync(toUpload, ChatViewModel.ActiveSessionId, ChatViewModel.TurnProjectId, ChatViewModel.ChatMode, ChatViewModel.IsEphemeral));
                 }
                 catch (Exception ex)
                 {

@@ -58,12 +58,20 @@ public sealed class JarvisApiClient
     /// <summary>Most recent sessions first, at most <paramref name="limit"/> of them (the
     /// server caps at 50 by default; 0 = all). The sidebar must never ask for everything --
     /// every row it shows is a glass slab.</summary>
-    public Task<List<Session>> FetchSessionsAsync(string? projectId = null, int limit = 50, CancellationToken ct = default)
+    /// <summary>Sessions of one space: <paramref name="chatMode"/> "FREEFORM" lists the Freeform
+    /// space's (project ignored); anything else lists workspace sessions, optionally of one
+    /// project. Ephemeral conversations are never listed.</summary>
+    public Task<List<Session>> FetchSessionsAsync(string? projectId = null, string? chatMode = null, int limit = 50, CancellationToken ct = default)
     {
         var url = $"/sessions?limit={limit}";
         if (projectId is not null) url += $"&project_id={Uri.EscapeDataString(projectId)}";
+        if (chatMode is not null) url += $"&chat_mode={Uri.EscapeDataString(chatMode)}";
         return GetAsync<List<Session>>(url, ct);
     }
+
+    /// <summary>A session id for an ephemeral conversation. Plain characters only: the backend
+    /// names the conversation's temporary upload folder after it.</summary>
+    public static string CreateEphemeralSessionId() => "eph-" + Guid.NewGuid().ToString("n");
 
     public async Task<List<Dictionary<string, object?>>> FetchSessionMessagesAsync(string sessionId, CancellationToken ct = default)
     {
@@ -185,7 +193,9 @@ public sealed class JarvisApiClient
     // Attachments
     // ==========================================
 
-    public async Task<Attachment> UploadAttachmentAsync(string filePath, string? sessionId = null, string? projectId = null, CancellationToken ct = default)
+    /// <param name="ephemeral">The file belongs to an ephemeral conversation: the backend keeps
+    /// it in a temp folder deleted with the conversation and records nothing.</param>
+    public async Task<Attachment> UploadAttachmentAsync(string filePath, string? sessionId = null, string? projectId = null, string? chatMode = null, bool ephemeral = false, CancellationToken ct = default)
     {
         using var content = new MultipartFormDataContent();
         await using var stream = File.OpenRead(filePath);
@@ -193,6 +203,8 @@ public sealed class JarvisApiClient
         content.Add(fileContent, "file", Path.GetFileName(filePath));
         if (sessionId is not null) content.Add(new StringContent(sessionId), "session_id");
         if (projectId is not null) content.Add(new StringContent(projectId), "project_id");
+        if (chatMode is not null) content.Add(new StringContent(chatMode), "chat_mode");
+        if (ephemeral) content.Add(new StringContent("true"), "ephemeral");
 
         var response = await _http.PostAsync("/api/upload", content, ct).ConfigureAwait(false);
         await EnsureSuccessAsync(response, "upload attachment").ConfigureAwait(false);

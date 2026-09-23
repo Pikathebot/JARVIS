@@ -69,6 +69,13 @@
                         <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
 
                         <!--
+                            The two spaces. Freeform: plain conversation, no project, no working
+                            directory, no retrieval. Workspace: bound to the project picked below.
+                            Each keeps its own session list and last conversation.
+                        -->
+                        <glass:GlassSegmented x:Name="SpaceSwitch" Items="Freeform|Workspace" SelectedIndex="1" HorizontalAlignment="Stretch" SelectionChanged="SpaceSwitch_SelectionChanged" />
+
+                        <!--
                             Workspace picker: a glass button that drops a floating glass card
                             (WorkspaceDropdown, at the root so it floats over the sidebar);
                             a ComboBox's popup is painted above the window, where the glass
@@ -176,7 +183,10 @@
                             <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
                                 <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). -->
-                                <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                                <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
+                                <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                                <glass:GlassToggle x:Name="EphemeralToggle" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
+                                <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
                                 <glass:GlassToggle x:Name="GovernorToggle" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
                                 <TextBlock x:Name="MicLabel" Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
                                 <glass:GlassToggle x:Name="MicToggle" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />

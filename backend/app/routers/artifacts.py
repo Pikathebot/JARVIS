@@ -145,8 +145,18 @@ async def upload_file(
     file: UploadFile = File(...),
     session_id: Optional[str] = Form(None),
     project_id: Optional[str] = Form(None),
+    chat_mode: Optional[str] = Form(None),
+    ephemeral: bool = Form(False),
     db: Session = Depends(get_session),
 ) -> AttachmentResponse:
+    # Ephemeral: the file lives in a temp directory owned by the in-memory session and deleted
+    # with it; no session or attachment row is written and nothing is indexed. Freeform: stored
+    # normally, but not indexed into any project (the turn has none).
+    if ephemeral and not session_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="An ephemeral upload needs its session_id.")
+    freeform = (chat_mode or "").upper() == "FREEFORM"
+    if freeform:
+        project_id = None
     raw_filename = file.filename or "uploaded_file.txt"
     ext = os.path.splitext(raw_filename)[1].lower()
 
@@ -157,7 +167,17 @@ async def upload_file(
         )
 
     clean_name = sanitize_filename(raw_filename)
-    target_dir = get_target_files_dir(project_id, db)
+    if ephemeral:
+        import tempfile
+        from app.memory.ephemeral import ephemeral_registry
+
+        try:
+            target_dir = ephemeral_registry.upload_dir(session_id, Path(tempfile.gettempdir()) / "jarvis-ephemeral")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        project_id = None
+    else:
+        target_dir = get_target_files_dir(project_id, db)
     dest_path = (target_dir / clean_name).resolve()
 
     try:
@@ -186,6 +206,19 @@ async def upload_file(
     with open(dest_path, "wb") as f:
         f.write(content)
 
+    if ephemeral:
+        logger.info("Uploaded ephemeral attachment '%s' (%d bytes); not persisted", clean_name, size_bytes)
+        return AttachmentResponse(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            project_id=None,
+            filename=clean_name,
+            path=str(dest_path),
+            size_bytes=size_bytes,
+            content_type=file.content_type,
+            created_at=datetime.utcnow(),
+        )
+
     # A client uploads before it sends the first message of a new session, so the session row
     # the attachment points at may not exist yet; without this the insert fails its foreign key
     # and the image silently never reaches the turn.
@@ -195,7 +228,10 @@ async def upload_file(
 
         if db.get(ChatSession, session_id) is None:
             now = _time.time()
-            db.add(ChatSession(session_id=session_id, project_id=project_id, created_at=now, updated_at=now))
+            db.add(ChatSession(
+                session_id=session_id, project_id=project_id, created_at=now, updated_at=now,
+                chat_mode="FREEFORM" if freeform else "WORKSPACE",
+            ))
             db.flush()
 
     attachment = Attachment(
@@ -216,7 +252,7 @@ async def upload_file(
     try:
         from app.rag.indexer import WorkspaceIndexer
         target_pid = project_id
-        if not target_pid:
+        if not target_pid and not freeform:
             from app.database.models import Project
             act = db.exec(select(Project).where(Project.is_active == True)).first()
             if act:

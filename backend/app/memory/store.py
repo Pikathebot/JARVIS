@@ -21,6 +21,8 @@ from app.database.models import (
 
 # Seeded by the initial migration; the workspace a session belongs to when none was chosen.
 DEFAULT_PROJECT_ID = "default-workspace"
+# Sessions of the Freeform space: no project, listed apart from every workspace.
+FREEFORM_CHAT_MODE = "FREEFORM"
 
 logger = logging.getLogger("jarvis.memory.store")
 
@@ -147,12 +149,29 @@ class MemoryStore:
                 session.rollback()
                 raise
 
-    def list_sessions(self, project_id: Optional[str] = None, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    def list_sessions(
+        self,
+        project_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        chat_mode: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """Most-recent-first. ``limit`` bounds the result: a sidebar showing "recent sessions"
-        must never be handed the whole table (hundreds of rows once QA runs pile up)."""
+        must never be handed the whole table (hundreds of rows once QA runs pile up).
+
+        The two spaces never share a list: ``chat_mode="FREEFORM"`` returns only Freeform
+        sessions (they have no project, so ``project_id`` is ignored), and any other value --
+        including none -- leaves Freeform sessions out. Without that, a Freeform session (no
+        project_id) would also show up under the default workspace, which claims unscoped rows."""
         with self._get_session() as session:
             try:
                 statement = select(DBSession)
+                if (chat_mode or "").upper() == FREEFORM_CHAT_MODE:
+                    statement = statement.where(DBSession.chat_mode == FREEFORM_CHAT_MODE)
+                    project_id = None
+                else:
+                    statement = statement.where(
+                        or_(col(DBSession.chat_mode).is_(None), DBSession.chat_mode != FREEFORM_CHAT_MODE)
+                    )
                 if project_id == DEFAULT_PROJECT_ID:
                     # Sessions created before a project was ever chosen have no project_id;
                     # they belong to the default workspace, not to nowhere.
@@ -272,7 +291,9 @@ class MemoryStore:
         is_summary: bool = False,
         reasoning_content: Optional[str] = None
     ) -> None:
-        self.get_or_create_session(session_id)
+        # chat_mode=None: make sure the row exists, but leave its mode alone. The default
+        # ("WORKSPACE") rewrote every FREEFORM or SYSTEM session's mode on its first message.
+        self.get_or_create_session(session_id, chat_mode=None)
         now = time.time()
         tool_calls_str = json.dumps(tool_calls) if tool_calls else None
         token_estimate = max(1, len(content or "") // 4)

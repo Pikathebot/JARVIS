@@ -84,6 +84,33 @@ workspace creation and image attachments; git tools for the workspace repository
 
 In priority order. Each item says what "done" means and what still needs the user.
 
+### 4.0 Next session: tabbed navigation, spring transitions, startup sequence (queued 2026-09-23)
+
+The user's brief, for `desktop-winui/Jarvis.App`:
+1. **Tabbed navigation:** `MainWindow` hosts distinct sections (Freeform, Workspaces,
+   Settings/sheets) with fluid switching -- builds on the Freeform/Workspace spaces landed the
+   same day (`ChatViewModel.SwitchSpaceAsync`, the sidebar `SpaceSwitch`).
+2. **Startup sequence:** a smooth window entrance that covers the BackendHost/uvicorn boot and
+   resolves into the saved space once the backend is up and state is loaded
+   (`GovernorViewModel.BackendCameOnline` is the existing "backend ready" signal; projects and
+   sessions load from it).
+3. **Apple-style spatial transitions:** tab shifts driven by springs (mass/stiffness/damping),
+   not linear or cubic-bezier curves. The damped springs in `GlassButton`/`GlassToggle`
+   (fitted to the iPad recording, 1/240 s substeps) are the house pattern to reuse.
+
+Constraints from the brief: glass layers only via `GlassLayers` constants; no glass in
+popups/flyouts; XAML always paints above the swapchain. Not allowed: circular spinners, abrupt
+cubic-bezier ease-ins, unthrottled Gaussian blur spikes, layout-shifting animations (animate
+transforms and opacity only). Frames must hold 60 fps with no GPU spikes in Jarvis.Glass --
+remember every glass shape that moves republishes to `GlassScene` and re-renders its layer (and
+everything above it) each frame, and frost is the expensive pass, so animate as few glass
+shapes as possible and measure with the per-process 3D counter (`Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'`, filtered by pid).
+
+Done means: tabs switch with smooth spatial transitions, no z-fighting or clipping against the
+swapchain; startup resolves cleanly to the initial tab when the backend is ready;
+`dotnet build Jarvis.slnx` 0 errors. Needs the user: the physical feel and frame pacing can only
+be judged on the device (the glass can't be screenshotted) -- ask them to run it.
+
 ### 4.1 Liquid Glass fidelity (in progress)
 
 Source of truth: the user's iPad recording `ScreenRecording_09-22-2026 19-38-02_1.mp4`
@@ -150,6 +177,11 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 
 Built and committed, not yet confirmed by the user on screen: creating a workspace from the
 dropdown (c9d16c1), RAG relevance floor + embedder (b6fee7a), sidecars holding 0 VRAM (b45513f,
-live since the 2026-09-23 10:36 restart), and 4.1a above. Older reports whose status is unknown:
+live since the 2026-09-23 10:36 restart), 4.1a above, and the Freeform/Workspace spaces with
+ephemeral mode (2026-09-23, uncommitted: backend tested and checked live against the real DB --
+ephemeral turns left every row count unchanged, a Freeform turn declined a file request -- but
+the sidebar switch, the header Ephemeral toggle, the per-space session lists and the saved
+space are unseen on screen). Profile memories now ride on every turn, not only ephemeral ones.
+The HUD keeps its own fixed session outside both spaces -- left for a dedicated HUD session. Older reports whose status is unknown:
 an intermittent white slab the HUD card's size at launch (2026-09-20), and the narrow-mode right
 panel covering its own close button.

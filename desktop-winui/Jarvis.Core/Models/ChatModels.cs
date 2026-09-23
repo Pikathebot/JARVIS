@@ -125,7 +125,7 @@ public sealed class ChatRequest
     [JsonPropertyName("approved_action_ids")]
     public List<string>? ApprovedActionIds { get; set; }
 
-    /// <summary>"WORKSPACE" | "SYSTEM"</summary>
+    /// <summary>"WORKSPACE" | "FREEFORM" | "SYSTEM"</summary>
     [JsonPropertyName("chat_mode")]
     public string? ChatMode { get; set; }
 
@@ -133,6 +133,10 @@ public sealed class ChatRequest
     public string? ProjectId { get; set; }
 
     public List<Dictionary<string, object?>>? Attachments { get; set; }
+
+    /// <summary>Scratchpad turn: the backend keeps the conversation in memory only and writes
+    /// nothing to its database or session list.</summary>
+    public bool Ephemeral { get; set; }
 }
 
 public sealed class ChatResponse

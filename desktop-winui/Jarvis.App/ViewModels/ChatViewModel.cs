@@ -35,12 +35,30 @@ public partial class ChatViewModel : ObservableObject
     [ObservableProperty]
     public partial string? Error { get; set; }
 
+    /// <summary>The active workspace project. Remembered while in Freeform, but only sent with a
+    /// turn in the Workspace space (see <see cref="TurnProjectId"/>).</summary>
     [ObservableProperty]
     public partial string? ProjectId { get; set; }
 
-    /// <summary>"WORKSPACE" | "SYSTEM"</summary>
+    /// <summary>Freeform (no project, no workspace, no RAG) or Workspace (project-bound). Change it
+    /// through <see cref="SwitchSpaceAsync"/>, which swaps the transcript as well.</summary>
     [ObservableProperty]
-    public partial string ChatMode { get; set; } = "WORKSPACE";
+    public partial ChatSpace Space { get; private set; } = ChatSpace.Workspace;
+
+    /// <summary>Scratchpad mode: turns go to the backend flagged ephemeral, so nothing is stored
+    /// and nothing reaches the session list. Change it through <see cref="SetEphemeralAsync"/>.</summary>
+    [ObservableProperty]
+    public partial bool IsEphemeral { get; private set; }
+
+    /// <summary>What the backend calls the space.</summary>
+    public string ChatMode => Space == ChatSpace.Freeform ? "FREEFORM" : "WORKSPACE";
+
+    /// <summary>The project a turn (or an upload) belongs to: none in Freeform.</summary>
+    public string? TurnProjectId => Space == ChatSpace.Workspace ? ProjectId : null;
+
+    /// <summary>Each space's last stored conversation, so switching back returns to it rather
+    /// than to whatever the other space was showing. Ephemeral sessions are never remembered.</summary>
+    private readonly Dictionary<ChatSpace, string> _lastSessionBySpace = new();
 
     public ObservableCollection<PendingConfirmation> PendingConfirmations { get; } = new();
 
@@ -223,7 +241,87 @@ public partial class ChatViewModel : ObservableObject
         _abort?.Cancel();
     }
 
+    /// <summary>A fresh conversation in the current space. In ephemeral mode this is the reset:
+    /// the old scratchpad is purged on the backend and a new one begins.</summary>
     public void NewChat()
+    {
+        if (IsEphemeral)
+        {
+            PurgeEphemeral(ActiveSessionId);
+            ClearTranscript();
+            ActiveSessionId = JarvisApiClient.CreateEphemeralSessionId();
+            return;
+        }
+        ClearTranscript();
+        ActiveSessionId = JarvisApiClient.CreateNewSessionId();
+    }
+
+    /// <summary>Moves to the other space. Nothing crosses over: the transcript is swapped for
+    /// that space's last conversation (or a new one), and an ephemeral scratchpad is purged and
+    /// restarted empty in the new space rather than carried into it.</summary>
+    public async Task SwitchSpaceAsync(ChatSpace target)
+    {
+        if (target == Space) return;
+        Space = target;
+        OnPropertyChanged(nameof(ChatMode));
+        OnPropertyChanged(nameof(TurnProjectId));
+        if (IsEphemeral)
+        {
+            NewChat();
+            return;
+        }
+        await RestoreSpaceSessionAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>Turns scratchpad mode on or off. On: the stored conversation is set aside (and
+    /// returned to later) and an empty ephemeral one starts. Off: the ephemeral conversation is
+    /// purged on the backend at once and the space's stored conversation comes back.</summary>
+    public async Task SetEphemeralAsync(bool on)
+    {
+        if (on == IsEphemeral) return;
+        if (on)
+        {
+            IsEphemeral = true;
+            ClearTranscript();
+            ActiveSessionId = JarvisApiClient.CreateEphemeralSessionId();
+            return;
+        }
+        PurgeEphemeral(ActiveSessionId);
+        IsEphemeral = false;
+        await RestoreSpaceSessionAsync().ConfigureAwait(false);
+    }
+
+    private Task RestoreSpaceSessionAsync()
+    {
+        if (_lastSessionBySpace.TryGetValue(Space, out var last)) return LoadSessionAsync(last);
+        NewChat();
+        return Task.CompletedTask;
+    }
+
+    partial void OnActiveSessionIdChanged(string value)
+    {
+        if (!IsEphemeral) _lastSessionBySpace[Space] = value;
+    }
+
+    /// <summary>Drops the ephemeral conversation's in-memory context and uploads on the backend.
+    /// Fire-and-forget: the transcript is already gone here, and the backend's idle expiry is the
+    /// fallback if the call fails.</summary>
+    private void PurgeEphemeral(string sessionId)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _api.DeleteSessionAsync(sessionId).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"ephemeral purge failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        });
+    }
+
+    private void ClearTranscript()
     {
         _abort?.Cancel();
         Messages.Clear();
@@ -232,23 +330,21 @@ public partial class ChatViewModel : ObservableObject
         LatestRetrieval = null;
         ActiveReasoningMessage = null;
         IsReasoningStreaming = false;
-        ActiveSessionId = JarvisApiClient.CreateNewSessionId();
         Error = null;
     }
 
     /// <summary>Switches to an existing session and loads its history. The backend returns raw
     /// message dicts (its persisted schema, not the SSE contract), so fields are read
-    /// defensively — anything missing just renders as an empty string rather than throwing.</summary>
+    /// defensively — anything missing just renders as an empty string rather than throwing.
+    /// Opening a stored session leaves ephemeral mode (the scratchpad is purged).</summary>
     public async Task LoadSessionAsync(string sessionId)
     {
-        _abort?.Cancel();
-        Messages.Clear();
-        PendingConfirmations.Clear();
-        ActivitySteps.Clear();
-        LatestRetrieval = null;
-        ActiveReasoningMessage = null;
-        IsReasoningStreaming = false;
-        Error = null;
+        if (IsEphemeral)
+        {
+            PurgeEphemeral(ActiveSessionId);
+            IsEphemeral = false;
+        }
+        ClearTranscript();
         ActiveSessionId = sessionId;
 
         try
@@ -344,8 +440,9 @@ public partial class ChatViewModel : ObservableObject
             {
                 Message = message,
                 SessionId = ActiveSessionId,
-                ProjectId = ProjectId,
+                ProjectId = TurnProjectId,
                 ChatMode = ChatMode,
+                Ephemeral = IsEphemeral,
                 ApprovedActionIds = approvedActionIds.Count > 0 ? approvedActionIds : null,
                 Attachments = attachments,
                 Callbacks = callbacks,
@@ -476,4 +573,13 @@ public partial class ChatViewModel : ObservableObject
             _dispatcher.TryEnqueue(() => action());
         }
     }
+}
+
+/// <summary>The two places a conversation can live. Freeform: direct conversation, no project,
+/// no working directory, no retrieval. Workspace: bound to the active project -- its files,
+/// artifacts, repository tools and RAG.</summary>
+public enum ChatSpace
+{
+    Freeform,
+    Workspace,
 }

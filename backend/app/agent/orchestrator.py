@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from app.config import settings, MAX_TOOL_CALLS_PER_TURN
 from app.persona import persona_manager
-from app.agent.tools.registry import AVAILABLE_TOOLS, execute_tool, get_tool_schema, get_relevant_tools
+from app.agent.tools.registry import AVAILABLE_TOOLS, FREEFORM_MODE, execute_tool, get_tool_schema, get_relevant_tools
 from app.agent.permissions import (
     BASE_TOOL_RISK_MAP,
     evaluate_tool_calls_batch,
@@ -30,6 +30,7 @@ from app.agent.model_provider import ModelProvider
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
+from app.memory.ephemeral import EphemeralMemoryStore, build_profile_context
 from app.memory.compactor import ContextCompactor
 from app.skills.loader import SkillsLoader, Skill
 from app.mcp.manager import MCPManager
@@ -275,9 +276,10 @@ def current_time_line(now: Optional[datetime] = None) -> str:
     return moment.strftime("%A %Y-%m-%d %H:%M") + (f" {zone}" if zone else "")
 
 
-def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None) -> str:
+def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None, profile_context: str = "") -> str:
     """
-    The per-turn block: the current date and time, and whatever skills this message matched.
+    The per-turn block: the current date and time, the user's profile on an ephemeral turn (see
+    ``app.memory.ephemeral``), and whatever skills this message matched.
     ``ContextManager`` places it as a trailing system message after the stored history, right
     before the user turn, so it never disturbs the cached prefix (see ``build_system_prompt``).
 
@@ -291,9 +293,18 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
         f"CURRENT TIME: {current_time_line(now)}. Use this for anything date-relative (today, "
         "this week, latest, recent) and when searching for current events."
     ]
+    if profile_context and profile_context.strip():
+        sections.append(profile_context.strip())
     if skill_injection and skill_injection.strip():
         sections.append(skill_injection.strip())
     return "\n\n".join(sections)
+
+
+FREEFORM_TURN_NOTE = (
+    "SPACE: Freeform conversation. There is no project, workspace or working directory here, so "
+    "you cannot read, write, search or run anything on files. If the user asks for that, say so "
+    "plainly and suggest switching to a Workspace; never write a tool call out as text."
+)
 
 
 class AgentOrchestrator:
@@ -340,6 +351,58 @@ class AgentOrchestrator:
             api_key=settings.openrouter_api_key,
             base_url=settings.openrouter_base_url
         )
+
+    @property
+    def is_ephemeral(self) -> bool:
+        """True when this orchestrator was built over an ``EphemeralMemoryStore``: the turn is
+        kept in process memory only (see ``app.memory.ephemeral``)."""
+        return isinstance(self.memory_store, EphemeralMemoryStore)
+
+    def _space_context(self, chat_mode: str) -> str:
+        """Per-turn lines about the user and where this conversation lives: the user's profile
+        memories on every turn, Freeform's lack of a workspace (said outright, or a model with no
+        file tools writes a tool call out as text), and an ephemeral turn's off-the-record note."""
+        parts = []
+        if chat_mode == FREEFORM_MODE:
+            parts.append(FREEFORM_TURN_NOTE)
+        session_factory = getattr(self.memory_store, "_session_factory", None)
+        profile = build_profile_context(session_factory, ephemeral=self.is_ephemeral) if session_factory else ""
+        if profile:
+            parts.append(profile)
+        return "\n\n".join(parts)
+
+    def _resolve_turn_scope(
+        self,
+        project_id: Optional[str],
+        session_id: str,
+        chat_mode: Optional[str],
+    ) -> tuple[Optional[str], Path, dict[str, Any], str, ChatMode]:
+        """
+        Project, workspace, tool context and chat mode for a turn, with the session recorded.
+
+        FREEFORM is a conversation with no project and no working directory: no project is
+        resolved (not even the active one), RAG is skipped (it only runs in WORKSPACE), and the
+        tool context carries the mode so ``execute_tool`` refuses workspace-bound tools. For
+        permissions it counts as WORKSPACE, the stricter of the two tiers.
+        """
+        requested = (chat_mode or "").upper() or None
+        if requested == FREEFORM_MODE:
+            self.memory_store.get_or_create_session(session_id, chat_mode=FREEFORM_MODE, project_id=None)
+            root = Path(settings.workspace_path).resolve()
+            tool_context = {
+                "workspace_path": str(root),
+                "project_id": None,
+                "session_id": session_id,
+                "chat_mode": FREEFORM_MODE,
+            }
+            return None, root, tool_context, FREEFORM_MODE, ChatMode.WORKSPACE
+
+        resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, session_id)
+        session_data = self.memory_store.get_or_create_session(session_id, chat_mode=chat_mode, project_id=resolved_project_id)
+        effective_mode_str = (requested or session_data.get("chat_mode") or "WORKSPACE").upper()
+        tool_context["chat_mode"] = effective_mode_str
+        resolved_chat_mode = ChatMode.SYSTEM if effective_mode_str == "SYSTEM" else ChatMode.WORKSPACE
+        return resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode
 
     def _resolve_workspace_context(
         self,
@@ -678,10 +741,9 @@ class AgentOrchestrator:
         # A token whose confirmation window lapsed does not approve anything: the action is
         # re-evaluated, comes back as confirmation_required, and the prompt says why.
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
-        resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, active_session_id)
-        session_data = self.memory_store.get_or_create_session(active_session_id, chat_mode=chat_mode, project_id=resolved_project_id)
-        effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
-        resolved_chat_mode = ChatMode.SYSTEM if effective_mode_str == "SYSTEM" else ChatMode.WORKSPACE
+        resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
+            self._resolve_turn_scope(project_id, active_session_id, chat_mode)
+        )
 
         # 1. Dynamic Skills Matching & Prompt Injection, then the tools for this turn
         matched_skills = self.skills_loader.match_skills(user_message)
@@ -691,7 +753,7 @@ class AgentOrchestrator:
 
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection)
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str))
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
@@ -1261,17 +1323,16 @@ class AgentOrchestrator:
         active_session_id = session_id or "default"
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
-        resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, active_session_id)
-        session_data = self.memory_store.get_or_create_session(active_session_id, chat_mode=chat_mode, project_id=resolved_project_id)
-        effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
-        resolved_chat_mode = ChatMode.SYSTEM if effective_mode_str == "SYSTEM" else ChatMode.WORKSPACE
+        resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
+            self._resolve_turn_scope(project_id, active_session_id, chat_mode)
+        )
 
         # 1. Match skills, then pick the tools for this turn: routing needs to know them.
         matched_skills = self.skills_loader.match_skills(user_message)
         active_skill_names = [s.name for s in matched_skills]
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection)
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str))
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)

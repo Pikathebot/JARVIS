@@ -25,6 +25,7 @@ from app.governor.resource_governor import (
 )
 from app.governor.process_watcher import ProcessWatcher
 from app.memory.store import MemoryStore
+from app.memory.ephemeral import EphemeralMemoryStore, ephemeral_registry
 from app.memory.compactor import ContextCompactor
 from app.memory.manager import MemoryManager
 from app.skills.loader import SkillsLoader
@@ -426,7 +427,8 @@ class ChatRequest(BaseModel):
     )
     chat_mode: Optional[str] = Field(
         default="WORKSPACE",
-        description="Chat mode: 'WORKSPACE' (default) or 'SYSTEM'"
+        description="Chat mode: 'WORKSPACE' (default, project-bound), 'FREEFORM' (no project, "
+                    "no workspace, no RAG) or 'SYSTEM'"
     )
     project_id: Optional[str] = Field(
         default=None,
@@ -435,6 +437,11 @@ class ChatRequest(BaseModel):
     attachments: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description="Optional list of attached files"
+    )
+    ephemeral: bool = Field(
+        default=False,
+        description="Scratchpad turn: the conversation is kept in memory only and never written "
+                    "to the database or the session list (see app.memory.ephemeral)"
     )
 
 
@@ -655,10 +662,18 @@ async def governor_history(limit: int = 20):
 
 
 @app.get("/sessions")
-async def list_sessions(project_id: Optional[str] = None, limit: int = Query(50, ge=0, le=1000)):
-    """List stored conversation sessions, most recent first, optionally filtered by project_id.
-    ``limit`` defaults to 50; pass 0 for everything."""
-    return await asyncio.to_thread(memory_store.list_sessions, project_id=project_id, limit=limit or None)
+async def list_sessions(
+    project_id: Optional[str] = None,
+    chat_mode: Optional[str] = None,
+    limit: int = Query(50, ge=0, le=1000),
+):
+    """List stored conversation sessions, most recent first. ``chat_mode=FREEFORM`` lists the
+    Freeform space's sessions; anything else lists workspace sessions (Freeform ones excluded),
+    optionally filtered by project_id. ``limit`` defaults to 50; pass 0 for everything.
+    Ephemeral conversations are never stored, so never listed."""
+    return await asyncio.to_thread(
+        memory_store.list_sessions, project_id=project_id, limit=limit or None, chat_mode=chat_mode
+    )
 
 
 
@@ -676,7 +691,10 @@ async def get_session_compactions(session_id: str):
 
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """Delete a conversation session and all its stored messages."""
+    """Delete a conversation session and all its stored messages. For an ephemeral session this
+    is the purge: its in-memory context and any files uploaded into it are dropped at once."""
+    if ephemeral_registry.purge(session_id):
+        return {"deleted": True, "session_id": session_id, "ephemeral": True}
     deleted = await asyncio.to_thread(memory_store.delete_session, session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
@@ -829,6 +847,18 @@ def resolve_project_id(requested: Optional[str]) -> Optional[str]:
         return None
 
 
+def resolve_turn_project_id(request: "ChatRequest") -> Optional[str]:
+    """A Freeform turn belongs to no project -- not even the active one."""
+    if (request.chat_mode or "").upper() == "FREEFORM":
+        return None
+    return resolve_project_id(request.project_id)
+
+
+def turn_memory_store(request: "ChatRequest"):
+    """The store a turn's conversation goes to: SQLite, or process memory for an ephemeral one."""
+    return EphemeralMemoryStore(memory_store) if request.ephemeral else memory_store
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
@@ -839,7 +869,7 @@ async def chat(request: ChatRequest):
     # Check for wake word in message
     detected, wake_word, cleaned_query = wake_detector.detect_in_text(request.message)
     active_message = cleaned_query if detected and cleaned_query else request.message
-    project_id = await asyncio.to_thread(resolve_project_id, request.project_id)
+    project_id = await asyncio.to_thread(resolve_turn_project_id, request)
 
     # 1. Resource Governor Check (with adaptive queueing wait)
     if settings.governor_enabled:
@@ -856,7 +886,7 @@ async def chat(request: ChatRequest):
     # 2. Agent Orchestration with ModelProvider, Memory, Skills, and MCP Tools
     orchestrator = AgentOrchestrator(
         openrouter_client=get_openrouter_client(),
-        memory_store=memory_store,
+        memory_store=turn_memory_store(request),
         compactor=compactor,
         skills_loader=skills_loader,
         mcp_manager=mcp_manager,
@@ -907,7 +937,7 @@ async def chat_stream(request: ChatRequest):
     """
     detected, wake_word, cleaned_query = wake_detector.detect_in_text(request.message)
     active_message = cleaned_query if detected and cleaned_query else request.message
-    project_id = await asyncio.to_thread(resolve_project_id, request.project_id)
+    project_id = await asyncio.to_thread(resolve_turn_project_id, request)
 
     if settings.governor_enabled:
         is_healthy, reason = await governor.wait_until_healthy(
@@ -922,7 +952,7 @@ async def chat_stream(request: ChatRequest):
 
     orchestrator = AgentOrchestrator(
         openrouter_client=get_openrouter_client(),
-        memory_store=memory_store,
+        memory_store=turn_memory_store(request),
         compactor=compactor,
         skills_loader=skills_loader,
         mcp_manager=mcp_manager,

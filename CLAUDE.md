@@ -98,6 +98,13 @@ path runs instead.
   template rejects a second system message. Breaking this silently re-prefills the whole
   conversation every turn (measured 1363->1642 tokens vs 112-198). Pinned by
   `test_per_turn_material_rides_on_the_user_turn_not_the_prefix`.
+- **Two spaces, and ephemeral turns.** `chat_mode=FREEFORM` = no project (not even the active
+  one), no RAG, no workspace-bound tools (`WORKSPACE_BOUND_TOOLS` in `registry.py`: not offered,
+  and refused by `execute_tool`); its sessions are listed apart (`/sessions?chat_mode=FREEFORM`).
+  `ephemeral=true` builds the orchestrator over `EphemeralMemoryStore` (`memory/ephemeral.py`):
+  history lives in process memory, nothing reaches SQLite, `DELETE /sessions/{id}` purges. A new
+  per-session write in the turn path must be added to that store too -- it raises on any
+  `MemoryStore` method it hasn't vetted rather than fall through to the database.
 - **Anything Jarvis says unprompted goes through `AwarenessMonitor.emit(Observation)`**
   (`awareness/monitor.py`). The monitor owns restraint (announce once, escalate, recover once) and
   the client already renders and speaks whatever arrives on that channel. Don't add new SSE/voice
