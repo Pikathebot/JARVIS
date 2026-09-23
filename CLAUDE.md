@@ -58,7 +58,8 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
 - **State paths** (the backend's cwd is `backend/`, so relative paths resolve there):
   `data/{models,persona,routines}.json` at the **repo root** (resolved from `__file__`);
   the live SQLite DB is `backend/data/jarvis_memory.db`; live workspaces are
-  `backend/workspace/projects/{id}/`. The repo-root `workspace/` holds test debris.
+  `backend/workspace/projects/{id}/`. Tests are pointed at temp dirs for the DB and workspaces
+  (`backend/tests/conftest.py`), so a run leaves nothing in the repo.
 - **Logs:** `backend.log` (repo root) for the backend; `launcher-winui.log` for the launcher;
   `AppX\jarvis-glass.log` and `AppX\jarvis-app-crash.log` under
   `desktop-winui\Jarvis.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\AppX\`.

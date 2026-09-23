@@ -1,6 +1,6 @@
 # Jarvis — Private Local AI Assistant for Windows
 
-A private, fast, and lightweight local AI assistant for Windows 11 powered by native `llama-server.exe` (llama.cpp) running **Qwen3.5-9B** and **Qwen3.5-4B** with full GPU offload (`-ngl 99 --no-mmap`), a native WinUI 3 desktop client with liquid-glass rendering, workspace switching, attachments, artifacts versioning, Model Context Protocol (MCP), dynamic skills loading, hardware resource governance, and voice interaction.
+A private, fast, and lightweight local AI assistant for Windows 11 powered by native `llama-server.exe` (llama.cpp) on an 8 GB RTX 4060 laptop -- by default **Qwen3.5-9B** (IQ3_XXS + vision projector, 32k context) for main work and **MiniCPM5-2B** for quick turns, chosen at runtime from whatever GGUFs are in `models/` -- with full GPU offload, a native WinUI 3 desktop client with liquid-glass rendering, workspace switching, attachments, artifacts versioning, Model Context Protocol (MCP), dynamic skills loading, hardware resource governance, and voice interaction.
 
 ---
 
@@ -15,7 +15,7 @@ A private, fast, and lightweight local AI assistant for Windows 11 powered by na
 - **Model Routing (Normal vs Heavy)**: Local inference by default, dynamically routing complex reasoning to OpenRouter when enabled.
 - **Model Context Protocol (MCP)**: Bidirectional JSON-RPC 2.0 stdio client for external tools and servers.
 - **Dynamic Skills Loader**: Extensible Markdown-based domain skills (`skills/*.md`) with trigger keyword matching.
-- **Hands-Free Voice Loop**: Wake-word detection ("Jarvis" / "Hey Jarvis") with local voice-activity detection, a 15-second follow-up window so follow-ups need no wake word, barge-in to interrupt a spoken reply, and neural TTS.
+- **Hands-Free Voice Loop**: Wake-word detection ("Jarvis" / "Hey Jarvis") with local voice-activity detection, a 15-second follow-up window so follow-ups need no wake word, barge-in to interrupt a spoken reply; speech in via local Whisper, out via local Kokoro-82M, both on the CPU.
 - **Persona Layer**: Selectable manner (`jarvis`, `assistant`, `operator`) controlling address, voice, tone and spoken reply length - without ever altering the tool protocol.
 - **Ambient Awareness**: Proactive hardware observations (VRAM, thermals, RAM, disk, battery, model eviction) streamed over SSE, announced once rather than repeatedly, plus instant telemetry-assembled status briefings.
 - **Always-On-Top HUD**: A borderless glass overlay summoned anywhere with `Ctrl+Shift+J` - voice orb, live telemetry rings, and its own voice session.
@@ -31,7 +31,9 @@ Double-click `Start Jarvis.bat` (or run it from a shell):
 ```
 It builds the WinUI client on first run, registers it as a development package, and launches it.
 The app starts the backend itself (`.venv\Scripts\python.exe -m uvicorn ...`) inside a Job Object,
-so nothing is left running when the window closes. Pass `-Build` to force a rebuild.
+so nothing is left running once Jarvis exits. Closing the window (X) hides Jarvis to the tray --
+click the tray icon to bring it back; **Exit Jarvis** in the tray menu quits it and the backend.
+Pass `-Build` to force a rebuild.
 
 ### 2. Run in Development Mode
 **Backend:**
@@ -44,9 +46,10 @@ cd backend
 ```powershell
 cd desktop-winui
 dotnet build Jarvis.slnx
-dotnet run -c Debug --no-build --project Jarvis.App
 ```
-Kill any running `Jarvis.App` first — a live instance locks the build output.
+Then launch through `Start Jarvis.bat` -- a plain build does not refresh the registered app
+package, so starting it any other way can run the previous build. Kill any running `Jarvis.App`
+first; a live instance locks the build output.
 
 ### 3. Run Automated Tests
 ```powershell
@@ -58,9 +61,11 @@ Kill any running `Jarvis.App` first — a live instance locks the build output.
 
 ## Documentation
 
-Detailed technical documentation is available in the [`docs/`](docs/) directory:
-- [**AI_AGENT_CONTEXT.md**](docs/AI_AGENT_CONTEXT.md): Master onboarding guide for AI coding assistants.
-- [**ARCHITECTURE.md**](docs/ARCHITECTURE.md): Architectural deep dive across backend subsystems.
-- [**API_REFERENCE.md**](docs/API_REFERENCE.md): REST & SSE API endpoint reference.
-- [**USER_GUIDE.md**](docs/USER_GUIDE.md): Workspaces, keyboard shortcuts, custom skills, and configuration.
-- [**PLAN.md**](PLAN.md): Implementation milestones and build plan.
+- [**CLAUDE.md**](CLAUDE.md): how the system is put together and how to work on it -- commands,
+  the request path, the contracts that are easy to break. Current; start here.
+- [**PLAN.md**](PLAN.md): what runs today and what comes next.
+- [**docs/MILESTONES.md**](docs/MILESTONES.md): what was built, why, and what was measured.
+- [**docs/USER_GUIDE.md**](docs/USER_GUIDE.md): workspaces, shortcuts, custom skills, configuration.
+
+The other files in `docs/` are historical design specs from before the WinUI client and the
+current models; they are kept for their reasoning, not as a description of the system.

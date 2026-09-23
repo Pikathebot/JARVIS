@@ -73,11 +73,7 @@ class Settings(BaseSettings):
     llama_ctx_size_fast: int = Field(default=8192, alias="LLAMA_CTX_SIZE_FAST")
 
     # Model Routing (Section 2 of Build plan)
-    main_model: str = Field(default="Qwen3.5-9B-Q4_K_M", alias="MAIN_MODEL")
-    fast_model: str = Field(default="Qwen3.5-4B-Q4_K_M", alias="FAST_MODEL")
     vision_model: Optional[str] = Field(default=None, alias="VISION_MODEL")
-    embedding_model: str = Field(default="Qwen3-Embedding-0.6B", alias="EMBEDDING_MODEL")
-    reranker_model: str = Field(default="Qwen3-Reranker-0.6B", alias="RERANKER_MODEL")
 
     # Server & App Configuration
     app_host: str = Field(default="127.0.0.1", alias="APP_HOST")

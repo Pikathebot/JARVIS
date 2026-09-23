@@ -165,3 +165,27 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     and stretch are unmeasured and deliberately unchanged (`PuckStretch` 0.024 = old effective value).
   - All three integrate springs in <= 1/240 s substeps (the stiffer press spring would ring on a
     50 ms dropped frame otherwise).
+
+- [x] **Glass button measured (2026-09-23)** (`Jarvis.Glass/Controls/GlassButton.xaml.cs`) — The
+  recording's one clean button press is a round Control Center module (t=30.8-33.2, 60 fps, no
+  dropped frames). Radius fitted with a damped step: press pops 66 -> 79.5 px and back to 76.5
+  (w 25, zeta 0.40, ~25% overshoot) then swells to 83.5 while held; release 83 -> 62.5 px, BELOW its
+  66 px rest, and back (w 17, zeta 0.45, ~21%). Unlike the switch and slider, buttons bounce. Its
+  glass also brightens x2.2 when pressed (luminance 41 -> 90), where ours went less white
+  (`LiftTint` 0.05 -> 0.30). The bounce is expressed in size only (raw spring value drives the
+  growth; material values are clamped 0..1). Size itself kept ours: that module grows 1.2-1.27x,
+  too much for a wide pill. Springs integrate in 1/240 s substeps. Checked in the same pass and
+  found unmeasurable: text-field focus (Spotlight's field appears already focused) and any
+  segmented control (none in the recording).
+
+- [x] **Housekeeping (2026-09-23)** — Deleted, with the user's go-ahead: the stale repo copy
+  `jarvis_project/` (+ .zip), the old PyInstaller launcher output `dist/`, `build/`, `*.spec`
+  (734 MB), old logs, root `__pycache__/`, and test debris in `workspace/`, `projects/`, `files/`;
+  `DIFF.md`, `STAGE_B_AND_GOVERNOR_V2_DIFF_REPORT.md`, `JARVIS_PROJECT_SUMMARY.md` via git.
+  The debris kept coming back because `ProjectIndexer` builds a default on-disk vector store under
+  `WORKSPACE_PATH` (default `./workspace` = repo root in tests); `conftest.py` now points
+  `WORKSPACE_PATH` at a temp dir like it already did for the database. `.env` / `.env.example`
+  name the models that actually run (9B IQ3_XXS main, MiniCPM5-2B fast), and the never-read
+  `MAIN_MODEL`, `FAST_MODEL`, `EMBEDDING_MODEL`, `RERANKER_MODEL` settings are gone. `README.md`
+  corrected (models, local speech, close-to-tray, launch via the script); the pre-WinUI design
+  docs carry a "historical" banner. 498 tests pass and leave the repo root untouched.

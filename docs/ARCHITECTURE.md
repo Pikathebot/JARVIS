@@ -1,3 +1,7 @@
+> **Historical document.** Written before the WinUI client, the current models and the
+> 2026-09 clean-ups; parts of it no longer describe the system. For how Jarvis works today
+> see `CLAUDE.md` and `PLAN.md` at the repo root.
+
 # Jarvis Assistant — System Architecture
 
 This document provides a comprehensive technical overview of the Jarvis Local AI Assistant architecture across all backend and frontend subsystem layers.

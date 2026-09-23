@@ -107,15 +107,16 @@ swap while it moves), so only still frames give its shape.
 **a. Done 2026-09-23 and confirmed on device:** toggle, slider and segmented-lift measurements
 (tables in `docs/MILESTONES.md`).
 
-**b. Still open:** a reference for the segmented control (ask the user for a short iPad
-recording of one -- e.g. a Maps/Photos segmented picker -- if fidelity there matters); the
-slider's jelly wobble; `GlassButton`/`GlassTextField` still use the old shared 520/30 spring;
-bring `Jarvis.GlassLab` in line with the new motion if it is used for tuning again.
+**b. Glass button measured and applied 2026-09-23, confirmed on device** (Control Center
+button, t=30.8-33.2): iOS buttons bounce -- press w 25 / zeta 0.40 (~25%), release w 17 / zeta 0.45
+(~21%, dips below rest) -- and the pressed glass gets ~2.2x brighter (`LiftTint` 0.05 -> 0.30).
+Size growth left at ours (that button is a round module growing 1.2-1.27x). Details in
+`docs/MILESTONES.md`.
 
-**c. Sheet backdrop dim (optional polish).** `SheetBackdropOpacity` (`MainWindow.xaml.cs`) fades
-the window's XAML to 0.08 while a sheet is open -- set before the layer fix, likely too aggressive
-now. Apple dims behind an opened folder by 19% with a ~30-35 px sigma blur, but ours compensates
-for XAML painting above the swapchain, so the right value is a judgement on device, not 0.81.
+**c. Still open:** the segmented control (needs a short iPad recording of one); the slider
+lens's jelly wobble; `GlassTextField` (the recording's only text field, Spotlight's, appears
+already focused, so there is no focus animation to measure); `Jarvis.GlassLab` lags the app's motion.
+The sheet backdrop fade was judged fine on device (2026-09-23) and stays at 0.08.
 
 ### 4.2 Voice accuracy (user-reported 2026-09-22, deferred by the user)
 
@@ -127,16 +128,9 @@ model size -- `base.en`/`small.en` on the 20-thread CPU -- measured for latency 
 a few recorded utterances before picking; then VAD thresholds / gain. Wait for the user to pick
 this up.
 
-### 4.3 Housekeeping (needs the user's go-ahead; nothing is broken without it)
+### 4.3 Housekeeping
 
-- **Stale configuration and docs.** `backend/.env` and `.env.example` name models that are not
-  what runs (`LLAMA_*_MODEL_PATH`, `MAIN_MODEL`, `FAST_MODEL`, `EMBEDDING_MODEL`, `RAG_*_MODEL`);
-  `docs/ARCHITECTURE.md`, `AI_AGENT_CONTEXT.md`, `API_REFERENCE.md`, `README.md` predate the
-  model changes. Either correct them or mark them historical.
-- **Repo-root debris.** `DIFF.md`, `STAGE_B_AND_GOVERNOR_V2_DIFF_REPORT.md`,
-  `JARVIS_PROJECT_SUMMARY.md`, `jarvis_project/` + `.zip`, `dist/`, `build/`, `*.spec`,
-  root `workspace/` (tests write `MagicMock`/`p` project dirs there -- a test-isolation bug worth
-  fixing on its own), old `*.log` files.
+Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 
 ### 4.4 Robustness backlog
 
@@ -146,6 +140,9 @@ this up.
 - **Tool selection is keyword matching** (`get_relevant_tools`). Phrasings without a trigger word
   get no tools, and "do/check/show..." offers all of them. Worth revisiting once there are real
   misses to measure against.
+- **Governor tests read the real GPU.** `conftest.py` stubs a healthy governor for every test
+  except `test_governor.py`, so two of those failed once while Jarvis itself was running on the
+  card (they pass alone and on an idle GPU). Give them a stubbed metrics source.
 - **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
   goes through `AwarenessMonitor` actions.
 

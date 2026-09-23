@@ -1,3 +1,7 @@
+> **Historical document.** Written before the WinUI client, the current models and the
+> 2026-09 clean-ups; parts of it no longer describe the system. For how Jarvis works today
+> see `CLAUDE.md` and `PLAN.md` at the repo root.
+
 # Jarvis Assistant — REST & Streaming API Reference
 
 The Jarvis backend runs on `http://127.0.0.1:8000`.

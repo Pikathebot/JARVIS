@@ -1,3 +1,7 @@
+> **Historical document.** Written before the WinUI client, the current models and the
+> 2026-09 clean-ups; parts of it no longer describe the system. For how Jarvis works today
+> see `CLAUDE.md` and `PLAN.md` at the repo root.
+
 # Jarvis AI Assistant — Master Architecture & AI Agent Onboarding Guide
 
 > **Purpose**: This document provides incoming AI agents with a comprehensive, end-to-end overview of the **Jarvis** project — how the subsystems operate, the agent orchestrator tool loop, safety permissions, hardware governor, REST APIs, and file tree.

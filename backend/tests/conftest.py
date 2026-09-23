@@ -8,6 +8,10 @@ import tempfile
 _TEST_DB = os.path.join(tempfile.mkdtemp(prefix="jarvis-tests-"), "jarvis_memory.db")
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + _TEST_DB.replace("\\", "/"))
 os.environ.setdefault("MEMORY_DB_PATH", _TEST_DB)
+# Same for project workspaces: WORKSPACE_PATH defaults to "./workspace", which from the repo root
+# is D:\JARVIS\workspace -- and anything that builds a default VectorStoreService (ProjectIndexer
+# without an explicit store, for one) created project/index folders there on every run.
+os.environ.setdefault("WORKSPACE_PATH", os.path.join(os.path.dirname(_TEST_DB), "workspace"))
 # Tests never spawn the embedding sidecar (a llama-server on :8003): the hashed engine is
 # deterministic and needs no model. Sidecar-specific tests construct one explicitly.
 os.environ.setdefault("RAG_EMBEDDING_SIDECAR_ENABLED", "false")

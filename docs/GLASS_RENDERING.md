@@ -1,3 +1,7 @@
+> **Historical document.** Written before the WinUI client, the current models and the
+> 2026-09 clean-ups; parts of it no longer describe the system. For how Jarvis works today
+> see `CLAUDE.md` and `PLAN.md` at the repo root.
+
 # Liquid Glass Rendering — Technique Reference
 
 Technical reference for the refraction/displacement technique behind Apple-style "liquid glass"
