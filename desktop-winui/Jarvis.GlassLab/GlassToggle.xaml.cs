@@ -62,11 +62,11 @@ public sealed partial class GlassToggle : UserControl
         /// and shows the card through it; the toggle's sits inside an opaque track, so at the
         /// slider's 1.35 it only shows refracted track and never reads as clear glass -- it has to
         /// overhang the track to show what is behind.</summary>
-        public static float ToggleLiftScale = 1.46f;
+        public static float ToggleLiftScale = 1.69f;
         public static float LiftTint = 0.16f;
-        /// <summary>Toggle thumb's lifted tint -- fully clear, since over an opaque track any
-        /// white wash just reads as a paler puck.</summary>
-        public static float ToggleLiftTint = 0.08f;
+        /// <summary>Toggle thumb's lifted tint -- nearly clear, since over an opaque track any
+        /// white wash just reads as a paler puck. The recording measures ~6%.</summary>
+        public static float ToggleLiftTint = 0.06f;
         public static float LiftSpecular = 1.1f;
         public static float LiftShadow = 0.30f;
         public static float LiftShadowRadius = 12f;
@@ -74,25 +74,26 @@ public sealed partial class GlassToggle : UserControl
         // (half-height minus rail half-thickness); more than that wraps the rail into a loop
         // inside the lens that reads as a second outline.
         public static float LiftBezelFraction = 0.48f;
-        // iOS 26's pressed switch thumb, measured frame-by-frame off the recording: a clear
-        // 63x34.5pt stadium (1.46x the rest height, aspect 1.83) overhanging the 28pt track top
-        // and bottom and hanging past its end. Two optical effects: the whole lens is a mild
-        // magnifier (so the track colour fills it right out to the caps), and the rim bends
-        // OUTWARD over ~0.46 of the half-height, which shows the dark background beyond the
-        // track edge as a band just inside the rim -- thick at top/bottom, thin at the caps.
+        // iOS 26's pressed switch thumb, measured off the iPad recording at t=72.0 (switch caught
+        // mid-drag, 56px track, 116x80px lens): a clear stadium 1.43x the track height, aspect
+        // 1.45, overhanging the track top and bottom. ToggleLiftScale 1.69 gives that height
+        // (27 x 1.69 / 32 = 1.43). No magnification -- content passes through the centre
+        // undistorted -- and no colour fringe (R-B within +/-2); all the bending lives in the
+        // rim, which bends OUTWARD over ~0.45 of the half-height, showing the dark background
+        // beyond the track edge as a band just inside the rim. (The earlier 1.83 aspect and the
+        // fringe were measured off the *slider*, which is 1.79 lifted -- not the switch.)
         public static float ToggleLiftBezelFraction = 0.46f;
         /// <summary>Negative = outward bend at the rim.</summary>
         public static float ToggleLiftRefraction = -9f;
-        public static float ToggleLiftMagnify = 0.2f;
-        /// <summary>Rim colour fringe while lifted -- clearly visible in the recording (orange
-        /// one side, blue the other), far stronger than the slider's.</summary>
-        public static float ToggleLiftChromatic = 0.12f;
+        public static float ToggleLiftMagnify = 0f;
+        /// <summary>Rim colour fringe while lifted -- none on the switch in the recording.</summary>
+        public static float ToggleLiftChromatic = 0f;
         /// <summary>Peak frost (blur px) mid-way through the lift transition: on release the lens
         /// goes glass -> milky frosted -> opaque white over ~150ms rather than straight to white.
         /// Shaped as 4m(1-m) so it is zero at both rest and full lift.</summary>
         public static float ToggleLiftFrost = 5f;
         /// <summary>Lifted thumb width / height.</summary>
-        public static float ToggleLiftAspect = 1.83f;
+        public static float ToggleLiftAspect = 1.45f;
         public static float LiftRefraction = 14.8f;
         public static float LiftChromatic = 0.04f;
         public static float LiftBlur = 0f;
@@ -180,6 +181,15 @@ public sealed partial class GlassToggle : UserControl
     // after it, so it still feels like the same object), and release snaps it to whichever side
     // it is on. A tap that never moved far enough to count as a drag just flips the state.
     private const float DragThresholdDip = 4f;
+    /// <summary>How far the pointer must get from where it went down before a release counts as
+    /// a drag rather than a tap. Separate from <see cref="DragThresholdDip"/>, which only decides
+    /// when the thumb starts following: a click on a touchpad or a finger tap wobbles a few DIPs,
+    /// and when that wobble was enough to turn the tap into a "drag" that went nowhere, the
+    /// release settled back where it started and the tap was simply lost. Judged on the
+    /// *furthest* the pointer got, not where it ended, so a quick out-and-back waggle is still
+    /// a drag.</summary>
+    private const float TapSlopDip = 6f;
+    private float _maxDragDistance;
     /// <summary>How far ahead of itself a released thumb is thrown when deciding which side it
     /// landed on.</summary>
     private const float ReleaseProjectionSeconds = 0.08f;
@@ -191,6 +201,7 @@ public sealed partial class GlassToggle : UserControl
     {
         _pressed = true;
         _dragging = false;
+        _maxDragDistance = 0f;
         _dragStartX = (float)e.GetCurrentPoint(this).Position.X;
         _dragTarget = IsOn ? 1f : 0f;
         CapturePointer(e.Pointer);
@@ -202,6 +213,7 @@ public sealed partial class GlassToggle : UserControl
     {
         if (!_pressed) return;
         var x = (float)e.GetCurrentPoint(this).Position.X;
+        _maxDragDistance = Math.Max(_maxDragDistance, Math.Abs(x - _dragStartX));
         if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
         _dragging = true;
 
@@ -221,7 +233,7 @@ public sealed partial class GlassToggle : UserControl
             // release that read it afterwards always saw false, took the tap branch, and
             // flipped the state whatever the drag had done. A drag that crossed sides
             // looked right by accident; one that ended on the side it started from did not.
-            var wasDragging = _dragging;
+            var wasDragging = _dragging && _maxDragDistance >= TapSlopDip;
             _pressed = false;
             _dragging = false;
             ReleasePointerCapture(e.Pointer);

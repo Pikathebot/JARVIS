@@ -20,7 +20,9 @@ public sealed partial class GlassSlider : UserControl
 {
     private const float TrackHeight = 32f;   // control height in DIPs; rail sits centered
     private const float ThumbRadius = 13.5f;
-    private const float RailThickness = 6f;
+    // iOS 26: a 6pt rail under a 24pt-tall thumb (12 / 48 px in the recording); at our 27 DIP thumb
+    // that is 6.75.
+    private const float RailThickness = 6.75f;
 
     public static class Material
     {
@@ -28,12 +30,36 @@ public sealed partial class GlassSlider : UserControl
         public static Vector3 FillColor = new(0.039f, 0.518f, 1.0f); // system blue #0A84FF
         public static float RailSpecular = 0.2f;
         public static float RailBezel = 2.5f;
-        /// <summary>Thumb width / height at rest: >1 is a lozenge along the rail, 1 a circle.</summary>
-        public static float ThumbAspect = 1.4f;
+        // Measured off the iPad recording's Liquid Glass slider (t=36.5-63, 60 fps, 570 resting
+        // and ~450 lifted frames): resting thumb 74x48 px, lifted and held still 112x81 px.
+        /// <summary>Thumb width / height at rest.</summary>
+        public static float ThumbAspect = 1.54f;
+        /// <summary>Lifted thumb width / height while held still (the lens is rounder than the
+        /// puck; it only elongates while moving -- see StretchPerDipPerSecond).</summary>
+        public static float LiftAspect = 1.38f;
+        /// <summary>Lifted height / resting height (81 / 48 px). The toggle's lens has its own.</summary>
+        public static float LiftScale = 1.69f;
+        /// <summary>Aspect gain per DIP/s of thumb speed: the recording's lens gains ~1% per
+        /// 100 px/s and reaches ~+42% at 3700 px/s (135x69 px against 112x81 still).</summary>
+        public static float StretchPerDipPerSecond = 0.00018f;
+        public static float StretchMax = 0.45f;
+        /// <summary>Share of the stretch taken as extra width; the rest comes off the height.</summary>
+        public static float StretchWidthShare = 0.6f;
+        /// <summary>How far past either end the lens follows a drag (rubber band) before springing
+        /// back on release: 24-29 px (~13pt) in the recording.</summary>
+        public static float OverdragDip = 15f;
     }
 
+    // Travel follows the pointer. The old 700/32 (zeta 0.6) overshot every stop; the recording's
+    // thumb never overshoots, including the spring back from an overdrag, so same speed,
+    // critically damped.
     private const float Stiffness = 700f;
-    private const float Damping = 32f;
+    private const float Damping = 53f;
+    // Release: lens -> puck, w 15 rad/s, zeta 0.8 in the recording (two clean fits). The press
+    // itself matches the toggle's (48 -> 75 px in ~80 ms), so it borrows GlassToggle's lift-up.
+    private const float LiftDownStiffness = 225f, LiftDownDamping = 24f;
+
+    private float _overdrag;   // travel units past 0 or 1 while dragging beyond an end
 
     private float _travel;
     private float _travelVelocity;
@@ -81,8 +107,8 @@ public sealed partial class GlassSlider : UserControl
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
         PointerReleased += OnPointerReleased;
-        PointerCanceled += (_, _) => { _pressed = false; StartAnimating(); };
-        PointerCaptureLost += (_, _) => { _pressed = false; StartAnimating(); };
+        PointerCanceled += (_, _) => { _pressed = false; _overdrag = 0f; StartAnimating(); };
+        PointerCaptureLost += (_, _) => { _pressed = false; _overdrag = 0f; StartAnimating(); };
     }
 
     private void OnValueChanged()
@@ -92,27 +118,41 @@ public sealed partial class GlassSlider : UserControl
         StartAnimating();
     }
 
-    private float ValueFromPointer(PointerRoutedEventArgs e)
+    /// <summary>The pointer's position in travel units, NOT clamped: beyond 0..1 is overdrag.</summary>
+    private float RawFromPointer(PointerRoutedEventArgs e)
     {
         var x = e.GetCurrentPoint(this).Position.X;
         var halfW = ThumbRadius * Material.ThumbAspect;
         var usable = ActualWidth - 2 * halfW;
-        return usable <= 0 ? 0f : (float)Math.Clamp((x - halfW) / usable, 0.0, 1.0);
+        return usable <= 0 ? 0f : (float)((x - halfW) / usable);
+    }
+
+    /// <summary>Sets Value from the pointer and keeps any excess as a rubber-banded overdrag:
+    /// L*e/(L+e) past the end, L = OverdragDip in travel units.</summary>
+    private void TrackPointer(PointerRoutedEventArgs e)
+    {
+        var raw = RawFromPointer(e);
+        var usableDip = ActualWidth - 2 * ThumbRadius * Material.ThumbAspect;
+        var limit = usableDip > 0 ? (float)(Material.OverdragDip / usableDip) : 0f;
+        var excess = raw > 1f ? raw - 1f : raw < 0f ? raw : 0f;
+        var mag = Math.Abs(excess);
+        _overdrag = limit <= 0 ? 0f : Math.Sign(excess) * limit * mag / (limit + mag);
+        Value = Math.Clamp(raw, 0f, 1f);
+        StartAnimating();
     }
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressed = true;
         CapturePointer(e.Pointer);
-        Value = ValueFromPointer(e);
-        StartAnimating();
+        TrackPointer(e);
         e.Handled = true;
     }
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (!_pressed) return;
-        Value = ValueFromPointer(e);
+        TrackPointer(e);
         e.Handled = true;
     }
 
@@ -121,6 +161,7 @@ public sealed partial class GlassSlider : UserControl
         if (_pressed)
         {
             _pressed = false;
+            _overdrag = 0f; // spring back from past the end
             ReleasePointerCapture(e.Pointer);
             StartAnimating();
         }
@@ -150,28 +191,40 @@ public sealed partial class GlassSlider : UserControl
         dt = Math.Clamp(dt, 0.001f, 0.05f);
 
         var liftTarget = _pressed ? 1f : 0f;
-        Spring(ref _travel, ref _travelVelocity, _target, dt, Stiffness, Damping);
-        Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.SpringStiffness, GlassToggle.SpringDamping);
+        var travelTarget = _target + _overdrag;
+        Spring(ref _travel, ref _travelVelocity, travelTarget, dt, Stiffness, Damping);
+        if (liftTarget > _lift)
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.LiftUpStiffness, GlassToggle.LiftUpDamping);
+        else
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, LiftDownStiffness, LiftDownDamping);
 
         PublishShapes();
 
         var settled = !_pressed
-                   && Math.Abs(_travel - _target) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
+                   && Math.Abs(_travel - travelTarget) < 0.0005f && Math.Abs(_travelVelocity) < 0.01f
                    && Math.Abs(_lift - liftTarget) < 0.0005f && Math.Abs(_liftVelocity) < 0.01f;
         if (settled)
         {
-            _travel = _target; _travelVelocity = 0f;
+            _travel = travelTarget; _travelVelocity = 0f;
             _lift = liftTarget; _liftVelocity = 0f;
             PublishShapes();
             StopAnimating();
         }
     }
 
+    /// <summary>Semi-implicit Euler in steps of at most 1/240 s, so a dropped frame (dt up to
+    /// 50 ms) cannot make the stiffer springs ring.</summary>
     private static void Spring(ref float value, ref float velocity, float target, float dt, float stiffness, float damping)
     {
-        var accel = (target - value) * stiffness - velocity * damping;
-        velocity += accel * dt;
-        value += velocity * dt;
+        const float MaxStep = 1f / 240f;
+        var steps = Math.Max(1, (int)MathF.Ceiling(dt / MaxStep));
+        var h = dt / steps;
+        for (var i = 0; i < steps; i++)
+        {
+            var accel = (target - value) * stiffness - velocity * damping;
+            velocity += accel * h;
+            value += velocity * h;
+        }
     }
 
     private void PublishShapes()
@@ -213,7 +266,8 @@ public sealed partial class GlassSlider : UserControl
         // Fill: from the rail's left cap to a point that slides across the thumb with the value --
         // its left edge at 0, its right edge at 1. Ending at the thumb's center would show grey
         // rail beyond the blue through the lifted (transparent) thumb at 100%.
-        var fillEnd = thumbX + (_travel - 0.5f) * 2f * thumbHalfW;
+        var fillTravel = Math.Clamp(_travel, 0f, 1f);
+        var fillEnd = left + thumbHalfW + fillTravel * travelPx + (fillTravel - 0.5f) * 2f * thumbHalfW;
         var fillW = Math.Max(2f * railHalfH, fillEnd - left);
         var fillCenter = new Vector2(left + fillW * 0.5f, centerY);
         var fillHalf = new Vector2(fillW * 0.5f, railHalfH);
@@ -223,9 +277,15 @@ public sealed partial class GlassSlider : UserControl
         var hasFill = fillEnd - left > 0.5f;
 
         var m = Math.Max(_lift, GlassToggle.Material.ForceLift);
-        var thumbRadius = ThumbRadius * (GlassToggle.Material.RestScale + (GlassToggle.Material.LiftScale - GlassToggle.Material.RestScale) * m) * scale;
-        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch) * m;
-        var thumbHalf = new Vector2(thumbRadius * Material.ThumbAspect * (1f + stretch), thumbRadius);
+        var thumbRadius = ThumbRadius * (1f + (Material.LiftScale - 1f) * m) * scale;
+        var aspect = Material.ThumbAspect + (Material.LiftAspect - Material.ThumbAspect) * m;
+        // Speed in DIP/s: travel units/s x the thumb's travel span in DIPs.
+        var speedDip = Math.Abs(_travelVelocity) * travelPx / scale;
+        var stretch = Math.Min(Material.StretchMax, speedDip * Material.StretchPerDipPerSecond) * m;
+        var widthGain = 1f + stretch * Material.StretchWidthShare;
+        var heightGain = 1f - stretch * (1f - Material.StretchWidthShare);
+        var thumbHalf = new Vector2(thumbRadius * aspect * widthGain, thumbRadius * heightGain);
+        thumbRadius *= heightGain;
         var thumbCenter = new Vector2(thumbX, centerY);
 
         var shapes = new List<GlassShape>(3)

@@ -227,6 +227,15 @@ public sealed partial class GlassSegmented : UserControl
     }
 
     private const float DragThresholdDip = 4f;
+    /// <summary>How far the pointer must get from where it went down before a release counts as
+    /// a drag rather than a tap. Separate from <see cref="DragThresholdDip"/>, which only decides
+    /// when the thumb starts following: a click on a touchpad or a finger tap wobbles a few DIPs,
+    /// and when that wobble was enough to turn the tap into a "drag" that went nowhere, the
+    /// release settled back where it started and the tap was simply lost. Judged on the
+    /// *furthest* the pointer got, not where it ended, so a quick out-and-back waggle is still
+    /// a drag.</summary>
+    private const float TapSlopDip = 6f;
+    private float _maxDragDistance;
 
     private float MainAxis(Windows.Foundation.Point p) => (float)(IsVertical ? p.Y : p.X);
 
@@ -249,6 +258,7 @@ public sealed partial class GlassSegmented : UserControl
     {
         _pressed = true;
         _dragging = false;
+        _maxDragDistance = 0f;
         _dragStartX = MainAxis(e.GetCurrentPoint(this).Position);
         _dragTarget = SelectedIndex;
         _dragStartIndex = SelectedIndex;
@@ -262,6 +272,7 @@ public sealed partial class GlassSegmented : UserControl
     {
         if (!_pressed) return;
         var x = MainAxis(e.GetCurrentPoint(this).Position);
+        _maxDragDistance = Math.Max(_maxDragDistance, Math.Abs(x - _dragStartX));
         if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
         _dragging = true;
         _dragTarget = IndexFromPointer(x);
@@ -283,7 +294,7 @@ public sealed partial class GlassSegmented : UserControl
             // release that read it afterwards always saw false, took the tap branch, and
             // picked the row under the pointer instead of the one the puck was dragged
             // to, ignoring the drag entirely.
-            var wasDragging = _dragging;
+            var wasDragging = _dragging && _maxDragDistance >= TapSlopDip;
             _pressed = false;
             _dragging = false;
             ReleasePointerCapture(e.Pointer);
@@ -322,7 +333,13 @@ public sealed partial class GlassSegmented : UserControl
         var liftTarget = _pressed || travelling ? 1f : 0f;
 
         Spring(ref _travel, ref _travelVelocity, travelTarget, dt, Stiffness, Damping);
-        Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.SpringStiffness, GlassToggle.SpringDamping);
+        // Lift uses the press/release springs measured on the iOS switch and slider (both lift in
+        // ~70-80 ms and settle back in ~200 ms with no bounce). The recording has no segmented
+        // control, so its travel and stretch below are still unmeasured.
+        if (liftTarget > _lift)
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.LiftUpStiffness, GlassToggle.LiftUpDamping);
+        else
+            Spring(ref _lift, ref _liftVelocity, liftTarget, dt, GlassToggle.LiftDownStiffness, GlassToggle.LiftDownDamping);
 
         var pullTarget = _dragging ? _pullTarget : 0f;
         var pullBefore = _pull;
@@ -370,7 +387,7 @@ public sealed partial class GlassSegmented : UserControl
         var pillHalf = new Vector2(width * 0.5f - PillInset * scale, rowH * 0.5f - PillInset * scale);
         var liftPx = pillHalf.Y * (grow - 1f);
         pillHalf += new Vector2(liftPx, liftPx);
-        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch * 2f) * m;
+        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * PuckStretch) * m;
         pillHalf.Y *= 1f + stretch;
         var pillCenter = new Vector2(left + width * 0.5f, top + rowCenterDip * scale);
         var pillRadius = Math.Min(pillHalf.Y, 10f * scale);
@@ -409,11 +426,23 @@ public sealed partial class GlassSegmented : UserControl
         scene.PublishText(this, texts.ToArray());
     }
 
+    /// <summary>Unmeasured (no segmented control in the reference recording): kept at its value
+    /// before the toggle's own stretch was measured (2 x the toggle's old 0.012).</summary>
+    private const float PuckStretch = 0.024f;
+
+    /// <summary>Semi-implicit Euler in steps of at most 1/240 s, so a dropped frame (dt up to
+    /// 50 ms) cannot make the stiffer press spring ring.</summary>
     private static void Spring(ref float value, ref float velocity, float target, float dt, float stiffness, float damping)
     {
-        var accel = (target - value) * stiffness - velocity * damping;
-        velocity += accel * dt;
-        value += velocity * dt;
+        const float MaxStep = 1f / 240f;
+        var steps = Math.Max(1, (int)MathF.Ceiling(dt / MaxStep));
+        var h = dt / steps;
+        for (var i = 0; i < steps; i++)
+        {
+            var accel = (target - value) * stiffness - velocity * damping;
+            velocity += accel * h;
+            value += velocity * h;
+        }
     }
 
     private void PublishShapes()
@@ -464,7 +493,7 @@ public sealed partial class GlassSegmented : UserControl
         var pillW = Math.Min(segWDip - 2f * PillInset, labelW + 2f * PillPadX) * scale;
         var pillHalf = new Vector2(pillW * 0.5f, (TrackHeight * 0.5f - PillInset) * scale) * grow;
         // Stretch along the travel with velocity, like the toggle thumb.
-        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * GlassToggle.Material.ThumbStretch * 2f) * m;
+        var stretch = Math.Min(0.25f, Math.Abs(_travelVelocity) * PuckStretch) * m;
         pillHalf.X *= 1f + stretch;
         var pillCenter = new Vector2(left + segCenterDip * scale, centerY);
         var pillRadius = pillHalf.Y;

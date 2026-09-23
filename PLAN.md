@@ -93,38 +93,26 @@ Frames: `ffmpeg -ss <t> -i <video> -frames:v 1 -q:v 1 out.png`, then measure wit
 **t=36.5 / 41.0** = the slider thumb at rest / lifted (not the switch -- different aspect);
 **t=83.0 -> 85.0** = folder-open transition (background dim/blur).
 
-**a. Confirm today's two changes on device, then commit** (built clean, *unverified on device*):
-- `GlassToggle.Material` set to the t=72 measurements (both `Jarvis.Glass` and `Jarvis.GlassLab`):
+**Measuring tools** (scratchpad copies are gone after the session; the method is what matters):
+read a region frame by frame with each frame's real timestamp -- ffmpeg `crop,showinfo`,
+`-fps_mode passthrough`, rawvideo to numpy; the recording is 60 fps with ~45 dropped-frame gaps,
+so check gaps before fitting timing. Track a lifted lens by its TOP edge above the track/rail
+against a resting frame or the flat card colour (the bottom is polluted by its shadow), height =
+2 x (track centre - top), round ends corrected with the circle. Fit each channel with a damped
+step response (scipy `least_squares`, damping ratio free). Traps hit: brightness thresholds
+shave edges (measure at the colour midpoint); the switch's grey/green track change reads as lens
+unless rows right above the track are excluded; the slider lens is jelly-like (width and height
+swap while it moves), so only still frames give its shape.
 
-  | Quantity | Measured | Was | Now |
-  |---|---|---|---|
-  | interior white wash | ~6% | `ToggleLiftTint` 0.08 | 0.06 |
-  | lens height / track height | 1.43 | `ToggleLiftScale` 1.46 (=1.23) | 1.69 |
-  | lens aspect w/h | 1.45 | `ToggleLiftAspect` 1.83 | 1.45 |
-  | chromatic fringing | none | `ToggleLiftChromatic` 0.12 | 0 |
-  | magnification | none | `ToggleLiftMagnify` 0.2 | 0 |
-  | rim band / half-height | 0.45 | `ToggleLiftBezelFraction` 0.46 | unchanged |
-  | rim bend | outward | `ToggleLiftRefraction` -9 | unchanged |
+**a. Done 2026-09-23 and confirmed on device:** toggle, slider and segmented-lift measurements
+(tables in `docs/MILESTONES.md`).
 
-  The lens now overhangs the 32-DIP track by ~7 DIP each side; a toggle within 7 DIP of a
-  ScrollViewer edge would have its lens clipped -- check the Settings sheet's first/last rows.
-- Tap slop (`TapSlopDip` = 6) in `GlassToggle` and `GlassSegmented`, both copies. The 09-22 drag
-  fix made any press that moved >=2 DIP a "drag"; a touchpad click's wobble then settled back
-  where it started and the click was lost ("the button is not responsive like before"). A release
-  is now a drag only if the pointer got >= 6 DIP away at some point.
+**b. Still open:** a reference for the segmented control (ask the user for a short iPad
+recording of one -- e.g. a Maps/Photos segmented picker -- if fidelity there matters); the
+slider's jelly wobble; `GlassButton`/`GlassTextField` still use the old shared 520/30 spring;
+bring `Jarvis.GlassLab` in line with the new motion if it is used for tuning again.
 
-**b. Spring timing -- needs a decision with the user.** The recording gives lift ~130 ms, settle
-~130-140 ms, **no overshoot** (lens height tracked over 120 frames through two press-drag-release
-cycles). Ours is stiffness 520 / damping 30: ~270 ms with deliberate overshoot, and the code
-comment claims that overshoot came from a recording. Critically damped at ~130 ms is roughly
-stiffness 2000 / damping 90. Only the lift channel was measured; measure the travel channel (puck
-sliding side to side) before changing it -- it may legitimately differ.
-
-**c. Still unmeasured:** `ThumbStretch` 0.012 (no velocity stretch seen, but width-vs-velocity was
-not checked); `ToggleLiftFrost` 5 (the milky phase on release); all of `GlassSlider` (rest aspect
-measures 1.54, lifted 1.79 vs our `ThumbAspect` 1.4) and `GlassSegmented`.
-
-**d. Sheet backdrop dim (optional polish).** `SheetBackdropOpacity` (`MainWindow.xaml.cs`) fades
+**c. Sheet backdrop dim (optional polish).** `SheetBackdropOpacity` (`MainWindow.xaml.cs`) fades
 the window's XAML to 0.08 while a sheet is open -- set before the layer fix, likely too aggressive
 now. Apple dims behind an opened folder by 19% with a ~30-35 px sigma blur, but ours compensates
 for XAML painting above the swapchain, so the right value is a judgement on device, not 0.81.

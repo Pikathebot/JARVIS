@@ -122,11 +122,21 @@ public sealed partial class GlassSegmented : UserControl
     }
 
     private const float DragThresholdDip = 4f;
+    /// <summary>How far the pointer must get from where it went down before a release counts as
+    /// a drag rather than a tap. Separate from <see cref="DragThresholdDip"/>, which only decides
+    /// when the thumb starts following: a click on a touchpad or a finger tap wobbles a few DIPs,
+    /// and when that wobble was enough to turn the tap into a "drag" that went nowhere, the
+    /// release settled back where it started and the tap was simply lost. Judged on the
+    /// *furthest* the pointer got, not where it ended, so a quick out-and-back waggle is still
+    /// a drag.</summary>
+    private const float TapSlopDip = 6f;
+    private float _maxDragDistance;
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressed = true;
         _dragging = false;
+        _maxDragDistance = 0f;
         _dragStartX = (float)e.GetCurrentPoint(this).Position.X;
         _dragTarget = SelectedIndex;
         CapturePointer(e.Pointer);
@@ -138,6 +148,7 @@ public sealed partial class GlassSegmented : UserControl
     {
         if (!_pressed) return;
         var x = (float)e.GetCurrentPoint(this).Position.X;
+        _maxDragDistance = Math.Max(_maxDragDistance, Math.Abs(x - _dragStartX));
         if (!_dragging && Math.Abs(x - _dragStartX) < DragThresholdDip) return;
         _dragging = true;
         _dragTarget = IndexFromPointer(x);
@@ -152,7 +163,7 @@ public sealed partial class GlassSegmented : UserControl
             // PointerCaptureLost synchronously, and that handler clears _dragging -- so a
             // release that read it afterwards always saw false and picked the row under the
             // pointer instead of the one the puck was dragged to.
-            var wasDragging = _dragging;
+            var wasDragging = _dragging && _maxDragDistance >= TapSlopDip;
             _pressed = false;
             _dragging = false;
             ReleasePointerCapture(e.Pointer);

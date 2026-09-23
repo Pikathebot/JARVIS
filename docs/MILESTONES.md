@@ -133,3 +133,35 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   immediate). Menu items moved from `Click` handlers to `Command`s, and `ForceCreate(false)` stops
   the tray icon from putting the whole process into Windows Efficiency Mode. Verified by sending
   WM_CLOSE and synthetic tray callbacks (single and double click); confirmed by the user on device.
+
+- [x] **Liquid Glass motion measured off the iPad recording (2026-09-23, confirmed on device)** —
+  Everything below is in
+  `Jarvis.Glass` (the `Jarvis.GlassLab` bench got the morning's toggle material values and tap slop,
+  but NOT the motion changes, so it no longer matches the app's motion).
+  - *Toggle* (switch at t=64-75, three press-drag-release cycles):
+  
+    | Quantity | Measured | Was | Now |
+    |---|---|---|---|
+    | resting puck | 73x48 px, aspect 1.52 | 1.59 | 1.52 (radius 13.7, inset 2.85 -> 71.4 DIP track) |
+    | lifted, still | 116x79 px: 1.41x track, aspect 1.47 | scale 1.46, aspect 1.83 | 1.65 / 1.47 |
+    | tint / chromatic / magnify | ~6% / none / none | 0.08 / 0.12 / 0.2 | 0.06 / 0 / 0 |
+    | travel settle | w 20, zeta 1.07, 10-90% 180 ms | one spring 520/30 (6% bounce) | 400/43 |
+    | lift up (press) | w 35, zeta 0.8, 10-90% 70 ms | same shared spring | 1200/55 |
+    | lift down (release) | w 19, zeta 1.1, 10-90% 215 ms | same shared spring | 350/41 |
+    | speed stretch | +1.7% aspect / 100 px/s, and shorter | 1.2%/travel/s, wider only | 0.7%/travel/s, 40% width / 60% height |
+    | overdrag | lens reaches 0.58 travel past an end, springs back | clamped | rubber band, limit 0.75 |
+    | release timing | lens shrinks WHILE sliding back | shrank after landing | latch until 90% lifted, then free |
+    | release frost | milky phase ~100 ms visible (72.07-72.17) | `ToggleLiftFrost` 5 | unchanged: qualitatively confirmed |
+  
+    Plus tap slop (`TapSlopDip` 6) so a touchpad click's wobble no longer eats the click.
+  - *Slider* (t=36.5-63, ~570 resting / ~450 lifted frames): resting aspect 1.54 (was 1.4); lifted
+    and still 112x81 px = 1.69x height, aspect 1.38 (was 1.35x, same aspect as rest); rail 6.75 DIP
+    (6pt under a 24pt thumb; was 6); travel 700/53 critically damped (700/32 overshot); release
+    225/24 (w 15, zeta 0.8); press borrows the toggle's lift-up (same ~80 ms); stretch ~1% per
+    100 px/s up to +42%, 60% width / 40% height, per DIP/s; overdrag rubber band 15 DIP (24-29 px
+    measured). The lens's jelly wobble (width/height trading after a fast stop) is NOT modelled.
+  - *Segmented*: the recording has **no segmented control** (checked the whole 141 s). Its lift now
+    uses the switch/slider press and release springs (both measured controls agree); its travel
+    and stretch are unmeasured and deliberately unchanged (`PuckStretch` 0.024 = old effective value).
+  - All three integrate springs in <= 1/240 s substeps (the stiffer press spring would ring on a
+    50 ms dropped frame otherwise).
