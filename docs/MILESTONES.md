@@ -119,3 +119,17 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   from signature introspection, and only the docstring's first line becomes the description.
   Pinned by `backend/tests/test_git_agent_tools.py`; 498 tests pass (the ~106 removed covered only
   deleted code).
+
+- [x] **Closing to the tray (2026-09-23)** (`MainWindow.ShowFromBackground`, `App.ExitApp`,
+  `Services/TrayService.cs`) — Closing the main window with X destroyed it while the process lived
+  on (the HUD and the tray icon kept it alive), so neither the tray icon nor a second launch had a
+  window to show: Jarvis became unreachable until killed. X now hides to the tray
+  (`AppWindow.Closing` cancelled) while a tray icon exists; the tray's click and a second launch
+  (single-instance redirect, now handled via `AppInstance.Activated`) show, restore and front the
+  same window; "Exit Jarvis" is the one real exit and stops the backend with it; without a tray icon
+  X falls back to a real close that ends the process. A first fix only covered a single click -- the
+  user's double-click still did nothing, because H.NotifyIcon routes a double-click only to
+  `DoubleClickCommand`; both now show the window (`NoLeftClickDelay` makes the single click
+  immediate). Menu items moved from `Click` handlers to `Command`s, and `ForceCreate(false)` stops
+  the tray icon from putting the whole process into Windows Efficiency Mode. Verified by sending
+  WM_CLOSE and synthetic tray callbacks (single and double click); confirmed by the user on device.

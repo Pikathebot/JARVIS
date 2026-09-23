@@ -31,6 +31,23 @@ public sealed partial class MainWindow : Window
 
     private readonly JarvisApiClient _api;
     private readonly GlobalHotkeyService _hotkey;
+    private readonly AppWindow _appWindow;
+
+    /// <summary>True while something can bring the window back (the tray icon); the X button then
+    /// hides instead of closing. Cleared before a real exit.</summary>
+    public bool HideOnClose { get; set; }
+
+    /// <summary>Shows the window again after X hid it, restores it if minimized, and brings it to
+    /// the front. Used by the tray icon and by a second launch of the app.</summary>
+    public void ShowFromBackground()
+    {
+        _appWindow.Show();
+        if (_appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+        {
+            presenter.Restore();
+        }
+        Activate();
+    }
     public HudWindow? Hud { get; set; }
 
     /// <summary>
@@ -176,6 +193,17 @@ public sealed partial class MainWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         _hotkey.Register(hwnd);
         _hotkey.HotkeyPressed += () => DispatcherQueue.TryEnqueue(() => Hud?.ToggleVisible());
+
+        // X hides to the tray rather than closing. A closed WinUI window is gone for good, but the
+        // process lived on (the HUD and the tray icon keep it running), so the tray's Show and a
+        // second launch -- which single-instance redirects here -- both found nothing to show.
+        _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+        _appWindow.Closing += (_, e) =>
+        {
+            if (!HideOnClose) return;
+            e.Cancel = true;
+            _appWindow.Hide();
+        };
 
         Closed += (_, _) =>
         {

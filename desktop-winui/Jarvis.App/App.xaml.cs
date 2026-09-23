@@ -3,6 +3,7 @@ using Jarvis.Core.Sse;
 using Jarvis_App.Services;
 using Jarvis_Glass;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 
 namespace Jarvis_App;
 
@@ -76,6 +77,13 @@ public partial class App : Application
             Window = _mainWindow;
 
             SetupTray();
+            // X hides to the tray only while there is a tray icon to come back through; without
+            // one a real close must end the app rather than leave it running with no window.
+            _mainWindow.HideOnClose = _tray is not null;
+            _mainWindow.Closed += (_, _) => ExitApp();
+            // A second launch is redirected here by SingleInstanceService; show the window for it.
+            AppInstance.GetCurrent().Activated += (_, _) =>
+                DispatcherQueue.TryEnqueue(() => _mainWindow.ShowFromBackground());
 
             Window.Activate();
 
@@ -127,20 +135,26 @@ public partial class App : Application
         // which only accepts package-relative schemes (ms-appx://) — a plain file:// URI to the
         // same path throws ERROR_INVALID_PARAMETER since that API is not a general file opener.
         _tray = new TrayService("ms-appx:///Assets/AppIcon.ico");
-        _tray.ShowRequested += () => DispatcherQueue.TryEnqueue(() =>
-        {
-            _mainWindow.Activate();
-        });
+        _tray.ShowRequested += () => DispatcherQueue.TryEnqueue(() => _mainWindow.ShowFromBackground());
         _tray.ToggleHudRequested += () => DispatcherQueue.TryEnqueue(() => _hudWindow.ToggleVisible());
         _tray.FreeVramRequested += async () =>
         {
             try { await _api.UnloadModelsAsync(); } catch { /* best-effort */ }
         };
-        _tray.ExitRequested += () => DispatcherQueue.TryEnqueue(() =>
-        {
-            _backendHost.Dispose();
-            Microsoft.UI.Xaml.Application.Current.Exit();
-        });
+        _tray.ExitRequested += () => DispatcherQueue.TryEnqueue(ExitApp);
+    }
+
+    private bool _exiting;
+
+    /// <summary>The one way out: stops the backend (and its llama-servers) and ends the process.</summary>
+    private void ExitApp()
+    {
+        if (_exiting) return;
+        _exiting = true;
+        _mainWindow.HideOnClose = false;
+        _tray?.Dispose();
+        _backendHost.Dispose();
+        Microsoft.UI.Xaml.Application.Current.Exit();
     }
 
     /// <summary>
