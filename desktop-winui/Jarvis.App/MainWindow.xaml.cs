@@ -10,6 +10,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 using Windows.UI;
 
@@ -42,6 +43,9 @@ public sealed partial class MainWindow : Window
     public MainWindow(JarvisApiClient api, ChatStreamClient streamClient, AwarenessStreamClient awarenessStream)
     {
         InitializeComponent();
+        // Layers are named rather than written as integers in XAML -- see GlassLayers for
+        // why the sheets' hand-written "2" left them unable to cover the window behind them.
+        WorkspaceDropdown.Layer = Jarvis_Glass.GlassLayers.Popover;
 
         _api = api;
         var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
@@ -665,9 +669,45 @@ public sealed partial class MainWindow : Window
         {
             SettingsHost.Children.Clear();
             SettingsHost.Visibility = Visibility.Collapsed;
+            SetSheetOpen(false);
         };
         SettingsHost.Children.Add(pane);
         SettingsHost.Visibility = Visibility.Visible;
+        SetSheetOpen(true);
+    }
+
+    /// <summary>What the window's own content fades to while a sheet is open.</summary>
+    private const double SheetBackdropOpacity = 0.08;
+
+    /// <summary>
+    /// A sheet in <see cref="SettingsHost"/> is a glass slab, and glass is drawn in the swapchain
+    /// *behind* the whole XAML tree -- so the sheet's frost and tint fall on the wallpaper and on
+    /// the panels' glass, and never on the window's own text, which paints on top of them. No
+    /// amount of tint can stop the chat and sidebar labels reading through a sheet; only taking
+    /// them out of the XAML layer can, which is what this does. Fading rather than collapsing:
+    /// a collapsed slab takes its glass with it (GlassSlab.IsCollapsedInTree), so every panel
+    /// stays exactly where it was and only the text that was competing with the sheet's goes.
+    /// </summary>
+    private void SetSheetOpen(bool open)
+    {
+        var to = open ? SheetBackdropOpacity : 1.0;
+        FadeTo(TitleBarRow, to);
+        FadeTo(BodyGrid, to);
+    }
+
+    private static void FadeTo(UIElement element, double to)
+    {
+        var fade = new DoubleAnimation
+        {
+            To = to,
+            Duration = new Duration(TimeSpan.FromMilliseconds(160)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(fade, element);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(fade);
+        storyboard.Begin();
     }
 
     private void NewWorkspace_Click(object sender, RoutedEventArgs e)
@@ -679,11 +719,13 @@ public sealed partial class MainWindow : Window
         {
             SettingsHost.Children.Clear();
             SettingsHost.Visibility = Visibility.Collapsed;
+            SetSheetOpen(false);
         };
         // Nothing else to wire: the pane activates the new project, and ActiveProjectChanged
         // rescopes the chat and rebuilds the dropdown's rows.
         SettingsHost.Children.Add(pane);
         SettingsHost.Visibility = Visibility.Visible;
+        SetSheetOpen(true);
     }
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();

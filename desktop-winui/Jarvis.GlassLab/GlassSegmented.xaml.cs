@@ -148,11 +148,16 @@ public sealed partial class GlassSegmented : UserControl
     {
         if (_pressed)
         {
+            // Read the drag state BEFORE releasing capture: ReleasePointerCapture raises
+            // PointerCaptureLost synchronously, and that handler clears _dragging -- so a
+            // release that read it afterwards always saw false and picked the row under the
+            // pointer instead of the one the puck was dragged to.
+            var wasDragging = _dragging;
             _pressed = false;
+            _dragging = false;
             ReleasePointerCapture(e.Pointer);
             var x = e.GetCurrentPoint(this).Position.X;
-            var index = _dragging ? (int)MathF.Round(_dragTarget) : (int)MathF.Round(IndexFromPointer(x));
-            _dragging = false;
+            var index = wasDragging ? (int)MathF.Round(_dragTarget) : (int)MathF.Round(IndexFromPointer(x));
             if (index == SelectedIndex) StartAnimating();
             SelectedIndex = Math.Clamp(index, 0, Count - 1);
         }

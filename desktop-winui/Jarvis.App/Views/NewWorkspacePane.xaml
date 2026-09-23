@@ -13,7 +13,7 @@
         ContentDialog, which is a popup painted above the window where the glass can't reach.
     -->
     <Grid Background="#66000000" Tapped="Scrim_Tapped">
-        <glass:GlassSlab x:Name="Sheet" Layer="2" SlabCornerRadius="20" TintAmount="0.62" Frost="36"
+        <glass:GlassSlab x:Name="Sheet" SlabCornerRadius="20" TintAmount="0.62" Frost="36"
                          Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
                          Background="Transparent" Tapped="Sheet_Tapped">
             <Grid Padding="20,16,20,16">

@@ -431,7 +431,6 @@
             Visibility="Collapsed"
             HorizontalAlignment="Left"
             VerticalAlignment="Top"
-            Layer="3"
             SlabCornerRadius="14"
             TintAmount="0.55"
             Frost="16"

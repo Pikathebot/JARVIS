@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Jarvis_App.ViewModels;
+using Jarvis_Glass;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -26,6 +27,9 @@ public sealed partial class NewWorkspacePane : UserControl
         _projects = projects;
         _hwnd = hwnd;
         InitializeComponent();
+        // Not in XAML: a bare integer there is what let the sheet sit on the same
+        // layer as the controls behind it, which it could neither cover nor frost.
+        Sheet.Layer = GlassLayers.Sheet;
         Loaded += (_, _) => NameBox.Focus(FocusState.Programmatic);
     }
 

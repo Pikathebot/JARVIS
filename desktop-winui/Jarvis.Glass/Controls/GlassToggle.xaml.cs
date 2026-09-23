@@ -184,6 +184,9 @@ public sealed partial class GlassToggle : UserControl
     // toward the side it already sits on must leave it there. A press that never moved is a tap
     // and flips the state; any real movement is a drag and the state is whatever side wins.
     private const float DragThresholdDip = 2f;
+    /// <summary>How far ahead of itself a released thumb is thrown when deciding which side it
+    /// landed on, so a flick that was let go just short of an end still lands at that end.</summary>
+    private const float ReleaseProjectionSeconds = 0.08f;
     private float _dragStartX;
     private float _dragStartTravel;
     private bool _dragging;
@@ -219,15 +222,26 @@ public sealed partial class GlassToggle : UserControl
     {
         if (_pressed)
         {
-            _pressed = false;
-            ReleasePointerCapture(e.Pointer);
+            // Read the drag state BEFORE releasing capture: ReleasePointerCapture raises
+            // PointerCaptureLost synchronously, and that handler clears _dragging -- so a
+            // release that read it afterwards always saw false, took the tap branch, and
+            // flipped the state whatever the drag had done. A drag that crossed sides
+            // looked right by accident; one that ended on the side it started from did not.
             var wasDragging = _dragging;
+            _pressed = false;
             _dragging = false;
+            ReleasePointerCapture(e.Pointer);
             if (wasDragging)
             {
-                // Settle to the nearer side. A drag that ends where it began (pushed further
-                // into the end it was already at, or pulled back) keeps the current state.
-                var on = _dragTarget >= 0.5f;
+                // Settle to the nearer side -- judged by where the thumb actually IS, plus where
+                // it is heading, not by the raw pointer target. The thumb springs *after* the
+                // pointer, so in a quick left-right waggle the pointer can already be back across
+                // the middle while the puck the user is watching is still at the far end; deciding
+                // on _dragTarget flipped a switch that had visibly been let go on its own side.
+                // A drag that ends where it began still keeps the current state: the thumb is
+                // there and not moving, so the projection lands on the same side.
+                var projected = Math.Clamp(_travel + _travelVelocity * ReleaseProjectionSeconds, 0f, 1f);
+                var on = projected >= 0.5f;
                 if (on == IsOn) StartAnimating(); // no state change; still need to settle the thumb
                 IsOn = on;
             }

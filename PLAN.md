@@ -136,7 +136,72 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
 
 - [x] **Sidecars hold no VRAM (2026-09-22)** (`captioner.py`, `embedding_sidecar.py`) — `models/captioner/` had gone missing from disk, so the image captioner was `available: false`; re-downloaded SmolVLM-500M-Instruct Q8 + its projector from `ggml-org` and verified the fallback end-to-end with a genuinely text-only model: MiniCPM5-2B on `main` (`loaded_projector: null`) answered "a blue sign with a red square and a yellow circle, and the text reads 'Jarvis Test 42'" for exactly that image, 4.0 s including the sidecar's cold start. Found while checking: the CUDA build of llama-server creates a device context even with `-n-gpu-layers 0`, so each CPU sidecar held ~170 MB of dedicated VRAM it never used (181 MB embedder, 161 MB captioner via the `GPU Process Memory` counter) — and 178 MB was precisely the margin by which the 9B's projector had just failed to fit (5194 needed, 5016 free). Both sidecars now launch with `CUDA_VISIBLE_DEVICES=-1` (`""` is ignored by CUDA); ggml logs "no CUDA-capable device is detected", the counter reads 0 MB, and captions and embeddings are unchanged.
 
+- [x] **Glass interaction and layering fixes (2026-09-22, verified on device)** — two bugs found from
+  the user's report that the sheets blended into the window and that a toggle flipped when a drag
+  ended on the side it started from. (1) `ReleasePointerCapture` raises `PointerCaptureLost`
+  *synchronously* and that handler clears `_dragging`, so every release that read `_dragging`
+  afterwards saw false: `GlassToggle` took the tap branch on every release (a drag that crossed
+  sides looked correct by accident; one ending where it began flipped wrongly) and `GlassSegmented`
+  always picked the row under the pointer rather than the dragged-to one. The drag state is now read
+  before capture is released, in `Jarvis.Glass` and `Jarvis.GlassLab` alike. (2) Both sheets were
+  declared `Layer="2"` in XAML — the same layer as every control inside every panel, and a layer
+  only covers and only frosts what is *below* it, so a sheet could do neither to the controls behind
+  it however high its `Frost` went. Sheets are now layer 4 via `GlassLayers`, which documents the
+  whole census; no glass layer is a bare integer in XAML any more. XAML text still needs the
+  separate `SheetBackdropOpacity` fade, because XAML always paints above the swapchain.
+
 ## 4. Next Milestones
 
 - **Voice accuracy** (user-reported 2026-09-22, deferred): the WinUI mic path now hears speech and wake-word works on device, but pickup is inconsistent and Whisper transcripts are often wrong. Candidates: model size / beam settings, `VoiceViewModel` AudioGraph gain and VAD thresholds, noise gating.
-- **Liquid Glass fidelity** (user-reported 2026-09-22): parts of the UI do not match Apple's Liquid Glass; the user will record a video of the specific spots — wait for it rather than guessing.
+
+- **Liquid Glass fidelity -- apply the measured material values** (2026-09-22, ready to work):
+  the user's iPad screen recording of iPadOS 26 was measured frame-by-frame, so the guesswork is
+  over. Source: `ScreenRecording_09-22-2026 19-38-02_1.mp4`, 2778x1940 HEVC, 141.5s -- **keep this
+  file**; the WhatsApp copy is 672x464 and far too compressed to measure. Regenerate any frame with
+  `ffmpeg -ss <t> -i <video> -frames:v 1 -q:v 1 out.png`. The decisive moments are **t=72.0** (an
+  iOS 26 switch caught with its puck lifted mid-drag -- the exact state `GlassToggle` models; the
+  switch is at approximately x 2444..2610, y 596..676) and **t=36.5 / t=41.0** (the Liquid Glass
+  slider's thumb at rest and lifted).
+
+  Measured against `GlassToggle.Material`, from the switch at t=72 (track height 56px, lens 116x80px):
+
+  | Quantity | Measured | Constant | Status |
+  |---|---|---|---|
+  | rim band / lens half-height | 0.45 | `ToggleLiftBezelFraction` 0.46 | correct |
+  | rim bend direction | outward (content 56->44px) | `ToggleLiftRefraction` -9 | sign correct |
+  | interior white wash | ~6% | `ToggleLiftTint` 0.08 | -> 0.06 |
+  | lens height / track height | 1.43 | 1.23 (ThumbRadius 13.5 x 1.46 x 2 / 32) | -> `ToggleLiftScale` ~1.69 |
+  | lens aspect w/h | 1.45 | `ToggleLiftAspect` 1.83 | -> 1.45 |
+  | chromatic fringing | none (R-B within +/-2) | `ToggleLiftChromatic` 0.12 | -> 0 |
+  | magnification | none | `ToggleLiftMagnify` 0.2 | -> 0 |
+
+  The 1.83 aspect was almost certainly measured off the *slider* (which measures 1.79 lifted), not
+  the switch -- the same trap Gemini fell into when asked about "the slider thumb". The
+  magnification finding is the cleanest measurement in the recording: the slider's blue rail is 8px
+  thick at an identical y inside and outside the lens, so content passes through the centre
+  undistorted and all the bending lives in the rim band.
+
+  Decided but not yet applied: the five rows above marked with an arrow.
+
+  Still open, needs discussion before changing:
+  - **Spring timing.** Tracking the lens height across 120 frames at 30fps through two
+    press-drag-release cycles gives **lift ~130ms, settle ~130-140ms, no overshoot**. Ours
+    (stiffness 520, damping 30) settles in ~270ms *with* deliberate overshoot, and the code comment
+    claims that overshoot came from a recording. Critically damped at ~130ms is roughly stiffness
+    2000 / damping 90. Only the lift/scale channel was measured -- the travel channel (the puck
+    sliding side to side) is still unmeasured and may legitimately differ.
+  - `ThumbStretch` 0.012 -- no velocity stretch was observed, but only the height channel was
+    checked, not width-against-velocity.
+  - `ToggleLiftFrost` 5 (the milky phase on release) -- never independently verified.
+  - `GlassSlider`'s own constants (rest aspect measures 1.54, lifted 1.79) and everything about
+    `GlassSegmented` were not measured at all.
+
+- **Sheet backdrop dim** (2026-09-22, optional polish — the user judged the layering "good"
+  on device, so this is no longer a defect): `SheetBackdropOpacity` in
+  `MainWindow.xaml.cs` fades the window's XAML content to 0.08 while a sheet is open. That was set
+  before the layer fix below, when glass-layer content was also bleeding through, so it is likely
+  far too aggressive now. For reference Apple dims the background behind an opened folder by **19%**
+  (measured across the t=83.0 -> t=85.0 transition, same underlying content) with a background blur
+  of sigma ~30-35px, about 1.6% of screen height. Ours is not imitating Apple here though -- it is
+  compensating for XAML always painting above the swapchain -- so 0.81 is not the answer either.
+

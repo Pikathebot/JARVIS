@@ -180,6 +180,9 @@ public sealed partial class GlassToggle : UserControl
     // after it, so it still feels like the same object), and release snaps it to whichever side
     // it is on. A tap that never moved far enough to count as a drag just flips the state.
     private const float DragThresholdDip = 4f;
+    /// <summary>How far ahead of itself a released thumb is thrown when deciding which side it
+    /// landed on.</summary>
+    private const float ReleaseProjectionSeconds = 0.08f;
     private float _dragStartX;
     private bool _dragging;
     private float _dragTarget;
@@ -213,13 +216,23 @@ public sealed partial class GlassToggle : UserControl
     {
         if (_pressed)
         {
-            _pressed = false;
-            ReleasePointerCapture(e.Pointer);
+            // Read the drag state BEFORE releasing capture: ReleasePointerCapture raises
+            // PointerCaptureLost synchronously, and that handler clears _dragging -- so a
+            // release that read it afterwards always saw false, took the tap branch, and
+            // flipped the state whatever the drag had done. A drag that crossed sides
+            // looked right by accident; one that ended on the side it started from did not.
             var wasDragging = _dragging;
+            _pressed = false;
             _dragging = false;
+            ReleasePointerCapture(e.Pointer);
             if (wasDragging)
             {
-                var on = _dragTarget >= 0.5f;
+                // Judged by where the thumb actually IS plus where it is heading, not by the raw
+                // pointer target: the thumb springs after the pointer, so a quick left-right
+                // waggle can leave the pointer across the middle while the puck the user is
+                // watching is still at the far end (see Jarvis.Glass's copy).
+                var projected = Math.Clamp(_travel + _travelVelocity * ReleaseProjectionSeconds, 0f, 1f);
+                var on = projected >= 0.5f;
                 if (on == IsOn) StartAnimating(); // no state change; still need to settle the thumb
                 IsOn = on;
             }
