@@ -169,10 +169,6 @@ class Settings(BaseSettings):
     # so (through the awareness monitor) and a late "yes" is refused and re-asked. 0 = never.
     confirmation_timeout_seconds: float = Field(default=90.0, alias="CONFIRMATION_TIMEOUT_SECONDS")
 
-    # Tool-Call Reliability Settings
-    reliability_window_size: int = Field(default=30, alias="RELIABILITY_WINDOW_SIZE")
-    reliability_floor: float = Field(default=0.75, alias="RELIABILITY_FLOOR")
-
     # Spoken replies (/api/voice/say). "kokoro" = Kokoro-82M on the CPU, fully local (default);
     # "edge" = Microsoft's edge-tts cloud voices. With kokoro selected and its files missing,
     # speech is skipped unless the cloud fallback is explicitly allowed.
@@ -188,15 +184,7 @@ class Settings(BaseSettings):
     )
     kokoro_speed: float = Field(default=1.0, alias="KOKORO_SPEED")
 
-    # TTS & Voice Output Settings
-    voice_output_enabled: bool = Field(default=False, alias="VOICE_OUTPUT_ENABLED")
-    tts_engine: str = Field(default="chatterbox", alias="TTS_ENGINE")
-    tts_vram_required_mb: float = Field(default=2500.0, alias="TTS_VRAM_REQUIRED_MB")
-    tts_kokoro_vram_required_mb: float = Field(default=1200.0, alias="TTS_KOKORO_VRAM_REQUIRED_MB")
-    tts_chunk_size_chars: int = Field(default=300, alias="TTS_CHUNK_SIZE_CHARS")
-    tts_device: str = Field(default="cuda", alias="TTS_DEVICE")
-
-    # Runtime & Legacy Compatibility
+    # The local model runtime. llama.cpp is the only one; routing decisions carry this name.
     model_runtime: str = Field(default="llama_cpp", alias="MODEL_RUNTIME")
 
     # Context Engine & RAG Settings (CPU-Only)
@@ -235,25 +223,6 @@ class Settings(BaseSettings):
     context_tier3_max_chunks: int = Field(default=5, alias="CONTEXT_TIER3_MAX_CHUNKS")
     context_tier4_max_messages: int = Field(default=20, alias="CONTEXT_TIER4_MAX_MESSAGES")
     context_include_summary: bool = Field(default=True, alias="CONTEXT_INCLUDE_SUMMARY")
-
-    # Terminal Sandbox Settings (Phase 4)
-    terminal_timeout_seconds: int = Field(default=30, alias="TERMINAL_TIMEOUT_SECONDS")
-
-    # Legacy runtime selector, kept for the reliability monitor's rollback logic. It used to
-    # default to "bonsai" (an LM Studio-hosted model) from before llama.cpp became the primary
-    # runtime -- and since nothing sets it in .env, that stale default silently overrode
-    # model_runtime and routed every chat at a model that has not existed for a long time.
-    active_model_backend: str = Field(default="llama_cpp", alias="ACTIVE_MODEL_BACKEND")
-
-    lmstudio_base_url: str = Field(default="http://localhost:1234/v1", alias="LMSTUDIO_BASE_URL")
-
-
-    lmstudio_model: str = Field(default="prism-ml/bonsai-27b", alias="LMSTUDIO_MODEL")
-    ollama_host: str = Field(default="http://localhost:11434", alias="OLLAMA_HOST")
-    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="hermes3:8b", alias="OLLAMA_MODEL")
-    ollama_main_model: str = Field(default="hermes3:8b", alias="OLLAMA_MAIN_MODEL")
-
 
     # Backward compatibility properties
     @property

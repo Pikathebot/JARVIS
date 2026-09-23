@@ -1,3 +1,4 @@
+from fake_providers import ClientBackedProvider, use_model_client
 import os
 import uuid
 import pytest
@@ -120,7 +121,7 @@ async def test_multi_turn_conversation_memory():
             return mock_resp2
 
     from unittest.mock import patch
-    with patch("app.main.get_ollama_client", return_value=FakeOllama()):
+    with use_model_client(FakeOllama()):
         try:
             # Turn 1: User introduces a fact
             turn1_payload = {
@@ -180,7 +181,7 @@ async def test_compaction_triggered_and_logged():
             return mock_resp
 
     from unittest.mock import patch
-    with patch("app.main.get_ollama_client", return_value=FakeOllama()):
+    with use_model_client(FakeOllama()):
         try:
             # Seed session with bulky tool messages in store
             bulky_text = "DENSE SYSTEM LOG ENTRY DETAILS - " * 50  # ~1700 chars

@@ -171,15 +171,12 @@ async def test_switch_model_restarts_with_new_model():
 def test_static_audit_no_lms_cli_usage_in_backend_app():
     """
     Static analysis check verifying no active module in backend/app
-    references 'lms' CLI subprocess or shutil.which for LM Studio,
-    except for the deprecated lmstudio_client.py.
+    references 'lms' CLI subprocess or shutil.which for LM Studio.
     """
     app_dir = Path(__file__).resolve().parent.parent / "app"
     forbidden_terms = ["shutil.which('lms')", 'shutil.which("lms")', "lms unload", "lms load"]
 
     for py_file in app_dir.rglob("*.py"):
-        if py_file.name == "lmstudio_client.py":
-            continue
         code = py_file.read_text(encoding="utf-8", errors="ignore")
         for term in forbidden_terms:
             assert term not in code, f"Forbidden LM Studio CLI pattern '{term}' found in {py_file}"

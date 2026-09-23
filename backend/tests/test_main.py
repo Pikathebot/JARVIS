@@ -1,9 +1,8 @@
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
-import ollama
 from app.main import app
-from app.agent.lmstudio_client import LMStudioClient
+from fake_providers import ClientBackedProvider
 
 
 @pytest.mark.anyio
@@ -78,7 +77,7 @@ async def test_chat_stream_endpoint():
         async def mock_run_stream(**kwargs):
             yield {"event": "token", "data": {"delta": "Hello "}}
             yield {"event": "token", "data": {"delta": "world!"}}
-            yield {"event": "done", "data": {"response": "Hello world!", "model": "prism-ml/bonsai-27b", "provider": "lmstudio", "tools_used": []}}
+            yield {"event": "done", "data": {"response": "Hello world!", "model": "main", "provider": "llama_cpp", "tools_used": []}}
         mock_instance.run_stream = mock_run_stream
         MockOrchestrator.return_value = mock_instance
 
@@ -97,16 +96,14 @@ async def test_chat_stream_endpoint():
 
 @pytest.mark.anyio
 async def test_orchestrator_run_stream_conversation():
-    """Directly test AgentOrchestrator.run_stream conversational response and _synthesize_voice."""
+    """Directly test AgentOrchestrator.run_stream conversational response."""
     from app.agent.orchestrator import AgentOrchestrator
     from app.memory.store import MemoryStore
     from app.memory.compactor import ContextCompactor
     from app.skills.loader import SkillsLoader
     from app.mcp.manager import MCPManager
-    from app.agent.reliability_monitor import ReliabilityMonitor
 
-    mock_ollama = MagicMock()
-    mock_lmstudio = MagicMock()
+    mock_client = MagicMock()
     mock_openrouter = MagicMock()
     mock_store = MagicMock()
     mock_store.get_or_create_session.return_value = {"chat_mode": "WORKSPACE"}
@@ -122,25 +119,21 @@ async def test_orchestrator_run_stream_conversation():
     mock_mcp = MagicMock()
     mock_mcp.get_tool_definitions.return_value = []
 
-    # Mock LM Studio streaming generator
+    # Scripted streaming client
     async def mock_chat_stream(*args, **kwargs):
         yield {"type": "token", "delta": "Hello "}
         yield {"type": "token", "delta": "there!"}
         yield {"type": "done", "content": "Hello there!", "tool_calls": []}
 
-    mock_lmstudio.chat_stream = mock_chat_stream
+    mock_client.chat_stream = mock_chat_stream
 
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
-        lmstudio_client=mock_lmstudio,
+        provider=ClientBackedProvider(mock_client),
         openrouter_client=mock_openrouter,
         memory_store=mock_store,
         compactor=mock_compactor,
         skills_loader=mock_skills,
         mcp_manager=mock_mcp,
-        reliability_monitor=MagicMock(),
-        tts_engine=MagicMock(),
-        voice_output_enabled=False
     )
 
     events = []
@@ -159,8 +152,7 @@ async def test_orchestrator_run_stream_with_tool_call():
     """Directly test AgentOrchestrator.run_stream with tool calls and BatchPermissionResult."""
     from app.agent.orchestrator import AgentOrchestrator
 
-    mock_ollama = MagicMock()
-    mock_lmstudio = MagicMock()
+    mock_client = MagicMock()
     mock_openrouter = MagicMock()
     mock_store = MagicMock()
     mock_store.get_or_create_session.return_value = {"chat_mode": "WORKSPACE"}
@@ -199,19 +191,15 @@ async def test_orchestrator_run_stream_with_tool_call():
             yield {"type": "token", "delta": "Here are files."}
             yield {"type": "done", "content": "Here are files.", "tool_calls": []}
 
-    mock_lmstudio.chat_stream = mock_chat_stream
+    mock_client.chat_stream = mock_chat_stream
 
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
-        lmstudio_client=mock_lmstudio,
+        provider=ClientBackedProvider(mock_client),
         openrouter_client=mock_openrouter,
         memory_store=mock_store,
         compactor=mock_compactor,
         skills_loader=mock_skills,
         mcp_manager=mock_mcp,
-        reliability_monitor=MagicMock(),
-        tts_engine=MagicMock(),
-        voice_output_enabled=False
     )
 
     events = []

@@ -9,16 +9,13 @@ from alembic import command
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import ollama
 
 from app.config import settings
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.model_router import ModelRouter
 from app.agent.openrouter_client import OpenRouterClient
-from app.agent.lmstudio_client import LMStudioClient
 from app.agent.provider_factory import get_model_provider
 from app.agent.runtime_process_manager import get_runtime_process_manager
-from app.agent.reliability_monitor import ReliabilityMonitor
 from app.governor.resource_governor import (
     ResourceGovernor,
     SystemMetrics,
@@ -35,7 +32,6 @@ from app.mcp.manager import MCPManager
 from app.voice.wake_word import WakeWordDetector
 from app.voice.transcriber import AudioTranscriber
 from app.voice.synthesizer import VoiceSynthesizer
-from app.agent.tts.chatterbox_engine import ChatterboxEngine
 from app.agent.tools.audio_playback import is_playing as is_audio_playing, stop_playback as stop_audio_playback
 from app.routers import (
     projects_router,
@@ -135,7 +131,6 @@ from app.agent.model_router import ModelRouter
 
 # Initialize global subsystems
 memory_store = MemoryStore(session_factory=SessionLocal)
-reliability_monitor = ReliabilityMonitor(memory_store=memory_store)
 model_router = ModelRouter()
 memory_manager = MemoryManager(memory_store=memory_store, model_router=model_router)
 
@@ -148,67 +143,9 @@ compactor = ContextCompactor(
 skills_loader = SkillsLoader()
 mcp_manager = MCPManager()
 
-from app.tools.registry import ToolRegistry
-from app.tools.filesystem import (
-    ReadFileTool,
-    WriteFileTool,
-    EditFileTool,
-    CreateDirectoryTool,
-    ListDirectoryTool,
-)
-from app.tools.terminal import TerminalExecuteTool
-from app.tools.patch_tools import (
-    ApplyPatchTool,
-    ReplaceRangeTool,
-    InsertTool,
-    DeleteRangeTool,
-)
-from app.tools.git_tools import (
-    GitStatusTool,
-    GitDiffTool,
-    GitLogTool,
-    GitCheckoutTool,
-    GitCommitTool,
-)
-from app.tools.unreal_tools import (
-    UnrealDetectProjectTool,
-    UnrealReadLogsTool,
-    UnrealBuildTool,
-)
-from app.tools.web_tools import (
-    WebSearchTool,
-    WebExtractTool,
-)
-from app.tools.vision_tools import VisionAnalyzeImageTool
-
-tool_registry = ToolRegistry()
-tool_registry.register(ReadFileTool())
-tool_registry.register(WriteFileTool())
-tool_registry.register(EditFileTool())
-tool_registry.register(CreateDirectoryTool())
-tool_registry.register(ListDirectoryTool())
-tool_registry.register(TerminalExecuteTool())
-tool_registry.register(ApplyPatchTool())
-tool_registry.register(ReplaceRangeTool())
-tool_registry.register(InsertTool())
-tool_registry.register(DeleteRangeTool())
-tool_registry.register(GitStatusTool())
-tool_registry.register(GitDiffTool())
-tool_registry.register(GitLogTool())
-tool_registry.register(GitCheckoutTool())
-tool_registry.register(GitCommitTool())
-tool_registry.register(UnrealDetectProjectTool())
-tool_registry.register(UnrealReadLogsTool())
-tool_registry.register(UnrealBuildTool())
-tool_registry.register(WebSearchTool())
-tool_registry.register(WebExtractTool())
-tool_registry.register(VisionAnalyzeImageTool())
-
-
 wake_detector = WakeWordDetector()
 transcriber = AudioTranscriber()
 synthesizer = VoiceSynthesizer()
-chatterbox_engine = ChatterboxEngine(governor=governor)
 
 # Ambient awareness: notices hardware conditions worth speaking up about.
 awareness_monitor = AwarenessMonitor(
@@ -405,7 +342,6 @@ async def lifespan(app: FastAPI):
     
     logger.info("Shutting down Jarvis Assistant backend services...")
     stop_audio_playback()
-    chatterbox_engine.unload_model()
     wake_detector.stop_listening()
     await awareness_monitor.stop()
     await routine_scheduler.stop()
@@ -460,23 +396,6 @@ app.include_router(confirmations_router)
 
 
 
-def get_ollama_client() -> Optional[ollama.AsyncClient]:
-    try:
-        return ollama.AsyncClient(host=settings.ollama_host or "http://localhost:11434")
-    except Exception:
-        return None
-
-
-def get_lmstudio_client() -> Optional[LMStudioClient]:
-    try:
-        return LMStudioClient(
-            base_url=settings.lmstudio_base_url or "http://localhost:1234/v1",
-            timeout=180.0
-        )
-    except Exception:
-        return None
-
-
 def get_openrouter_client() -> OpenRouterClient:
     return OpenRouterClient(
         api_key=settings.openrouter_api_key,
@@ -524,7 +443,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     model: str
-    provider: str = Field(default="lmstudio", description="'lmstudio', 'ollama', or 'openrouter'")
+    provider: str = Field(default="llama_cpp", description="'llama_cpp' or 'openrouter'")
     status: str = Field(default="completed", description="'completed' or 'confirmation_required'")
     session_id: str = Field(default="default", description="Active session ID")
     route_reason: str = Field(default="", description="Reason for model and provider selection")
@@ -784,78 +703,7 @@ async def list_mcp_servers():
     return mcp_manager.list_servers()
 
 
-# --- Tool Reliability & Rollback Endpoints (Stage B Addendum) ---
-
-class SwitchBackendRequest(BaseModel):
-    backend: str = Field(..., description="Target model backend ('bonsai' or 'hermes3')")
-    reason: Optional[str] = Field(default="manual override", description="Reason for switching backend")
-
-
-@app.get("/reliability/status")
-async def get_reliability_status(model_tier: str = "tier2"):
-    """Returns real-time tool-call reliability metrics over the rolling window."""
-    return reliability_monitor.get_status(model_tier=model_tier)
-
-
-@app.get("/reliability/history")
-async def get_reliability_history(limit: int = 50):
-    """Returns recent tool-call reliability alerts and rollback events."""
-    return reliability_monitor.get_history(limit=limit)
-
-
-@app.post("/reliability/switch-backend")
-async def switch_model_backend(req: SwitchBackendRequest):
-    """Manually switch active model backend (e.g. re-enable Bonsai after manual review)."""
-    try:
-        result = reliability_monitor.switch_backend(target_backend=req.backend, reason=req.reason or "manual override")
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-
 # --- Voice Endpoints ---
-
-class VoiceOutputStatus(BaseModel):
-    enabled: bool
-    engine: str
-    vram_required_mb: float
-    is_loaded: bool
-    is_playing: bool
-
-
-class VoiceOutputToggleRequest(BaseModel):
-    enabled: bool
-
-
-@app.get("/api/voice/output", response_model=VoiceOutputStatus)
-@app.get("/voice/output", response_model=VoiceOutputStatus)
-async def get_voice_output_status():
-    """Returns runtime status of spoken voice output and audio engine."""
-    return VoiceOutputStatus(
-        enabled=settings.voice_output_enabled,
-        engine=settings.tts_engine,
-        vram_required_mb=settings.tts_vram_required_mb,
-        is_loaded=chatterbox_engine.is_loaded(),
-        is_playing=is_audio_playing()
-    )
-
-
-@app.post("/api/voice/output", response_model=VoiceOutputStatus)
-@app.post("/voice/output", response_model=VoiceOutputStatus)
-async def toggle_voice_output(req: VoiceOutputToggleRequest):
-    """Enables or disables runtime voice output and stops playback if disabled."""
-    settings.voice_output_enabled = req.enabled
-    if not req.enabled:
-        stop_audio_playback()
-    return VoiceOutputStatus(
-        enabled=settings.voice_output_enabled,
-        engine=settings.tts_engine,
-        vram_required_mb=settings.tts_vram_required_mb,
-        is_loaded=chatterbox_engine.is_loaded(),
-        is_playing=is_audio_playing()
-    )
-
 
 @app.get("/voice/status")
 async def voice_status():
@@ -865,8 +713,6 @@ async def voice_status():
         "wake_words": wake_detector.wake_words,
         "synthesizer_voice": synthesizer.voice_name,
         "synthesizer_backend": synthesizer.active_backend,
-        "voice_output_enabled": settings.voice_output_enabled,
-        "tts_engine_loaded": chatterbox_engine.is_loaded(),
         "is_playing_audio": is_audio_playing()
     }
 
@@ -1008,20 +854,12 @@ async def chat(request: ChatRequest):
             )
 
     # 2. Agent Orchestration with ModelProvider, Memory, Skills, and MCP Tools
-    ollama_client = get_ollama_client()
-    lmstudio_client = get_lmstudio_client()
-    openrouter_client = get_openrouter_client()
     orchestrator = AgentOrchestrator(
-        ollama_client=ollama_client,
-        lmstudio_client=lmstudio_client,
-        openrouter_client=openrouter_client,
+        openrouter_client=get_openrouter_client(),
         memory_store=memory_store,
         compactor=compactor,
         skills_loader=skills_loader,
         mcp_manager=mcp_manager,
-        reliability_monitor=reliability_monitor,
-        tts_engine=chatterbox_engine,
-        tool_registry=tool_registry
     )
 
     try:
@@ -1082,20 +920,12 @@ async def chat_stream(request: ChatRequest):
                 detail=f"Resource Governor active: Request paused/rejected due to heavy system load ({reason}). Please retry once resource load subsides."
             )
 
-    ollama_client = get_ollama_client()
-    lmstudio_client = get_lmstudio_client()
-    openrouter_client = get_openrouter_client()
     orchestrator = AgentOrchestrator(
-        ollama_client=ollama_client,
-        lmstudio_client=lmstudio_client,
-        openrouter_client=openrouter_client,
+        openrouter_client=get_openrouter_client(),
         memory_store=memory_store,
         compactor=compactor,
         skills_loader=skills_loader,
         mcp_manager=mcp_manager,
-        reliability_monitor=reliability_monitor,
-        tts_engine=chatterbox_engine,
-        tool_registry=tool_registry
     )
 
 

@@ -29,13 +29,10 @@ from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
-from app.agent.reliability_monitor import ReliabilityMonitor
 from app.memory.store import MemoryStore
 from app.memory.compactor import ContextCompactor
 from app.skills.loader import SkillsLoader, Skill
 from app.mcp.manager import MCPManager
-from app.agent.tts.chatterbox_engine import ChatterboxEngine
-from app.agent.tools.audio_playback import play_audio, stop_playback
 
 logger = logging.getLogger("jarvis.agent.orchestrator")
 
@@ -44,7 +41,7 @@ logger = logging.getLogger("jarvis.agent.orchestrator")
 class OrchestratorResult:
     response: str
     model: str
-    provider: str = "llama_cpp"  # "llama_cpp" | "ollama" | "openrouter"
+    provider: str = "llama_cpp"  # "llama_cpp" | "openrouter"
     status: str = "completed"  # "completed" | "confirmation_required"
     session_id: str = "default"
     route_reason: str = ""
@@ -299,67 +296,10 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
     return "\n\n".join(sections)
 
 
-class _LegacyClientAdapter(ModelProvider):
-    def __init__(self, client: Any, name_str: str = "legacy"):
-        self.client = client
-        self._name = name_str
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    async def health_check(self) -> bool:
-        return True
-
-    async def model_info(self) -> dict[str, Any]:
-        return {"provider": self._name}
-
-    async def list_models(self) -> list[str]:
-        return []
-
-    async def chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None) -> dict[str, Any]:
-        res = await self.client.chat(model=model, messages=messages, tools=tools)
-        if isinstance(res, dict):
-            return res
-        msg = getattr(res, "message", None)
-        if msg is not None:
-            content = getattr(msg, "content", "") or ""
-            tool_calls = getattr(msg, "tool_calls", None)
-            return {
-                "message": {
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": tool_calls
-                },
-                "raw": res
-            }
-        return {"message": {"role": "assistant", "content": str(res), "tool_calls": None}, "raw": res}
-
-    async def stream_chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None) -> AsyncIterator[dict[str, Any]]:
-        if hasattr(self.client, "chat_stream"):
-            async for ev in self.client.chat_stream(model=model, messages=messages, tools=tools):
-                if ev.get("type") == "token":
-                    yield {"event": "text_delta", "content": ev.get("delta", "")}
-                elif ev.get("type") == "done":
-                    yield {"event": "done", "raw": ev}
-        else:
-            res = await self.chat(messages=messages, model=model, tools=tools, temperature=temperature, profile=profile)
-            content = res.get("message", {}).get("content", "")
-            tcs = res.get("message", {}).get("tool_calls")
-            if tcs:
-                for tc in tcs:
-                    yield {"event": "tool_call", "tool_call": tc}
-            yield {"event": "text_delta", "content": content}
-            yield {"event": "done", "raw": res}
-
-    async def unload_model(self, model=None) -> bool:
-        return True
-
-
 class AgentOrchestrator:
     """
-    Orchestrates communication with the primary local ModelProvider (llama.cpp)
-    or fallback provider (Ollama), enforcing hardcoded safety permissions,
+    Orchestrates communication with the local ModelProvider (llama.cpp) or OpenRouter
+    Heavy Mode, enforcing hardcoded safety permissions,
     complexity routing, memory persistence, context compaction, dynamic skills loading,
     and MCP tool execution.
     """
@@ -372,26 +312,11 @@ class AgentOrchestrator:
         compactor: Optional[ContextCompactor] = None,
         skills_loader: Optional[SkillsLoader] = None,
         mcp_manager: Optional[MCPManager] = None,
-        reliability_monitor: Optional[ReliabilityMonitor] = None,
-        tts_engine: Optional[ChatterboxEngine] = None,
-        voice_output_enabled: Optional[bool] = None,
         context_manager: Optional[Any] = None,
         retriever: Optional[Any] = None,
-        tool_registry: Optional[Any] = None,
-        agent_loop: Optional[Any] = None,
-        # Backward compatibility parameters
-        ollama_client: Optional[Any] = None,
-        lmstudio_client: Optional[Any] = None,
         openrouter_client: Optional[Any] = None,
     ):
-        if provider is not None:
-            self.provider = provider
-        elif lmstudio_client is not None and type(lmstudio_client).__name__ not in ("LMStudioClient", "NoneType"):
-            self.provider = _LegacyClientAdapter(lmstudio_client, "lmstudio")
-        elif ollama_client is not None and type(ollama_client).__name__ not in ("AsyncClient", "NoneType"):
-            self.provider = _LegacyClientAdapter(ollama_client, "ollama")
-        else:
-            self.provider = get_model_provider()
+        self.provider = provider or get_model_provider()
 
         self.router = router or ModelRouter(default_mode=settings.default_routing_mode)
         # Tools offered so far per (session, chat mode), in first-seen order -- see _offered_tools.
@@ -404,41 +329,12 @@ class AgentOrchestrator:
         )
         self.skills_loader = skills_loader or SkillsLoader()
         self.mcp_manager = mcp_manager or MCPManager()
-        self.reliability_monitor = reliability_monitor or ReliabilityMonitor(memory_store=self.memory_store)
-        self.tts_engine = tts_engine or ChatterboxEngine()
-        self.voice_output_enabled = (
-            voice_output_enabled if voice_output_enabled is not None else settings.voice_output_enabled
-        )
 
         from app.memory.context_manager import ContextManager
         from app.rag.retriever import HybridRetriever
-        from app.tools.registry import ToolRegistry
-        from app.tools.filesystem import (
-            ReadFileTool,
-            WriteFileTool,
-            EditFileTool,
-            CreateDirectoryTool,
-            ListDirectoryTool,
-        )
-        from app.tools.terminal import TerminalExecuteTool
-        from app.agent.loop import AgentLoop
 
         self.context_manager = context_manager or ContextManager(memory_store=self.memory_store)
         self.retriever = retriever or HybridRetriever()
-
-        if tool_registry is not None:
-            self.tool_registry = tool_registry
-        else:
-            self.tool_registry = ToolRegistry()
-            self.tool_registry.register(ReadFileTool())
-            self.tool_registry.register(WriteFileTool())
-            self.tool_registry.register(EditFileTool())
-            self.tool_registry.register(CreateDirectoryTool())
-            self.tool_registry.register(ListDirectoryTool())
-            self.tool_registry.register(TerminalExecuteTool())
-
-        self.agent_loop = agent_loop or AgentLoop(tool_registry=self.tool_registry)
-
 
         self.openrouter_client = openrouter_client or OpenRouterClient(
             api_key=settings.openrouter_api_key,
@@ -736,28 +632,6 @@ class AgentOrchestrator:
             logger.debug("Could not determine vision capability for slot %s: %s", slot, exc)
             return False
 
-    def _synthesize_voice(self, text: str):
-
-        """Synthesize and play voice output if voice is enabled and TTS engine is available."""
-        if not self.voice_output_enabled or not text or not self.tts_engine:
-            return
-        try:
-            clean_text, _ = extract_tool_calls_from_text(text)
-            clean_text = persona_manager.shape_for_speech(clean_text or text)
-            clean_text = self.tts_engine.sanitize_text(clean_text)
-            if clean_text:
-                audio_bytes = self.tts_engine.synthesize(clean_text)
-                if audio_bytes:
-                    play_audio(audio_bytes)
-        except Exception as e:
-            logger.warning("Error synthesizing or playing orchestrator voice output: %s", e)
-
-    def _finalize_result(self, result: OrchestratorResult) -> OrchestratorResult:
-        """Finalizes orchestrator result and plays audio if enabled."""
-        if self.voice_output_enabled and result.status == "completed" and result.response:
-            self._synthesize_voice(result.response)
-        return result
-
     async def run(
         self,
         user_message: str,
@@ -772,38 +646,7 @@ class AgentOrchestrator:
         chat_mode: Optional[str] = "WORKSPACE",
         attachments: Optional[list[dict[str, Any]]] = None
     ) -> OrchestratorResult:
-        stop_playback()
-        active_session_id = session_id or "default"
-
-        # Voice toggle commands
-        lower_msg = user_message.strip().lower()
-        if lower_msg in ("stop talking", "be quiet", "silence", "stop speech", "stop audio"):
-            stop_playback()
-            return OrchestratorResult(
-                response="I have stopped speaking.",
-                model="system",
-                provider="system",
-                session_id=active_session_id
-            )
-        if lower_msg in ("voice on", "enable voice", "turn voice on", "unmute voice"):
-            self.voice_output_enabled = True
-            return self._finalize_result(OrchestratorResult(
-                response="Voice output is now enabled.",
-                model="system",
-                provider="system",
-                session_id=active_session_id
-            ))
-        if lower_msg in ("voice off", "disable voice", "turn voice off", "mute voice"):
-            self.voice_output_enabled = False
-            stop_playback()
-            return OrchestratorResult(
-                response="Voice output is now disabled.",
-                model="system",
-                provider="system",
-                session_id=active_session_id
-            )
-
-        res = await self._run_internal(
+        return await self._run_internal(
             user_message=user_message,
             session_id=session_id,
             project_id=project_id,
@@ -816,7 +659,6 @@ class AgentOrchestrator:
             chat_mode=chat_mode,
             attachments=attachments
         )
-        return self._finalize_result(res)
 
     async def _run_internal(
         self,
@@ -978,57 +820,27 @@ class AgentOrchestrator:
                 result.active_skills = active_skill_names
                 return result
 
-        # 9. Dispatch: Local Primary Provider (llama.cpp) or Fallback (Ollama)
-        target_provider = self.provider if isinstance(self.provider, _LegacyClientAdapter) else get_model_provider(decision.provider)
-        try:
-            result = await self._run_provider_loop(
-                provider=target_provider,
-                session_id=active_session_id,
-                conversation_messages=context_pkg.messages,
-                tools=combined_tools,
-                model=decision.model,
-                system_prompt=context_pkg.system_prompt,
-                approved_action_ids=approved_action_ids,
-                max_iterations=max_iterations,
-                route_reason=decision.reason,
-                chat_mode=resolved_chat_mode,
-                profile=profile,
-                workspace_path=workspace_path,
-                tool_context=tool_context,
-                thinking=thinking,
-            )
-            result.compaction_performed = compaction_info
-            result.active_skills = active_skill_names
-            return result
-        except Exception as e:
-            if target_provider.name == "llama_cpp":
-                logger.warning("Primary llama.cpp dispatch failed (%s). Falling back to Ollama.", e)
-                try:
-                    fallback_provider = get_model_provider("ollama")
-                    fallback_model = settings.ollama_main_model
-                    result = await self._run_provider_loop(
-                        provider=fallback_provider,
-                        session_id=active_session_id,
-                        conversation_messages=context_pkg.messages,
-                        tools=combined_tools,
-                        model=fallback_model,
-                        system_prompt=context_pkg.system_prompt,
-                        approved_action_ids=approved_action_ids,
-                        max_iterations=max_iterations,
-                        route_reason=f"{decision.reason} [Fallback: llama.cpp failed ({e}), used local Ollama ({fallback_model})]",
-                        chat_mode=resolved_chat_mode,
-                        profile=profile,
-                        workspace_path=workspace_path,
-                        tool_context=tool_context
-                    )
-                    result.fallback_used = True
-                    result.compaction_performed = compaction_info
-                    result.active_skills = active_skill_names
-                    return result
-                except Exception as fallback_err:
-                    logger.error("Fallback to Ollama also failed: %s", fallback_err)
-                    raise e
-            raise
+        # 9. Dispatch: local provider (llama.cpp)
+        target_provider = self.provider
+        result = await self._run_provider_loop(
+            provider=target_provider,
+            session_id=active_session_id,
+            conversation_messages=context_pkg.messages,
+            tools=combined_tools,
+            model=decision.model,
+            system_prompt=context_pkg.system_prompt,
+            approved_action_ids=approved_action_ids,
+            max_iterations=max_iterations,
+            route_reason=decision.reason,
+            chat_mode=resolved_chat_mode,
+            profile=profile,
+            workspace_path=workspace_path,
+            tool_context=tool_context,
+            thinking=thinking,
+        )
+        result.compaction_performed = compaction_info
+        result.active_skills = active_skill_names
+        return result
 
 
     async def _run_provider_loop(
@@ -1244,7 +1056,6 @@ class AgentOrchestrator:
                             error=val_res.error,
                             repair_attempt=1
                         )
-                        self.reliability_monitor.evaluate_and_trigger_rollback(model_tier=model_tier)
                         if self.openrouter_client and (getattr(self.openrouter_client, "is_configured", False) or hasattr(self.openrouter_client, "chat")):
                             logger.warning("Tool call validation failed twice. Escalating remaining turn to Tier 3 (OpenRouter).")
                             try:
@@ -1392,7 +1203,6 @@ class AgentOrchestrator:
                     error=None,
                     repair_attempt=repair_attempts.get(fn_name, 0)
                 )
-                self.reliability_monitor.evaluate_and_trigger_rollback(model_tier=model_tier)
 
                 tools_used.append({
                     "tool": fn_name,
@@ -1448,29 +1258,9 @@ class AgentOrchestrator:
         Asynchronously streams chat tokens, tool execution events, and metadata.
         Yields JSON event dictionaries: {"event": "...", "data": {...}}
         """
-        stop_playback()
         active_session_id = session_id or "default"
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
-        # Conversational voice toggle commands
-        lower_msg = user_message.strip().lower()
-        if lower_msg in ("stop talking", "be quiet", "silence", "stop speech", "stop audio"):
-            stop_playback()
-            yield {"event": "done", "data": {"response": "I have stopped speaking.", "model": "system", "provider": "system", "session_id": active_session_id}}
-            return
-        if lower_msg in ("voice on", "enable voice", "turn voice on", "unmute voice"):
-            self.voice_output_enabled = True
-            msg = "Voice output is now enabled."
-            yield {"event": "done", "data": {"response": msg, "model": "system", "provider": "system", "session_id": active_session_id}}
-            self._synthesize_voice(msg)
-            return
-        if lower_msg in ("voice off", "disable voice", "turn voice off", "mute voice"):
-            self.voice_output_enabled = False
-            stop_playback()
-            yield {"event": "done", "data": {"response": "Voice output is now disabled.", "model": "system", "provider": "system", "session_id": active_session_id}}
-            return
-
-        active_session_id = session_id or "default"
         resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, active_session_id)
         session_data = self.memory_store.get_or_create_session(active_session_id, chat_mode=chat_mode, project_id=resolved_project_id)
         effective_mode_str = (chat_mode or session_data.get("chat_mode") or "WORKSPACE").upper()
@@ -1561,7 +1351,7 @@ class AgentOrchestrator:
                 yield ev
             return
 
-        target_provider = self.provider if isinstance(self.provider, _LegacyClientAdapter) else get_model_provider(decision.provider)
+        target_provider = self.provider
         async for ev in self._run_provider_stream_loop(
             provider=target_provider,
             session_id=active_session_id,
@@ -1676,7 +1466,6 @@ class AgentOrchestrator:
                 self.memory_store.append_message(
                     session_id, role="assistant", content=content, reasoning_content=full_reasoning or None
                 )
-                self._synthesize_voice(content)
                 yield {
                     "event": "done",
                     "data": {
@@ -1833,7 +1622,6 @@ class AgentOrchestrator:
 
         content = done_event.get("content", "") if done_event else ""
         self.memory_store.append_message(session_id, role="assistant", content=content)
-        self._synthesize_voice(content)
         yield {
             "event": "done",
             "data": {

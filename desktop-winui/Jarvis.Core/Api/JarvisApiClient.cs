@@ -275,13 +275,6 @@ public sealed class JarvisApiClient
     public Task<VoiceStatusResponse> FetchVoiceStatusAsync(CancellationToken ct = default) =>
         GetAsync<VoiceStatusResponse>("/voice/status", ct);
 
-    public async Task<ToggleVoiceOutputResponse> ToggleVoiceOutputAsync(bool enabled, CancellationToken ct = default)
-    {
-        var response = await _http.PostAsJsonAsync("/voice/output", new { enabled }, ct).ConfigureAwait(false);
-        await EnsureSuccessAsync(response, "toggle voice output").ConfigureAwait(false);
-        return await ReadAsync<ToggleVoiceOutputResponse>(response, ct).ConfigureAwait(false);
-    }
-
     // ==========================================
     // Persona
     // ==========================================

@@ -73,6 +73,12 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "play_audio": RiskTier.LOW_RISK,
     "stop_playback": RiskTier.LOW_RISK,
     "get_system_status": RiskTier.LOW_RISK,
+    # Git: reads are free; commit and checkout rewrite the working tree / history.
+    "git_status": RiskTier.LOW_RISK,
+    "git_diff": RiskTier.LOW_RISK,
+    "git_log": RiskTier.LOW_RISK,
+    "git_commit": RiskTier.CONFIRMATION_REQUIRED,
+    "git_checkout": RiskTier.CONFIRMATION_REQUIRED,
 }
 
 
@@ -381,7 +387,7 @@ def _describe_pending_action(pending: dict[str, Any]) -> str:
     """A short, speakable description of one pending action, e.g. 'run a command: git push'."""
     tool = str(pending.get("tool", "")).replace("_", " ").strip() or "an action"
     args = pending.get("args") or {}
-    for key in ("command", "cmd", "file_path", "path", "url", "pid_or_name", "process_name", "name"):
+    for key in ("command", "cmd", "file_path", "path", "url", "pid_or_name", "process_name", "name", "message", "target"):
         value = args.get(key) if isinstance(args, dict) else None
         if value:
             return f"{tool}: {value}"

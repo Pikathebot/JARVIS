@@ -20,6 +20,7 @@ from app.agent.tools.notify import send_toast
 from app.agent.tools.audio_playback import play_audio, stop_playback
 from app.agent.tools.artifacts import create_artifact, update_artifact, read_artifact
 from app.agent.tools.system_status import get_system_status
+from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_checkout
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -52,6 +53,12 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "play_audio": play_audio,
     "stop_playback": stop_playback,
     "get_system_status": get_system_status,
+    # Git (ported from the never-offered app/tools BaseTool stack)
+    "git_status": git_status,
+    "git_diff": git_diff,
+    "git_log": git_log,
+    "git_commit": git_commit,
+    "git_checkout": git_checkout,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -84,11 +91,19 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # (a string from a model just raises). It stays in TOOL_FUNCTIONS for the backend's own use.
     stop_playback,
     get_system_status,
+    # Git
+    git_status,
+    git_diff,
+    git_log,
+    git_commit,
+    git_checkout,
 ]
 
 
 class ReadFileArgs(BaseModel):
     file_path: str = Field(..., description="Path to the file to read")
+    start_line: Optional[int] = Field(default=None, description="First line to return (1-based). For long files read a part at a time; omit both to read the whole file")
+    end_line: Optional[int] = Field(default=None, description="Last line to return (inclusive)")
 
 
 class ListDirectoryArgs(BaseModel):
@@ -210,6 +225,32 @@ class GetSystemStatusArgs(BaseModel):
     pass
 
 
+class GitStatusArgs(BaseModel):
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitDiffArgs(BaseModel):
+    file_path: Optional[str] = Field(default=None, description="Limit the diff to this file")
+    staged: bool = Field(default=False, description="True for changes staged for commit, False for unstaged changes")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitLogArgs(BaseModel):
+    limit: int = Field(default=10, description="How many commits to show (1-100)")
+    file_path: Optional[str] = Field(default=None, description="Show the history of this file only")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitCommitArgs(BaseModel):
+    message: str = Field(..., description="The commit message")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitCheckoutArgs(BaseModel):
+    target: str = Field(..., description="Branch to switch to, or file to restore to its last committed state")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "list_directory": ListDirectoryArgs,
@@ -239,6 +280,11 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "play_audio": PlayAudioArgs,
     "stop_playback": StopPlaybackArgs,
     "get_system_status": GetSystemStatusArgs,
+    "git_status": GitStatusArgs,
+    "git_diff": GitDiffArgs,
+    "git_log": GitLogArgs,
+    "git_commit": GitCommitArgs,
+    "git_checkout": GitCheckoutArgs,
 }
 
 
@@ -295,6 +341,12 @@ _SYSTEM_STATUS_RE = re.compile(
     r"vram|gpu|graphics card|cpu|ram|memory|temperature|temps?|how hot|disk space|storage|"
     r"battery|loaded model|which model|throttl\w*|hardware|"
     r"how(?:'s| is) (?:the |my )?(?:machine|system|pc|laptop|computer))\b"
+)
+
+
+_GIT_RE = re.compile(
+    r"\b(?:git|commits?|committed|uncommitted|branch(?:es)?|checkout|diff|staged|unstaged|repo|"
+    r"repository|commit history|what (?:did i|have i|i) changed?|changes since)\b"
 )
 
 
@@ -376,7 +428,12 @@ def get_relevant_tools(
         tools.add(send_toast)
         tools.add(execute_command)
 
-    # 5. Machine state -- the prompt no longer carries a hardware line, so a deliberate question
+    # 5. Git -- "what did I change", "commit this", "which branch". Word boundaries: "branch" is
+    # safe, but a bare "log" would match "login"/"catalog", so history needs "git log"/"history".
+    if _GIT_RE.search(q):
+        tools.update((git_status, git_diff, git_log, git_commit, git_checkout))
+
+    # 6. Machine state -- the prompt no longer carries a hardware line, so a deliberate question
     # about the machine has to be able to measure it. Word boundaries: "ram" is in "program".
     if _SYSTEM_STATUS_RE.search(q):
         tools.add(get_system_status)

@@ -1,3 +1,4 @@
+from fake_providers import ClientBackedProvider, use_model_client
 import os
 import uuid
 from pathlib import Path
@@ -103,7 +104,7 @@ async def test_tool_calling_read_file_phrasings(prompt_phrasing: str):
             self.idx += 1
             return res
 
-    with patch("app.main.get_ollama_client", return_value=FakeOllama()):
+    with use_model_client(FakeOllama()):
         payload = {
             "message": prompt_phrasing,
             "session_id": f"test_phrasing_{uuid.uuid4().hex[:8]}",
@@ -157,7 +158,7 @@ async def test_tool_calling_list_directory():
             self.idx += 1
             return res
 
-    with patch("app.main.get_ollama_client", return_value=FakeOllama()):
+    with use_model_client(FakeOllama()):
         payload = {
             "message": "Please list the files in the 'docs' directory using your list_directory tool.",
             "session_id": f"test_listdir_{uuid.uuid4().hex[:8]}",
@@ -189,7 +190,7 @@ async def test_chat_no_tools_needed():
         async def chat(self, *args, **kwargs):
             return mock_resp
 
-    with patch("app.main.get_ollama_client", return_value=FakeOllama()):
+    with use_model_client(FakeOllama()):
         payload = {
             "message": "Respond with just the greeting 'Hello!' and do not call any tools.",
             "session_id": f"test_notools_{uuid.uuid4().hex[:8]}",
@@ -280,7 +281,7 @@ async def test_malformed_args_rejected_and_repairable(tmp_path):
     ])
     mock_openrouter = MockOpenRouterClient()
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
+        provider=ClientBackedProvider(mock_ollama),
         openrouter_client=mock_openrouter,
         memory_store=store,
         compactor=ContextCompactor(max_context_tokens=8000),
@@ -336,7 +337,7 @@ async def test_second_malformed_attempt_escalates_tier(tmp_path):
     ])
     mock_openrouter = MockOpenRouterClient("Tier 3 OpenRouter answered successfully")
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
+        provider=ClientBackedProvider(mock_ollama),
         openrouter_client=mock_openrouter,
         memory_store=store,
         compactor=ContextCompactor(max_context_tokens=8000),
@@ -387,7 +388,7 @@ async def test_duplicate_call_triggers_loop_breaker(tmp_path):
         }
     ])
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
+        provider=ClientBackedProvider(mock_ollama),
         memory_store=store,
         compactor=ContextCompactor(max_context_tokens=8000),
         skills_loader=SkillsLoader(),
@@ -430,7 +431,7 @@ async def test_turn_tool_call_cap_enforced(tmp_path, monkeypatch):
         }
     ])
     orchestrator = AgentOrchestrator(
-        ollama_client=mock_ollama,
+        provider=ClientBackedProvider(mock_ollama),
         memory_store=store,
         compactor=ContextCompactor(max_context_tokens=8000),
         skills_loader=SkillsLoader(),
@@ -532,78 +533,3 @@ async def test_tool_call_stats_and_repair_attempt_tracking(tmp_path):
     assert stats["escalated_count"] == 1
     assert stats["escalated_rate"] == 0.25
     assert stats["executed_count"] == 2
-
-
-@pytest.mark.anyio
-async def test_lmstudio_orchestrator_loop_execution(tmp_path):
-    """Verify AgentOrchestrator executes tool calls through LM Studio loop."""
-    db_path = str(tmp_path / "test_lmstudio_loop.db")
-    store = MemoryStore(db_path=db_path)
-
-    # Mock LM Studio responses: 1st iteration emits tool_call, 2nd iteration emits summary
-    mock_responses = [
-        {
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_lm_1",
-                        "type": "function",
-                        "function": {
-                            "name": "web_search",
-                            "arguments": {"query": "Bonsai 27B benchmark"}
-                        }
-                    }
-                ]
-            }
-        },
-        {
-            "message": {
-                "role": "assistant",
-                "content": "Bonsai 27B benchmark results: Excellent reasoning with 1-bit quantization.",
-                "tool_calls": None
-            }
-        }
-    ]
-
-    class MockLMStudioClient:
-        def __init__(self):
-            self.calls = 0
-
-        async def chat(self, messages, model, tools=None, **kwargs):
-            resp = mock_responses[self.calls]
-            self.calls += 1
-            return resp
-
-    mock_lm = MockLMStudioClient()
-    router = ModelRouter(active_backend="bonsai", lmstudio_model="prism-ml/bonsai-27b")
-    orchestrator = AgentOrchestrator(
-        lmstudio_client=mock_lm,
-        router=router,
-        memory_store=store,
-        compactor=ContextCompactor(max_context_tokens=8000),
-        skills_loader=SkillsLoader(),
-        mcp_manager=MCPManager()
-    )
-
-    result = await orchestrator.run(
-        user_message="Search for Bonsai 27B benchmark",
-        session_id=f"test_lm_{uuid.uuid4().hex[:8]}"
-    )
-
-    assert result.status == "completed"
-    assert result.provider == "lmstudio"
-    assert "Bonsai 27B benchmark results" in result.response
-    assert len(result.tools_used) == 1
-    assert result.tools_used[0]["tool"] == "web_search"
-
-    # Check audit log
-    audits = store.get_tool_call_audits()
-    assert len(audits) == 1
-    assert audits[0]["validation_result"] == "valid"
-    assert audits[0]["repair_attempt"] == 0
-    assert audits[0]["executed"] == 1
-
-
-

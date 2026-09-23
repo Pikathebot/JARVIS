@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import patch
 from app.agent.provider_factory import get_model_provider, reset_provider_cache
 from app.agent.llamacpp_provider import LlamaCppProvider
-from app.agent.ollama_provider import OllamaProvider
 
 
 @pytest.fixture(autouse=True)
@@ -18,10 +17,11 @@ def test_returns_llamacpp_provider_for_llama_cpp():
     assert provider.name == "llama_cpp"
 
 
-def test_returns_ollama_provider_for_ollama():
-    provider = get_model_provider(runtime="ollama")
-    assert isinstance(provider, OllamaProvider)
-    assert provider.name == "ollama"
+def test_removed_fallback_runtimes_are_rejected():
+    # Ollama / LM Studio fallbacks were deleted on 2026-09-23; llama.cpp is the only local runtime.
+    for runtime in ("ollama", "lmstudio", "hermes3", "bonsai"):
+        with pytest.raises(ValueError, match="only local runtime"):
+            get_model_provider(runtime=runtime)
 
 
 def test_raises_for_unknown_runtime():

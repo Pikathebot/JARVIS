@@ -17,8 +17,8 @@ class RoutingMode(str, Enum):
 class TaskType(str, Enum):
     """
     Task classification for deterministic model routing (Build Plan Section 22).
-    - simple_chat, summarization, background_memory, compaction -> FAST_MODEL (Qwen3.5-4B)
-    - deep_reasoning, coding, complex_tool_use -> MAIN_MODEL (Qwen3.5-9B)
+    - simple_chat, summarization, background_memory, compaction -> the "fast" slot
+    - deep_reasoning, coding, complex_tool_use -> the "main" slot
     """
     SIMPLE_CHAT = "simple_chat"
     SUMMARIZATION = "summarization"
@@ -61,105 +61,42 @@ HEAVY_TAG_PREFIXES = (
 @dataclass
 class RoutingDecision:
     mode: str  # "normal" | "heavy"
-    provider: str  # "llama_cpp" | "ollama" | "openrouter"
+    provider: str  # "llama_cpp" | "openrouter"
     model: str
     reason: str
 
 
 class ModelRouter:
     """
-    Routes execution to local primary runtime (llama.cpp Qwen3.5 9B / 4B)
-    or fallback runtime (Ollama Hermes3 / Qwen2.5).
-    Cloud routing (OpenRouter / Heavy Mode) is disabled by default.
+    Routes execution to the local llama.cpp slots ("main" / "fast" -- which GGUF each slot
+    serves is chosen at runtime, see model_catalog) or to OpenRouter Heavy Mode, which is
+    disabled by default.
     """
 
     def __init__(
         self,
         default_mode: str = "auto",
-        active_runtime: Optional[str] = None,
-        llamacpp_main_model: Optional[str] = None,
-        llamacpp_fast_model: Optional[str] = None,
-        ollama_main_model: Optional[str] = None,
-        ollama_fast_model: Optional[str] = None,
         openrouter_heavy_model: Optional[str] = None,
-        # Backward compatibility kwargs
-        active_backend: Optional[str] = None,
-        lmstudio_model: Optional[str] = None,
-        ollama_model: Optional[str] = None,
     ):
         self.default_mode = default_mode
-        eff_runtime = active_runtime or active_backend
-        self._active_runtime = eff_runtime.lower().strip() if eff_runtime else None
-        self.llamacpp_main_model = llamacpp_main_model or lmstudio_model or getattr(settings, "llamacpp_main_model_path", "models/Qwen3.5-9B-Q4_K_M.gguf")
-        self.llamacpp_fast_model = llamacpp_fast_model or getattr(settings, "llamacpp_fast_model_path", "models/Qwen3.5-4B-Q4_K_M.gguf")
-        self.ollama_main_model = ollama_main_model or ollama_model or getattr(settings, "ollama_main_model", settings.ollama_model)
-        self.ollama_fast_model = ollama_fast_model or getattr(settings, "ollama_fast_model", "qwen2.5:3b-instruct")
         self.openrouter_heavy_model = openrouter_heavy_model or settings.openrouter_heavy_model
-
-    @property
-    def active_runtime(self) -> str:
-        if self._active_runtime is not None:
-            return self._active_runtime
-        if hasattr(settings, "active_model_backend") and getattr(settings, "active_model_backend") in ("bonsai", "hermes3", "lmstudio"):
-            return getattr(settings, "active_model_backend").lower().strip()
-        return getattr(settings, "model_runtime", "llama_cpp").lower().strip()
-
-    @active_runtime.setter
-    def active_runtime(self, value: Optional[str]) -> None:
-        self._active_runtime = value.lower().strip() if value else None
-
-    # Backward compatibility alias
-    @property
-    def active_backend(self) -> str:
-        return self.active_runtime
-
-    @active_backend.setter
-    def active_backend(self, value: Optional[str]) -> None:
-        self.active_runtime = value
 
     def _resolve_local_target(self, requested_model: Optional[str] = None, prefer_fast: bool = False) -> tuple[str, str, str]:
         """
-        Determine local provider and model target based on configured runtime and overrides.
-        Returns (provider, model, label).
+        The local llama.cpp slot for this turn. Returns (provider, model, label), where model is a
+        slot name ("main" / "fast") unless the caller named something else explicitly.
         """
-        runtime = self.active_runtime
-
-        if runtime in ("bonsai", "lmstudio"):
-            # Legacy runtime names from the LM Studio era. provider_factory already maps both to
-            # LlamaCppProvider, but this branch used to keep returning an LM Studio *model id*
-            # ("prism-ml/bonsai-27b"), which then reached llama-server as though it were a file
-            # path -- so llama.cpp went looking for D:\JARVIS\prism-mlonsai-27b and exited.
-            # The runtime mapping and the model mapping have to agree; resolve to the local slots.
-            provider = "llama_cpp"
-            model = "fast" if prefer_fast else "main"
-            return provider, model, f"llama.cpp ({model}, via legacy '{runtime}' runtime name)"
-
-        elif runtime == "llama_cpp":
-            provider = "llama_cpp"
-            if requested_model:
-                req_lower = requested_model.lower().strip()
-                if req_lower in ("fast", "4b", "qwen3.5-4b"):
-                    return provider, "fast", "llama.cpp (Qwen3.5-4B Fast)"
-                elif req_lower in ("main", "9b", "qwen3.5-9b", "default"):
-                    return provider, "main", "llama.cpp (Qwen3.5-9B Main)"
-                else:
-                    return provider, requested_model, f"llama.cpp ({requested_model})"
-            
-            if prefer_fast:
-                return provider, "fast", "llama.cpp (Qwen3.5-4B Fast)"
-            return provider, "main", "llama.cpp (Qwen3.5-9B Main)"
-
-        elif runtime in ("hermes3", "ollama"):
-            provider = "ollama"
-            if requested_model:
-                return provider, requested_model, f"Ollama ({requested_model})"
-            if runtime == "hermes3":
-                return provider, self.ollama_main_model, f"Ollama ({self.ollama_main_model})"
-            if prefer_fast:
-                return provider, self.ollama_fast_model, f"Ollama ({self.ollama_fast_model})"
-            return provider, self.ollama_main_model, f"Ollama ({self.ollama_main_model})"
-
-        return "llama_cpp", "main", "llama.cpp (Default Main)"
+        provider = "llama_cpp"
+        if requested_model:
+            req_lower = requested_model.lower().strip()
+            if req_lower in ("fast", "4b", "qwen3.5-4b"):
+                return provider, "fast", "llama.cpp (fast slot)"
+            if req_lower in ("main", "9b", "qwen3.5-9b", "default"):
+                return provider, "main", "llama.cpp (main slot)"
+            return provider, requested_model, f"llama.cpp ({requested_model})"
+        if prefer_fast:
+            return provider, "fast", "llama.cpp (fast slot)"
+        return provider, "main", "llama.cpp (main slot)"
 
     def route_task(
         self,
@@ -178,10 +115,9 @@ class ModelRouter:
         # 1. Vision Task Type -> Route to VISION_MODEL
         if task_str in (TaskType.VISION.value, "vision"):
             vision_target = requested_model or getattr(settings, "vision_model", None) or "Qwen2.5-VL-7B-Instruct"
-            provider = "llama_cpp" if self.active_runtime == "llama_cpp" else "ollama"
             decision = RoutingDecision(
                 mode="normal",
-                provider=provider,
+                provider="llama_cpp",
                 model=vision_target,
                 reason=f"Task '{task_str}' routed deterministically to VISION_MODEL ({vision_target})."
             )

@@ -1,3 +1,4 @@
+from fake_providers import ClientBackedProvider, use_model_client
 import os
 import uuid
 import pytest
@@ -151,7 +152,7 @@ async def test_integration_low_risk_auto_executes():
             "session_id": f"test_lowrisk_{uuid.uuid4().hex[:8]}",
             "model": "hermes3:8b"
         }
-        with patch("app.main.get_ollama_client", return_value=mock_client):
+        with use_model_client(mock_client):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=45.0) as ac:
                 response = await ac.post("/chat", json=payload)
         
@@ -235,7 +236,7 @@ async def test_integration_confirmation_required_blocks_and_resumes(monkeypatch,
             "project_id": "test_perm_proj",
             "model": "hermes3:8b"
         }
-        with patch("app.main.get_ollama_client", return_value=mock_turn1):
+        with use_model_client(mock_turn1):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=45.0) as ac:
                 res1 = await ac.post("/chat", json=initial_payload)
         
@@ -258,7 +259,7 @@ async def test_integration_confirmation_required_blocks_and_resumes(monkeypatch,
             "model": "hermes3:8b",
             "approved_action_ids": [action_id]
         }
-        with patch("app.main.get_ollama_client", return_value=mock_turn2):
+        with use_model_client(mock_turn2):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=45.0) as ac:
                 res2 = await ac.post("/chat", json=approved_payload)
         

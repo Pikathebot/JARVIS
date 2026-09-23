@@ -52,9 +52,7 @@ class ScriptedProvider(ModelProvider):
 
 
 def _orchestrator() -> AgentOrchestrator:
-    engine = MagicMock()
-    engine.sanitize_text = lambda t: t
-    return AgentOrchestrator(tts_engine=engine, voice_output_enabled=False)
+    return AgentOrchestrator()
 
 
 def test_with_system_prompt_sends_the_prompt_once():

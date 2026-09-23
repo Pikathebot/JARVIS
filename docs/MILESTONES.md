@@ -95,3 +95,27 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   it however high its `Frost` went. Sheets are now layer 4 via `GlassLayers`, which documents the
   whole census; no glass layer is a bare integer in XAML any more. XAML text still needs the
   separate `SheetBackdropOpacity` fade, because XAML always paints above the swapchain.
+
+- [x] **Git tools, and the dead code around them deleted (2026-09-23)** (`backend/app/agent/tools/git.py`,
+  `read_file.py`) — A read of the codebase found a second tool system that had never been reachable:
+  `backend/app/tools/` held 21 `BaseTool`s (git, Unreal, terminal, patch, web, vision) registered in
+  `main.py`, but only `AgentLoop` consumed that registry and the orchestrator constructed `AgentLoop`
+  without ever running it -- the model had never been offered any of them. The useful parts were
+  ported into the live system: `git_status`, `git_diff`, `git_log` (LOW_RISK) and `git_commit`,
+  `git_checkout` (CONFIRMATION_REQUIRED; the spoken ask names the commit message or target), run as
+  argv lists in the active workspace, never through a shell, so a path or message is one argument;
+  offered on git words (``-bounded, so "different", "report", "log in" don't trigger). `read_file`
+  gained `start_line`/`end_line`, labelled "[Lines a-b of N]", because a long file's result is cut to
+  its head and tail and the middle was otherwise unreachable. The user chose not to port the Unreal
+  tools. Then deleted: `app/tools/`, `agent/loop.py`, `tool_result_truncator.py`, the `sandbox/`,
+  `vision/`, `search/` packages, `services/patch_validator.py` and `file_version_service.py` (only
+  those tools used them), the Ollama and LM Studio fallback providers and the router's
+  bonsai/hermes3/ollama runtimes, the reliability monitor (it only ever acted on a "bonsai" backend
+  that no longer exists, and its rollback target was Ollama), and the backend-side Chatterbox speech
+  with its `/voice/output` endpoints and "voice on/off" chat intercepts (the client speaks through
+  `/api/voice/say` with Kokoro; nothing called them). Local turns now dispatch through the
+  orchestrator's own provider, which is what tests inject (`tests/fake_providers.py`). Found while
+  doing it: the model-facing schema comes from the Pydantic `*Args` classes in `TOOL_SCHEMAS`, not
+  from signature introspection, and only the docstring's first line becomes the description.
+  Pinned by `backend/tests/test_git_agent_tools.py`; 498 tests pass (the ~106 removed covered only
+  deleted code).

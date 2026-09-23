@@ -52,7 +52,7 @@ Principles that have held up:
 | Speech | STT faster-whisper `tiny.en` beam 2; TTS Kokoro-82M fp32 | Both CPU. edge-tts only with `VOICE_TTS_BACKEND=edge`. |
 | RAG | nomic-embed sidecar + BM25 FTS5, relevance floor/gap/peak cuts | Hashed-vector fallback if the GGUF is missing. |
 | Client | WinUI 3, .NET 10, WindowsAppSDK 2.4, packaged dev MSIX | Glass = SwapChainPanel under XAML, live desktop capture, layered HLSL passes. |
-| Tests | pytest, 584 pass / 9 skip | No automated tests for the C# client. |
+| Tests | pytest, 498 pass | No automated tests for the C# client. |
 
 ## 2. Status
 
@@ -62,7 +62,7 @@ governor with relative VRAM floor and launch ladder; model catalogue with vision
 captioner fallback; stable prompt prefix, n-gram speculation, 32k context with compaction;
 persona, hands-free voice, HUD, ambient awareness, routines and proactive actions; RAG with real
 embeddings and a relevance floor; the WinUI client with Liquid Glass panels, controls, sheets,
-workspace creation and image attachments.
+workspace creation and image attachments; git tools for the workspace repository.
 
 ## 3. Key endpoints
 
@@ -141,12 +141,6 @@ this up.
 
 ### 4.3 Housekeeping (needs the user's go-ahead; nothing is broken without it)
 
-- **Dead second tool stack.** `backend/app/tools/` (21 `BaseTool`s: git, unreal, terminal, patch,
-  web, vision) is registered in `main.py` but consumed only by `AgentLoop`, which is never run --
-  the model has never been offered these tools. Options: delete them with `agent/loop.py`, their
-  tests and the `tool_registry` wiring; or port the useful ones (git status/diff/log) into
-  `app/agent/tools/` with risk tiers and triggers. Same question for `ollama_provider.py`,
-  `lmstudio_client.py` (engines not installed) and `agent/tts/chatterbox_engine.py` (disabled).
 - **Stale configuration and docs.** `backend/.env` and `.env.example` name models that are not
   what runs (`LLAMA_*_MODEL_PATH`, `MAIN_MODEL`, `FAST_MODEL`, `EMBEDDING_MODEL`, `RAG_*_MODEL`);
   `docs/ARCHITECTURE.md`, `AI_AGENT_CONTEXT.md`, `API_REFERENCE.md`, `README.md` predate the

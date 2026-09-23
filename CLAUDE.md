@@ -23,7 +23,7 @@ WinUI port and the model changes, and wrong about models, clients and paths in p
 Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
 so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                                   # ~2 min; 584 pass, 9 skip (2026-09-23)
+.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 498 pass (2026-09-23)
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -104,11 +104,16 @@ path runs instead.
 - **Restart-surviving state** = a small JSON file under repo-root `data/`, loaded in `__init__`,
   rewritten on every mutation (`persona/manager.py`, `routines/scheduler.py`). DB schema changes go
   through Alembic (`backend/alembic/versions/`), auto-applied at startup.
-- **Adding a tool the model can call** means all three of: the function + entry in
-  `TOOL_FUNCTIONS`/`AVAILABLE_TOOLS` (`agent/tools/registry.py`), a tier in `BASE_TOOL_RISK_MAP`
-  (`agent/permissions.py`; unlisted tools default to CONFIRMATION_REQUIRED), and a trigger in
-  `get_relevant_tools` -- otherwise it is never offered. Schemas come from signature
-  introspection, so type hints and docstrings are the tool's contract.
+- **Adding a tool the model can call** means all four of, in `agent/tools/registry.py` unless
+  noted: the function in `TOOL_FUNCTIONS` and `AVAILABLE_TOOLS`; a Pydantic `*Args` class in
+  `TOOL_SCHEMAS` (**this is the schema the model sees** -- a tool without one is offered with no
+  parameters at all; `execute_tool` then filters the call's args by the function signature and
+  injects `workspace_path`/`project_id`/`session_id`); a tier in `BASE_TOOL_RISK_MAP`
+  (`agent/permissions.py`; unlisted = CONFIRMATION_REQUIRED); and a trigger in
+  `get_relevant_tools`, or it is never offered. Only the **first line** of the docstring becomes
+  the tool description, so any "only when asked" caution must be on that line. Tools are sync
+  functions returning a string (errors as `"Error: ..."` text); they run on a worker thread.
+  `agent/tools/git.py` is a compact example.
 - **Permissions:** `LOW_RISK` runs; `CONFIRMATION_REQUIRED` and `HIGH_RISK` are handled
   *identically* (both need an approval token; nothing is hard-blocked). Tiers are argument-aware
   (`execute_command`, file paths, `launch_app`, `kill_process`, URLs). The `act_<hash>` token is a
@@ -122,14 +127,13 @@ path runs instead.
 
 ## Traps in the backend
 
-- **Two tool systems; only one is live.** `app/agent/tools/` (functions, `get_relevant_tools`)
-  is what the model sees. `app/tools/` (`BaseTool` classes: git, unreal, terminal, patch, web,
-  vision -- 21 registered in `main.py` as `tool_registry`) is consumed only by `AgentLoop`
-  (`agent/loop.py`), which the orchestrator constructs but **never runs**. Those tools have tests
-  but are unreachable at runtime; the "Registered tool: ..." lines in the log are from them.
-  Likewise `ollama_provider`/`lmstudio_client` (fallbacks for engines not installed) and
-  `agent/tts/chatterbox_engine.py` (`VOICE_OUTPUT_ENABLED=false`) are legacy. Don't extend them;
-  removal is a pending decision in `PLAN.md`.
+- **There is one tool system**, `app/agent/tools/`. A second `BaseTool` stack (`app/tools/`,
+  `AgentLoop`, sandbox/vision/search packages), the Ollama/LM Studio fallback providers, the
+  reliability "rollback" monitor and the backend-side Chatterbox speech were all registered but
+  never reachable, and were deleted on 2026-09-23 (git tools and ranged `read_file` were ported
+  first). Older docs and `.env` files may still mention them; `Settings` ignores unknown keys.
+- Orchestrator tests inject a model through `AgentOrchestrator(provider=...)` or, for tests that
+  go through the HTTP endpoints, `use_model_client(fake)` from `backend/tests/fake_providers.py`.
 - Hitting `:8001` directly while the backend runs is fine for compute now, but a second model
   load or a big VRAM grab from a script still reads as an external workload.
 - `0xC0000409` at llama-server start = CUDA lazy module load failing under VRAM pressure, not a

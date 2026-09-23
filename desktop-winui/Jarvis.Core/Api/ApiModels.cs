@@ -92,29 +92,8 @@ public sealed class VoiceStatusResponse
     [JsonPropertyName("synthesizer_voice")]
     public string SynthesizerVoice { get; set; } = "";
 
-    [JsonPropertyName("voice_output_enabled")]
-    public bool VoiceOutputEnabled { get; set; }
-
-    [JsonPropertyName("tts_engine_loaded")]
-    public bool TtsEngineLoaded { get; set; }
-
     [JsonPropertyName("is_playing_audio")]
     public bool IsPlayingAudio { get; set; }
-}
-
-public sealed class ToggleVoiceOutputResponse
-{
-    public bool Enabled { get; set; }
-    public string Engine { get; set; } = "";
-
-    [JsonPropertyName("vram_required_mb")]
-    public double VramRequiredMb { get; set; }
-
-    [JsonPropertyName("is_loaded")]
-    public bool IsLoaded { get; set; }
-
-    [JsonPropertyName("is_playing")]
-    public bool IsPlaying { get; set; }
 }
 
 public sealed class ObservationsPage
