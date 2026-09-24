@@ -1,8 +1,10 @@
+import asyncio
 import contextlib
 import json
 import logging
 import re
 from typing import Any, AsyncIterator, Optional
+from urllib.parse import urlsplit
 import httpx
 from app.config import settings
 from app.agent.model_provider import ModelProvider
@@ -207,6 +209,12 @@ class LlamaCppProvider(ModelProvider):
 
     async def health_check(self) -> bool:
         """Probe GET /v1/models endpoint."""
+        # Nothing listening is the usual case (no model loaded yet, or evicted), and on Windows a
+        # connection to a closed localhost port takes ~2 s to be refused -- which made /health,
+        # polled by the client every 2 s and awaited by its startup, take 2.2 s. A listening
+        # port accepts at once, so a short connect settles it first.
+        if not await self._port_accepts(timeout=0.25):
+            return False
         url = f"{self.base_url}/v1/models"
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -214,6 +222,19 @@ class LlamaCppProvider(ModelProvider):
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def _port_accepts(self, timeout: float) -> bool:
+        parts = urlsplit(self.base_url)
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(parts.hostname or "127.0.0.1", parts.port or 80), timeout
+            )
+        except (OSError, asyncio.TimeoutError):
+            return False
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        return True
 
     async def model_info(self) -> dict[str, Any]:
         """Retrieve model metadata from llama-server."""
