@@ -241,14 +241,26 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     first, `BackendHost` launches uvicorn before building the windows and watches the TCP
     listener table, and the window polls the governor the moment the backend answers. `app.rag`
     resolves its names lazily, so `qdrant_client` (1.9 s) no longer loads at startup. uvicorn is
-    restarted if it dies during startup (the machine intermittently refuses new sockets with
-    WSAEACCES for a few seconds -- a launch in that window came up with no backend).
+    restarted whenever it dies before answering, 1.5 s apart growing to 10 s, and past the
+    window's 20 s wait it keeps going in the background (the machine intermittently refuses
+    new sockets with WSAEACCES -- three times on 2026-09-24, once for more than 16 s). Tested
+    by making `main.py` exit while a marker file existed: seven failed starts, the window opened
+    offline at 25 s, the backend came up on the next start once the marker was gone.
   - *Shader cache*: each `GlassHost` compiled its HLSL from source at launch (0.67 s for the
     main window, 0.88 s again for the HUD's -- ~1.55 s of the ~4 s before the window showed).
     `ShaderPipeline` now keeps bytecode keyed by a hash of source + entry + profile, in memory
     and in `%LOCALAPPDATA%\Jarvis\ShaderCache` (virtualised into the package's own folder, so it
     is only visible to the app). Window shown 4.0 s -> 2.5 s after launch; the first launch after
     a shader edit compiles once. The reveal stays ~5.5 s: it waits on the backend.
+  - *Backend's own start*: `/health` took ~280 ms even after the socket fix (a 250 ms connect
+    timeout on the closed model port, plus loading all ~676 sessions and each one's first
+    message just to count them) -- it is on the startup path twice and polled every 2 s. Now
+    the model port is looked up in the OS's listener table (psutil, ~1 ms) and sessions are
+    counted in SQL (`MemoryStore.count_sessions`): ~5 ms. Alembic (~0.9 s of imports with the
+    SQL dialects it loads) is only imported when the SQLite database's stamped revision isn't
+    the single head of `alembic/versions` (`_database_at_head`, read with sqlite3 and a regex;
+    anything unexpected falls back to the full upgrade). The built-in MCP server connects in
+    the background instead of before the backend answers (~0.26 s). Opens ~5.5 s -> ~4.5 s.
   - *Snapshot mode* (`scripts\snapshot-window.ps1`): scripted screenshots with the glass in them
     without turning capture exclusion off (a capturable window's glass captures itself and
     renders every frame). The app freezes the glass and springs, lifts exclusion on visible
@@ -257,3 +269,17 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     the header sheds the toggles' captions (tooltips name them then), then the HUD button and
     title, by measuring its contents against its own width -- at the default 1280x800 it needed
     753 px of 637 and the Panel button was cut off.
+
+- [x] **Governor: a paged-out model comes back (2026-09-24)** — When another process claims
+  VRAM, WDDM demotes part of our model to shared memory (`model_resident=False`) and it stays
+  there after the pressure passes: every token then crawls. The governor now counts polls with
+  the model paged out; after 3, if nothing is running (no activity, llama-server not decoding,
+  no throttle, not paused, 60 s since the last try) and the card's free VRAM covers the missing
+  part plus the launch reserve, it restarts llama-server with the same model under a
+  MODEL_LOADING activity (`on_paged_model_reload` -> `main.reload_paged_model`). The missing part
+  is the model minus what's on the card, estimated against the desktop's pre-pressure share
+  (the live share can't be measured while paged); with no baseline, room for the whole model is
+  required. The launch ladder still sizes the relaunch and announces any downgrade. Tested with
+  synthetic metrics only. Also: `test_governor.py` now runs on a stubbed idle machine
+  (psutil/NVML patched) except the live-telemetry test -- two tests asserting IDLE had failed
+  once while Jarvis was decoding on the card.

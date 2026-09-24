@@ -84,16 +84,15 @@ workspace creation and image attachments; git tools for the workspace repository
 
 In priority order. Each item says what "done" means and what still needs the user.
 
-### 4.0 Startup: what's left is the backend
+### 4.0 Startup: done for now
 
 §4.0 (spaces, spring transitions, the materialising startup, startup CPU and time) is done --
-see `docs/MILESTONES.md`. After the shader cache (2026-09-24) the window shows 2.5 s after
-launch, but the reveal is still ~5.5 s: it waits for the backend, which is now the whole
-critical path (uvicorn spawned at 0.8 s, answering at ~5.5 s -- Python start, ~3.2 s of imports,
-then module-level setup). Next levers, unmeasured: what of the ~1.5 s beyond imports is
-module-level init in `app/main.py` (governor, voice objects, MCP); alembic's own ~0.4 s.
-Window side, measured and left: .NET/App SDK boot 0.53 s, main XAML 0.33 s, view models 0.38 s,
-HUD window ~0.3 s, tray and show ~0.3 s.
+see `docs/MILESTONES.md`. Window shows ~2.4 s after launch, opens ~4.5 s (three runs,
+2026-09-24; was ~15.4 s that morning). What remains is almost all Python: uvicorn is spawned at
+0.8 s and the backend's lifespan starts ~3.4 s later, ~2.7 s of it imports spread across ~2,000
+modules (fastapi ~0.6 s, the agent/tools registry with sqlalchemy/sqlmodel/httpx ~0.8 s) --
+no single big one left. Further cuts would mean restructuring imports broadly; not worth it
+unless startup matters again.
 
 ### 4.1 Liquid Glass fidelity (in progress)
 
@@ -145,19 +144,27 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 
 ### 4.4 Robustness backlog
 
-- **Paged-out model.** When another app claims VRAM, WDDM demotes our model to shared memory
-  (`model_resident=False`) and inference crawls. The governor only avoids corrupting its baseline
-  in that state; it should reload once the pressure passes.
+- **Intermittent WSAEACCES on new sockets.** Three times on 2026-09-24 (the user's first
+  launch, 11:13, 12:32) every new TCP socket on the machine -- curl, PowerShell, Python, even a
+  loopback bind -- failed with 10013 for seconds to more than 16 s. No trace in the System,
+  Application, Firewall, Defender or HNS logs; no large excluded port ranges (`hns` and
+  `vmcompute` run, so Hyper-V can reserve ranges transiently). The app now rides it out
+  (`BackendHost` keeps restarting uvicorn). To find the cause, next time it happens run, as
+  admin, `auditpol /set /subcategory:"Filtering Platform Connection" /failure:enable` and read
+  Security events 5157/5159, plus `netsh int ipv4 show excludedportrange protocol=tcp` at once.
 - **Tool selection is keyword matching** (`get_relevant_tools`). Phrasings without a trigger word
   get no tools, and "do/check/show..." offers all of them. Worth revisiting once there are real
   misses to measure against.
-- **Governor tests read the real GPU.** `conftest.py` stubs a healthy governor for every test
-  except `test_governor.py`, so two of those failed once while Jarvis itself was running on the
-  card (they pass alone and on an idle GPU). Give them a stubbed metrics source.
 - **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
   goes through `AwarenessMonitor` actions.
 
 ### 4.5 Waiting on the device
+
+**Paged-out model reload (2026-09-24, tests only):** when WDDM demotes our model to shared
+memory and the pressure then passes, the governor restarts llama-server with the same model
+(`_paged_reload_due` / `reload_paged_model`). Never exercised on the card -- it needs something
+to grab VRAM while the model is loaded (a game, or a CUDA script), then exit. Look for "Model
+paged out of VRAM ... reloading it resident" in `backend.log`.
 
 Built and committed, not yet confirmed by the user on screen: creating a workspace from the
 dropdown (c9d16c1), RAG relevance floor + embedder (b6fee7a), sidecars holding 0 VRAM (b45513f,

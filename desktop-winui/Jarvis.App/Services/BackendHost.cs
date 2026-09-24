@@ -50,26 +50,57 @@ public sealed class BackendHost : IDisposable
             {
                 return true;
             }
-            // uvicorn sometimes dies within a second of launch: this machine intermittently
-            // refuses new sockets with WSAEACCES (10013) for a few seconds -- seen 2026-09-24, from
-            // curl and every other process too -- and asyncio's event loop needs a loopback
-            // socketpair before it serves anything. Starting it again a moment later works.
-            if (_process is { HasExited: true } && starts < MaxStarts)
-            {
-                App.Log($"backend: uvicorn exited with {_process.ExitCode} during startup; starting it again ({starts + 1}/{MaxStarts})");
-                await Task.Delay(RestartDelay, ct).ConfigureAwait(false);
-                Start();
-                starts++;
-                continue;
-            }
-            await Task.Delay(100, ct).ConfigureAwait(false);
+            if (await RestartIfExitedAsync(starts, ct).ConfigureAwait(false)) starts++;
+            else await Task.Delay(100, ct).ConfigureAwait(false);
         }
 
+        // Past the caller's patience, not ours: the window opens offline, and this keeps
+        // restarting uvicorn until it answers (the window refreshes when it does).
+        _ = KeepStartingAsync(starts, ct);
         return false;
     }
 
-    private const int MaxStarts = 4;
+    /// <summary>
+    /// uvicorn sometimes dies within a second of launch: this machine intermittently refuses
+    /// new sockets with WSAEACCES (10013) -- seen three times on 2026-09-24, from curl and every
+    /// other process too, once for longer than 16 s -- and asyncio's event loop needs a loopback
+    /// socketpair before it serves anything. Starting it again later works; the wait grows.
+    /// </summary>
+    private async Task<bool> RestartIfExitedAsync(int starts, CancellationToken ct)
+    {
+        if (_process is not { HasExited: true }) return false;
+        var delay = TimeSpan.FromSeconds(Math.Min(MaxRestartDelay.TotalSeconds, RestartDelay.TotalSeconds * starts));
+        App.Log($"backend: uvicorn exited with {_process.ExitCode} during startup; starting it again in {delay.TotalSeconds:F1} s (start {starts + 1})");
+        await Task.Delay(delay, ct).ConfigureAwait(false);
+        if (_disposed) return false; // the app is closing: a new child would outlive its job
+        Start();
+        return true;
+    }
+
+    private async Task KeepStartingAsync(int starts, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested && !_disposed)
+            {
+                if (IsListening() && await IsHealthyAsync(ct).ConfigureAwait(false))
+                {
+                    App.Log($"backend: up after {starts} starts");
+                    return;
+                }
+                if (await RestartIfExitedAsync(starts, ct).ConfigureAwait(false)) starts++;
+                else await Task.Delay(250, ct).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"backend: supervision stopped: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(1.5);
+    private static readonly TimeSpan MaxRestartDelay = TimeSpan.FromSeconds(10);
+    private volatile bool _disposed;
 
     private static bool IsListening()
     {
@@ -181,6 +212,7 @@ public sealed class BackendHost : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         if (_jobHandle != nint.Zero)
         {
             // Closing the job handle triggers KILL_ON_JOB_CLOSE, terminating uvicorn (and any
