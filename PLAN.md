@@ -198,6 +198,13 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 
 ### 4.4 Robustness backlog
 
+- **Done 2026-09-24: startup CPU burst.** The user saw ~80% CPU at launch. Measured (per-process
+  counters, 1 s): a ~3 s burst from the Kokoro TTS warm-up (ONNX Runtime on all 28 threads,
+  62-87% of the machine), plus ~50 s of `dotnet build` when the launcher rebuilds after code
+  changes. The warm-up now starts 8 s after the backend is ready (`KOKORO_WARMUP_DELAY_S`), past
+  the client's window assembly; confirmed live: reveal 10:31:52.5, Kokoro load 10:31:57.7.
+  Capping its threads was measured and rejected (load no shorter; replies RTF 0.55 -> 0.57-0.83).
+
 - **Paged-out model.** When another app claims VRAM, WDDM demotes our model to shared memory
   (`model_resident=False`) and inference crawls. The governor only avoids corrupting its baseline
   in that state; it should reload once the pressure passes.

@@ -59,6 +59,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis")
 
+# Seconds after startup before the TTS model loads: past the client's first fetches and its
+# window-assembly animation (see the warm-up in the lifespan below).
+KOKORO_WARMUP_DELAY_S = 8.0
+# Fire-and-forget startup tasks, held so the event loop's weak references can't drop them.
+_background_tasks: set[asyncio.Task] = set()
+
 
 def run_db_migrations() -> None:
     """Run pending Alembic database migrations synchronously in a worker thread."""
@@ -324,9 +330,19 @@ async def lifespan(app: FastAPI):
 
     # Load the local TTS model off the event loop so the first spoken reply is not the slow one
     # (~5 s cold vs ~1 s warm). Nothing waits on it; speech simply loads on demand if it is
-    # still running.
+    # still running. Delayed: loading takes ~3.5 s at ~50% of the whole CPU (ONNX Runtime uses
+    # every core), which landed exactly while the client was assembling its window. Capping
+    # its threads was measured and rejected (2026-09-24): the load took as long, and every
+    # later reply synthesised 5-50% slower and less predictably (default RTF 0.55; 6-12
+    # threads 0.57-0.83 on the 14700HX's mix of P- and E-cores).
     if synthesizer.active_backend == "kokoro":
-        asyncio.get_running_loop().run_in_executor(None, synthesizer.kokoro.warm_up)
+        async def _warm_tts_later() -> None:
+            await asyncio.sleep(KOKORO_WARMUP_DELAY_S)
+            await asyncio.get_running_loop().run_in_executor(None, synthesizer.kokoro.warm_up)
+
+        task = asyncio.create_task(_warm_tts_later())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     logger.info("==================================================================")
     logger.info("  JARVIS Backend is READY and actively listening for requests!")
