@@ -202,7 +202,7 @@
                 </glass:GlassSlab>
 
                 <!-- Message list -->
-                <glass:GlassSlab Grid.Row="1" SlabCornerRadius="18">
+                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" SlabCornerRadius="18">
                         <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -249,7 +249,7 @@
                 </glass:GlassSlab>
 
                 <!-- Composer -->
-                <glass:GlassSlab Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="14">
+                <glass:GlassSlab x:Name="ComposerSlab" Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="14">
                         <StackPanel Padding="12" Spacing="6">
                             <ItemsControl x:Name="AttachmentChips">
                                 <ItemsControl.ItemsPanel>
@@ -471,9 +471,11 @@
         </glass:GlassSlab>
 
         <!--
-            Startup card: shown while BackendHost brings uvicorn up; the panels start invisible
-            (glass too) and rise into place once state is loaded (MainWindow.Motion.cs). Static
-            while waiting (only the caption breathes, in XAML), so the wait costs no GPU.
+            Startup card: shown while BackendHost brings uvicorn up. It arrives as clear glass and
+            condenses (frost and tint spring in); the line under the wordmark fills on real steps
+            (backend up, workspaces, sessions), not a timer. Then it swells and dissolves while
+            the panels materialise one by one (MainWindow.Motion.cs). Static between steps (only
+            the caption breathes, in XAML), so the wait costs no GPU.
         -->
         <Grid x:Name="StartupOverlay" Grid.Row="0" Grid.RowSpan="2" IsHitTestVisible="False">
             <glass:GlassSlab
@@ -483,10 +485,18 @@
                 SlabCornerRadius="24"
                 TintAmount="0.3"
                 Frost="12"
-                Padding="44,26">
-                <StackPanel Spacing="8">
+                Padding="44,26,44,22">
+                <StackPanel Spacing="10" Width="200">
                     <TextBlock Text="JARVIS" Foreground="#06B6D4" FontSize="24" FontWeight="SemiBold" CharacterSpacing="360" HorizontalAlignment="Center" />
-                    <TextBlock x:Name="StartupStatus" Text="Starting up" Foreground="#94A3B8" FontSize="12" HorizontalAlignment="Center" />
+                    <!-- Progress: a fixed track; the fill is scaled from its left edge, never resized. -->
+                    <Grid Height="2" CornerRadius="1" Background="#1F94A3B8">
+                        <Rectangle x:Name="StartupProgress" Fill="#06B6D4" RadiusX="1" RadiusY="1" RenderTransformOrigin="0,0.5">
+                            <Rectangle.RenderTransform>
+                                <ScaleTransform x:Name="StartupProgressScale" ScaleX="0" />
+                            </Rectangle.RenderTransform>
+                        </Rectangle>
+                    </Grid>
+                    <TextBlock x:Name="StartupStatus" Text="Starting the backend" Foreground="#94A3B8" FontSize="12" HorizontalAlignment="Center" />
                 </StackPanel>
             </glass:GlassSlab>
         </Grid>

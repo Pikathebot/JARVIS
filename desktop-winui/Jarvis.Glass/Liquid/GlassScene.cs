@@ -64,14 +64,19 @@ public sealed class GlassScene
     {
         // Faded by GlassMotion.Opacity: into each shape's fade (Params3.w, read by the shaders),
         // and out of the scene entirely once invisible, so a hidden page costs no passes.
+        // GlassMotion.Material thins it toward clear glass: frost, tint and shadow scale down.
         var opacity = OwnerOpacity(owner);
+        var material = OwnerMaterial(owner);
         if (opacity <= 0.002f) shapes = Array.Empty<GlassShape>();
-        else if (opacity < 1f)
+        else if (opacity < 1f || material < 1f)
         {
             shapes = (GlassShape[])shapes.Clone();
             for (var i = 0; i < shapes.Length; i++)
             {
                 shapes[i].Params3.W = 1f - (1f - shapes[i].Params3.W) * opacity;
+                shapes[i].Params2.W *= material; // frost radius
+                shapes[i].Tint.W *= material;
+                shapes[i].Extra.Y *= material;   // shadow strength
             }
         }
         lock (_gate)
@@ -119,6 +124,11 @@ public sealed class GlassScene
     private static float OwnerOpacity(object owner) =>
         owner is UIElement element && element.DispatcherQueue?.HasThreadAccess == true
             ? GlassMotion.OpacityFor(element)
+            : 1f;
+
+    private static float OwnerMaterial(object owner) =>
+        owner is UIElement element && element.DispatcherQueue?.HasThreadAccess == true
+            ? GlassMotion.MaterialFor(element)
             : 1f;
 
     /// <summary>Drops both the owner's shapes and its text.</summary>

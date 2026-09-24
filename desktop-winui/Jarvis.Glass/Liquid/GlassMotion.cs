@@ -34,27 +34,46 @@ public static class GlassMotion
     public static double GetOpacity(DependencyObject d) => (double)d.GetValue(OpacityProperty);
     public static void SetOpacity(DependencyObject d, double value) => d.SetValue(OpacityProperty, value);
 
+    public static readonly DependencyProperty MaterialProperty = DependencyProperty.RegisterAttached(
+        "Material", typeof(double), typeof(GlassMotion), new PropertyMetadata(1.0, OnMaterialChanged));
+
+    /// <summary>How much of its material the subtree's glass has: 1 = as designed, 0 = clear glass
+    /// (the lens and rim only -- no frost, no tint, no shadow). Scales each shape's blur radius,
+    /// tint amount and shadow strength; multiplies down the tree like opacity. Animating it from
+    /// 0 is the "materialise" entrance: glass that condenses into a frosted panel.</summary>
+    public static double GetMaterial(DependencyObject d) => (double)d.GetValue(MaterialProperty);
+    public static void SetMaterial(DependencyObject d, double value) => d.SetValue(MaterialProperty, value);
+
     /// <summary>Elements whose glass opacity isn't 1, with that opacity.</summary>
     private static readonly Dictionary<DependencyObject, double> Faded = new();
+    /// <summary>Elements whose glass material isn't 1, with that material.</summary>
+    private static readonly Dictionary<DependencyObject, double> Thinned = new();
 
-    private static void OnOpacityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    private static void OnOpacityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Record(Faded, d, (double)e.NewValue);
+    private static void OnMaterialChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Record(Thinned, d, (double)e.NewValue);
+
+    private static void Record(Dictionary<DependencyObject, double> set, DependencyObject d, double value)
     {
-        var value = (double)e.NewValue;
-        if (value >= 1.0) Faded.Remove(d);
-        else Faded[d] = value;
+        if (value >= 1.0) set.Remove(d);
+        else set[d] = value;
         if (!_stepping && d is UIElement element) Notify(element);
     }
 
     /// <summary>The product of <see cref="OpacityProperty"/> over the element and its ancestors.</summary>
-    public static float OpacityFor(UIElement element)
+    public static float OpacityFor(UIElement element) => ProductFor(Faded, element);
+
+    /// <summary>The product of <see cref="MaterialProperty"/> over the element and its ancestors.</summary>
+    public static float MaterialFor(UIElement element) => ProductFor(Thinned, element);
+
+    private static float ProductFor(Dictionary<DependencyObject, double> set, UIElement element)
     {
-        if (Faded.Count == 0) return 1f;
-        var opacity = 1.0;
+        if (set.Count == 0) return 1f;
+        var product = 1.0;
         if (TrackedByElement.TryGetValue(element, out var tracked))
         {
-            foreach (var (faded, value) in Faded)
+            foreach (var (node, value) in set)
             {
-                if (tracked.Ancestors.Contains(faded)) opacity *= value;
+                if (tracked.Ancestors.Contains(node)) product *= value;
             }
         }
         else
@@ -63,11 +82,11 @@ public static class GlassMotion
             DependencyObject? node = element;
             while (node is not null)
             {
-                if (Faded.TryGetValue(node, out var value)) opacity *= value;
+                if (set.TryGetValue(node, out var value)) product *= value;
                 node = VisualTreeHelper.GetParent(node);
             }
         }
-        return (float)Math.Clamp(opacity, 0, 1);
+        return (float)Math.Clamp(product, 0, 1);
     }
 
     /// <summary>Diagnostics: the faded elements, by name or type, with their glass opacity.</summary>

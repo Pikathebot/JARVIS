@@ -37,7 +37,12 @@ public sealed class SnapshotService : IDisposable
     {
         _windows = windows;
         TryDelete(_readyPath);
-        TryDelete(_requestPath); // a stale request from a previous run must not freeze this one
+        // A stale request from a previous run must not freeze this one -- but a fresh one is a
+        // script catching the startup sequence, and is answered.
+        if (File.Exists(_requestPath) && DateTime.Now - File.GetLastWriteTime(_requestPath) > TimeSpan.FromSeconds(30))
+        {
+            TryDelete(_requestPath);
+        }
         _timer = dispatcher.CreateTimer();
         _timer.Interval = TimeSpan.FromMilliseconds(250);
         _timer.Tick += async (_, _) => await TickAsync();

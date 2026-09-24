@@ -9,29 +9,40 @@ namespace Jarvis_App;
 /// <summary>
 /// The window's motion: the startup sequence, the spatial switch between the two spaces, and
 /// sheets rising in. Everything moves through <see cref="GlassTransition"/> -- springs, not
-/// eased curves, and only translation and opacity, so nothing re-lays out mid-flight -- which
-/// moves and fades each element's glass with its XAML.
+/// eased curves, and only transforms, opacity and the glass's material, so nothing re-lays out
+/// mid-flight -- which moves, fades and materialises each element's glass with its XAML.
 ///
 /// Budget: every glass shape that moves re-renders its layer and every layer above it each
 /// frame, and frost is the expensive pass. So the space switch moves only the two lists' item
 /// panels (message bubbles and session rows, which sit inside their panels' clip), never the
-/// panels; the startup reveal is the one time the panels themselves move.
+/// panels; the startup hand-off is the one time the panels themselves move and condense.
 /// </summary>
 public sealed partial class MainWindow
 {
     // Springs, as (response s, damping ratio). Entrances land with a whisper of overshoot
-    // (0.86, SwiftUI's .snappy territory); exits are critically damped and quick.
-    private static readonly GlassTransition.Spring SplashIn = new(0.5, 1.0);
-    private static readonly GlassTransition.Spring SplashOut = new(0.32, 1.0);
-    private static readonly GlassTransition.Spring RevealIn = new(0.55, 0.86);
+    // (0.86, SwiftUI's .snappy territory); exits are critically damped and quick. Condensing
+    // (clear glass -> frosted) is slow and critically damped: frost that bounced would flicker.
+    private static readonly GlassTransition.Spring CardArrive = new(0.55, 0.9);
+    private static readonly GlassTransition.Spring Condense = new(0.8, 1.0);
+    private static readonly GlassTransition.Spring CardDissolve = new(0.5, 1.0);
+    private static readonly GlassTransition.Spring Evaporate = new(0.3, 1.0);
+    private static readonly GlassTransition.Spring PanelIn = new(0.55, 0.86);
+    private static readonly GlassTransition.Spring ProgressFill = new(0.5, 1.0);
     private static readonly GlassTransition.Spring PageOut = new(0.22, 1.0);
     private static readonly GlassTransition.Spring PageIn = new(0.42, 0.86);
     private static readonly GlassTransition.Spring SheetIn = new(0.45, 0.86);
     private static readonly GlassTransition.Spring SheetOut = new(0.26, 1.0);
     private static readonly GlassTransition.Spring Backdrop = new(0.3, 1.0);
 
-    /// <summary>DIPs the panels rise through on reveal.</summary>
-    private const double RevealRise = 18;
+    /// <summary>DIPs a panel rises through as it materialises.</summary>
+    private const double RevealRise = 14;
+    /// <summary>Scale a panel materialises from, and the card swells to as it dissolves.</summary>
+    private const double PanelFromScale = 0.97;
+    private const double CardSwell = 1.12;
+    /// <summary>Delay between panels, so the window assembles in reading order.</summary>
+    private static readonly TimeSpan PanelStagger = TimeSpan.FromMilliseconds(60);
+    /// <summary>How long a panel is clear glass before its frost and tint come in.</summary>
+    private static readonly TimeSpan CondenseLag = TimeSpan.FromMilliseconds(120);
     /// <summary>DIPs a page slides on a space switch: a nudge toward where the space lives on the
     /// switch (Freeform left, Workspace right), not a full-width carousel.</summary>
     private const double PageShift = 36;
@@ -53,6 +64,11 @@ public sealed partial class MainWindow
     }
 
     // ---- startup ------------------------------------------------------------------------------
+    //
+    // Materialise + staged assemble. The card arrives as clear glass (a lens over the wallpaper,
+    // no frost or tint) and condenses; a line fills on real steps while the backend boots; then
+    // the card swells and evaporates while the panels materialise in reading order -- each one
+    // clear glass rising into place, frosting a beat later.
 
     private readonly long _launchedAt = System.Diagnostics.Stopwatch.GetTimestamp();
     private Storyboard? _startupBreathing;
@@ -61,17 +77,26 @@ public sealed partial class MainWindow
     /// for it so the sidebar doesn't fill in after the panels have landed.</summary>
     private Task? _sessionsRefresh;
 
+    /// <summary>The panels in the order they materialise.</summary>
+    private UIElement[] StartupPanels => new UIElement[] { SidebarSlab, HeaderSlab, MessagesSlab, ComposerSlab };
+
     /// <summary>Called from the constructor, before anything has published glass: the panels
-    /// start invisible and lowered, and the startup card fades up in their place.</summary>
+    /// start invisible, clear and lowered, and the startup card arrives in their place.</summary>
     private void BeginStartup()
     {
-        StartupCard.Layer = GlassLayers.Sheet; // over the panels while they fade in beneath it
+        StartupCard.Layer = GlassLayers.Sheet; // over the panels while they arrive beneath it
         BodyGrid.IsHitTestVisible = false;      // invisible is not untouchable in XAML
-        Motion(SidebarSlab).Set(0, RevealRise, 0);
-        Motion(ChatColumn).Set(0, RevealRise, 0);
+        foreach (var panel in StartupPanels)
+        {
+            Motion(panel).Set(0, RevealRise, 0, PanelFromScale, material: 0);
+        }
         Motion(TitleBarRow, affectsGlass: false).Set(0, 0, 0);
-        Motion(StartupCard).Set(0, 10, 0);
-        _ = Motion(StartupCard).AnimateTo(0, 0, 1, SplashIn);
+
+        var card = Motion(StartupCard);
+        card.Set(0, 0, 0, 0.94, material: 0);
+        _ = card.AnimateTo(0, 0, 1, CardArrive);
+        _ = CondenseAfterAsync(card, TimeSpan.FromMilliseconds(180));
+        SetStartupStep(0.1, "Starting the backend");
 
         // The caption breathes while the backend boots. A plain XAML storyboard: the caption
         // has no glass, so this runs on the compositor and costs the glass renderer nothing.
@@ -95,6 +120,12 @@ public sealed partial class MainWindow
         _ = RevealAfterAsync(TimeSpan.FromSeconds(25), "timed out waiting for the backend");
     }
 
+    private static async Task CondenseAfterAsync(GlassTransition motion, TimeSpan lag)
+    {
+        await Task.Delay(lag);
+        await motion.AnimateMaterial(1, Condense);
+    }
+
     private async Task RevealAfterAsync(TimeSpan delay, string why)
     {
         await Task.Delay(delay);
@@ -106,19 +137,56 @@ public sealed partial class MainWindow
     /// refreshes.</summary>
     private async void OnBackendCameOnline()
     {
-        if (!_revealed)
-        {
-            StartupStatus.Text = LoadSavedSpace() == ChatSpace.Freeform ? "Opening Freeform" : "Opening your workspace";
-        }
+        if (!_revealed) SetStartupStep(0.45, LoadSavedSpace() == ChatSpace.Freeform ? "Opening Freeform" : "Loading workspaces");
         await ProjectsViewModel.RefreshAsync();
         if (_revealed) return;
+        SetStartupStep(0.75, "Loading sessions");
         // RefreshAsync returns once the UI update is queued; that update (ActiveProjectChanged)
         // starts the sessions fetch. Capped: a slow list fills in on screen rather than hold the
         // window shut.
         await Task.Yield();
         await Task.WhenAny(_sessionsRefresh ?? Task.CompletedTask, Task.Delay(1500));
+        SetStartupStep(1.0, "Ready");
         Reveal("state loaded");
     }
+
+    // ---- the progress line --------------------------------------------------------------------
+
+    private double _progress, _progressVelocity, _progressTarget;
+    private bool _progressRunning;
+    private double _progressLast = double.NaN;
+
+    /// <summary>Moves the line to <paramref name="fraction"/> on a spring (XAML only: a
+    /// ScaleTransform on a fixed-width fill, so the card never re-lays out).</summary>
+    private void SetStartupStep(double fraction, string caption)
+    {
+        StartupStatus.Text = caption;
+        _progressTarget = Math.Max(_progressTarget, fraction);
+        if (_progressRunning) return;
+        _progressRunning = true;
+        _progressLast = double.NaN;
+        GlassMotion.Frame(StartupProgress, now =>
+        {
+            var dt = double.IsNaN(_progressLast) ? 0 : Math.Clamp(now - _progressLast, 0.001, 0.05);
+            _progressLast = now;
+            const double MaxStep = 1.0 / 240.0;
+            var steps = Math.Max(1, (int)Math.Ceiling(dt / MaxStep));
+            var h = dt / steps;
+            for (var i = 0; i < steps && dt > 0; i++)
+            {
+                var accel = (_progressTarget - _progress) * ProgressFill.Stiffness - _progressVelocity * ProgressFill.Damping;
+                _progressVelocity += accel * h;
+                _progress += _progressVelocity * h;
+            }
+            var settled = Math.Abs(_progressTarget - _progress) < 0.002 && Math.Abs(_progressVelocity) < 0.02;
+            if (settled) _progress = _progressTarget;
+            StartupProgressScale.ScaleX = Math.Clamp(_progress, 0, 1);
+            if (settled) _progressRunning = false;
+            return !settled;
+        });
+    }
+
+    // ---- the hand-off ---------------------------------------------------------------------------
 
     private async void Reveal(string why)
     {
@@ -126,24 +194,39 @@ public sealed partial class MainWindow
         _revealed = true;
         App.Log($"startup: revealing ({why}) after {System.Diagnostics.Stopwatch.GetElapsedTime(_launchedAt).TotalMilliseconds:F0} ms");
 
-        // Let the card finish arriving if the backend beat it (an already-running backend
-        // answers in well under its entrance), so the sequence never reads as a flicker.
+        // Let the card finish condensing and the line finish filling if the backend beat them
+        // (an already-running backend answers well inside the card's entrance), so the sequence
+        // never reads as a flicker.
         var shown = System.Diagnostics.Stopwatch.GetElapsedTime(_launchedAt);
-        var minimum = TimeSpan.FromMilliseconds(450);
+        var minimum = TimeSpan.FromMilliseconds(1100);
         if (shown < minimum) await Task.Delay(minimum - shown);
+        if (_progressRunning) await Task.Delay(250);
 
         BodyGrid.IsHitTestVisible = true;
-        _ = FadeOutStartupCardAsync();
-        _ = Motion(SidebarSlab).AnimateTo(0, 0, 1, RevealIn);
-        // A beat behind the sidebar, so the window assembles left to right.
-        await Task.Delay(50);
-        _ = Motion(TitleBarRow, affectsGlass: false).AnimateTo(0, 0, 1, RevealIn);
-        _ = Motion(ChatColumn).AnimateTo(0, 0, 1, RevealIn);
+        _ = DissolveStartupCardAsync();
+        _ = Motion(TitleBarRow, affectsGlass: false).AnimateTo(0, 0, 1, PanelIn);
+        foreach (var panel in StartupPanels)
+        {
+            _ = MaterialisePanelAsync(panel);
+            await Task.Delay(PanelStagger);
+        }
     }
 
-    private async Task FadeOutStartupCardAsync()
+    /// <summary>Clear glass rising into place, then its frost and tint condensing onto it.</summary>
+    private async Task MaterialisePanelAsync(UIElement panel)
     {
-        await Motion(StartupCard).AnimateTo(0, -8, 0, SplashOut);
+        var motion = Motion(panel);
+        _ = motion.AnimateTo(0, 0, 1, PanelIn);
+        await Task.Delay(CondenseLag);
+        await motion.AnimateMaterial(1, Condense);
+    }
+
+    /// <summary>The card swells and evaporates: its frost goes first, then the lens itself.</summary>
+    private async Task DissolveStartupCardAsync()
+    {
+        var card = Motion(StartupCard);
+        _ = card.AnimateMaterial(0, Evaporate);
+        await card.AnimateTo(0, 0, 0, CardDissolve, CardSwell);
         _startupBreathing?.Stop();
         _startupBreathing = null;
         StartupOverlay.Visibility = Visibility.Collapsed; // and its glass leaves the scene

@@ -4,13 +4,16 @@ using Microsoft.UI.Xaml.Media;
 namespace Jarvis_Glass;
 
 /// <summary>
-/// Moves and fades one element -- its XAML and the glass inside it together -- on damped
-/// springs: translation through a TranslateTransform (a render transform, so nothing re-lays
-/// out) and opacity through both UIElement.Opacity and <see cref="GlassMotion.OpacityProperty"/>.
-/// The springs are the controls' house pattern (semi-implicit Euler, 1/240 s substeps, see
-/// GlassButton.Spring), parameterised the way Apple's are: a response (the undamped period, s)
-/// and a damping ratio (1 = critically damped, no overshoot). Retargeting mid-flight keeps the
-/// current velocity, so an interrupted transition bends instead of jumping.
+/// Moves, scales and fades one element -- its XAML and the glass inside it together -- on damped
+/// springs: translation and scale through a CompositeTransform (a render transform, so nothing
+/// re-lays out; scale is about the element's centre), opacity through both UIElement.Opacity and
+/// <see cref="GlassMotion.OpacityProperty"/>, and the glass's material (frost, tint, shadow)
+/// through <see cref="GlassMotion.MaterialProperty"/> on a spring of its own, so glass can arrive
+/// clear and condense afterwards. The springs are the controls' house pattern (semi-implicit
+/// Euler, 1/240 s substeps, see GlassButton.Spring), parameterised the way Apple's are: a response
+/// (the undamped period, s) and a damping ratio (1 = critically damped, no overshoot).
+/// Retargeting mid-flight keeps the current velocity, so an interrupted transition bends instead
+/// of jumping.
 /// </summary>
 public sealed class GlassTransition
 {
@@ -26,9 +29,10 @@ public sealed class GlassTransition
     {
         public double Value, Velocity, Target;
 
-        public void Step(double dt, double stiffness, double damping)
+        public void Step(double dt, Spring spring)
         {
             const double MaxStep = 1.0 / 240.0;
+            var (stiffness, damping) = (spring.Stiffness, spring.Damping);
             var steps = Math.Max(1, (int)Math.Ceiling(dt / MaxStep));
             var h = dt / steps;
             for (var i = 0; i < steps; i++)
@@ -47,13 +51,16 @@ public sealed class GlassTransition
             Value = Target = to;
             Velocity = 0;
         }
+
+        public void Settle() => Snap(Target);
     }
 
     private readonly UIElement _element;
-    private readonly TranslateTransform _translate;
+    private readonly CompositeTransform _transform;
     private readonly bool _affectsGlass;
-    private Channel _x, _y, _opacity;
+    private Channel _x, _y, _scale, _opacity, _material;
     private Spring _spring = new(0.4, 1.0);
+    private Spring _materialSpring = new(0.4, 1.0);
     private double _lastTime = double.NaN;
     private bool _running;
     /// <summary>Bumped whenever a run ends, so a tick left over from a run that <see cref="Set"/>
@@ -67,41 +74,61 @@ public sealed class GlassTransition
     {
         _element = element;
         _affectsGlass = affectsGlass;
-        if (element.RenderTransform is TranslateTransform existing)
+        if (element.RenderTransform is CompositeTransform existing)
         {
-            _translate = existing;
+            _transform = existing;
         }
         else
         {
-            _translate = new TranslateTransform();
-            element.RenderTransform = _translate;
+            _transform = new CompositeTransform();
+            element.RenderTransform = _transform;
         }
-        _x.Snap(_translate.X);
-        _y.Snap(_translate.Y);
+        _x.Snap(_transform.TranslateX);
+        _y.Snap(_transform.TranslateY);
+        _scale.Snap(_transform.ScaleX);
         _opacity.Snap(element.Opacity);
+        _material.Snap(affectsGlass ? GlassMotion.GetMaterial(element) : 1);
     }
 
     public double Opacity => _opacity.Value;
 
     /// <summary>Jumps straight to a state (cancels any animation in flight; its task completes).</summary>
-    public void Set(double x, double y, double opacity)
+    public void Set(double x, double y, double opacity, double scale = 1, double material = 1)
     {
         _x.Snap(x);
         _y.Snap(y);
         _opacity.Snap(opacity);
+        _scale.Snap(scale);
+        _material.Snap(material);
         Apply();
         Finish();
         GlassMotion.Notify(_element);
     }
 
-    /// <summary>Springs to a state. The task completes when it settles -- or, fading out, as soon
-    /// as it is invisible, since where an invisible element still drifts to doesn't matter.</summary>
-    public Task AnimateTo(double x, double y, double opacity, Spring spring)
+    /// <summary>Springs position, opacity and scale to a state. The task completes when every
+    /// channel (material included) settles -- or, fading out, as soon as it is invisible, since
+    /// where an invisible element still drifts to doesn't matter.</summary>
+    public Task AnimateTo(double x, double y, double opacity, Spring spring, double scale = 1)
     {
         _x.Target = x;
         _y.Target = y;
         _opacity.Target = opacity;
+        _scale.Target = scale;
         _spring = spring;
+        return Run();
+    }
+
+    /// <summary>Springs the glass's material (1 = frost, tint and shadow as designed, 0 = clear)
+    /// on its own spring, independently of <see cref="AnimateTo"/>.</summary>
+    public Task AnimateMaterial(double material, Spring spring)
+    {
+        _material.Target = material;
+        _materialSpring = spring;
+        return Run();
+    }
+
+    private Task Run()
+    {
         _done ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var task = _done.Task;
         if (!_running)
@@ -121,18 +148,22 @@ public sealed class GlassTransition
         _lastTime = now;
         if (dt > 0)
         {
-            var (k, c) = (_spring.Stiffness, _spring.Damping);
-            _x.Step(dt, k, c);
-            _y.Step(dt, k, c);
-            _opacity.Step(dt, k, c);
+            _x.Step(dt, _spring);
+            _y.Step(dt, _spring);
+            _scale.Step(dt, _spring);
+            _opacity.Step(dt, _spring);
+            _material.Step(dt, _materialSpring);
         }
 
         var hidden = _opacity.Target <= 0 && _opacity.Value < 0.01;
-        if (hidden || (_x.Settled(0.25) && _y.Settled(0.25) && _opacity.Settled(0.002)))
+        if (hidden || (_x.Settled(0.25) && _y.Settled(0.25) && _scale.Settled(0.0005)
+                       && _opacity.Settled(0.002) && _material.Settled(0.002)))
         {
-            _x.Snap(_x.Target);
-            _y.Snap(_y.Target);
-            _opacity.Snap(_opacity.Target);
+            _x.Settle();
+            _y.Settle();
+            _scale.Settle();
+            _opacity.Settle();
+            _material.Settle();
             Apply();
             Finish();
             return false;
@@ -143,12 +174,22 @@ public sealed class GlassTransition
 
     private void Apply()
     {
-        _translate.X = _x.Value;
-        _translate.Y = _y.Value;
-        // A damped spring can overshoot; opacity cannot.
+        _transform.TranslateX = _x.Value;
+        _transform.TranslateY = _y.Value;
+        if (_element is FrameworkElement fe)
+        {
+            _transform.CenterX = fe.ActualWidth / 2;
+            _transform.CenterY = fe.ActualHeight / 2;
+        }
+        _transform.ScaleX = _transform.ScaleY = _scale.Value;
+        // A damped spring can overshoot; opacity and material cannot.
         var opacity = Math.Clamp(_opacity.Value, 0, 1);
         _element.Opacity = opacity;
-        if (_affectsGlass) GlassMotion.SetOpacity(_element, opacity);
+        if (_affectsGlass)
+        {
+            GlassMotion.SetOpacity(_element, opacity);
+            GlassMotion.SetMaterial(_element, Math.Clamp(_material.Value, 0, 1));
+        }
     }
 
     private void Finish()
