@@ -16,6 +16,9 @@ public sealed partial class SettingsPane : UserControl
 {
     public event Action? CloseRequested;
 
+    /// <summary>The sheet itself, apart from its scrim: what rises on open (MainWindow.OpenSheet).</summary>
+    public UIElement SheetSurface => Sheet;
+
     private void Close_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
 
     private void Scrim_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => CloseRequested?.Invoke();

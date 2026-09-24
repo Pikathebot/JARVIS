@@ -37,7 +37,7 @@ struct GlassShape
     float4 Params2;
     float4 Tint;
     float4 Extra;
-    float4 Params3;
+    float4 Params3;        // w = fade (0 = solid, 1 = gone); coverage already carries it (field.z)
     float4 Clip;           // x, y, w, h px; w <= 0 = unclipped
 };
 
@@ -114,7 +114,7 @@ float ShadowAt(float2 pixelPos)
     {
         if (s >= count) break;
         if ((int)Shapes[s].Params2.y != layer) continue;
-        float strength = Shapes[s].Extra.y;
+        float strength = Shapes[s].Extra.y * (1.0 - saturate(Shapes[s].Params3.w)); // fades with the shape
         float radius = Shapes[s].Extra.z;
         if (strength <= 0.0 || radius <= 0.0) continue;
 

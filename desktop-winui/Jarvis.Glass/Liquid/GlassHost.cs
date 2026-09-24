@@ -155,7 +155,12 @@ public sealed class GlassHost : IDisposable
         }
     }
 
-    private void OnRendering(object? sender, object e) => RenderTick();
+    private void OnRendering(object? sender, object e)
+    {
+        // Animations first, so what they move this frame is what gets rendered this frame.
+        GlassMotion.Step(e);
+        RenderTick();
+    }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {

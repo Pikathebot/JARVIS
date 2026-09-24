@@ -98,6 +98,11 @@
                             Background="Transparent"
                             SelectionMode="None"
                             ItemsSource="{x:Bind SessionsViewModel.Sessions}">
+                            <!-- No theme transitions: they animate on the compositor, where the
+                                 rows' glass can't follow. Page motion is MainWindow.Motion's. -->
+                            <ListView.ItemContainerTransitions>
+                                <TransitionCollection />
+                            </ListView.ItemContainerTransitions>
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -151,7 +156,7 @@
             </glass:GlassSlab>
 
             <!-- Chat surface -->
-            <Grid Grid.Column="1">
+            <Grid x:Name="ChatColumn" Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -217,6 +222,11 @@
                             SelectionMode="None"
                             IsSwipeEnabled="False"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
+                            <!-- No theme transitions: the default entrance slid each bubble's XAML
+                                 on the compositor while its glass sat still. -->
+                            <ListView.ItemContainerTransitions>
+                                <TransitionCollection />
+                            </ListView.ItemContainerTransitions>
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -459,6 +469,27 @@
                 <glass:GlassButton x:Name="NewWorkspaceButton" Text="＋ New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
             </StackPanel>
         </glass:GlassSlab>
+
+        <!--
+            Startup card: shown while BackendHost brings uvicorn up; the panels start invisible
+            (glass too) and rise into place once state is loaded (MainWindow.Motion.cs). Static
+            while waiting (only the caption breathes, in XAML), so the wait costs no GPU.
+        -->
+        <Grid x:Name="StartupOverlay" Grid.Row="0" Grid.RowSpan="2" IsHitTestVisible="False">
+            <glass:GlassSlab
+                x:Name="StartupCard"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                SlabCornerRadius="24"
+                TintAmount="0.3"
+                Frost="12"
+                Padding="44,26">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="JARVIS" Foreground="#06B6D4" FontSize="24" FontWeight="SemiBold" CharacterSpacing="360" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="StartupStatus" Text="Starting up" Foreground="#94A3B8" FontSize="12" HorizontalAlignment="Center" />
+                </StackPanel>
+            </glass:GlassSlab>
+        </Grid>
 
         <!-- Settings sheet overlay (see Views/SettingsPane.xaml); filled on demand by Settings_Click. -->
         <Grid x:Name="SettingsHost" Grid.Row="0" Grid.RowSpan="2" Visibility="Collapsed" />

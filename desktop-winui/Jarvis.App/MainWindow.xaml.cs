@@ -10,7 +10,6 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 using Windows.UI;
 
@@ -63,6 +62,8 @@ public sealed partial class MainWindow : Window
         // Layers are named rather than written as integers in XAML -- see GlassLayers for
         // why the sheets' hand-written "2" left them unable to cover the window behind them.
         WorkspaceDropdown.Layer = Jarvis_Glass.GlassLayers.Popover;
+        // Panels hidden, startup card up, before anything publishes glass (MainWindow.Motion.cs).
+        BeginStartup();
 
         _api = api;
         var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
@@ -158,7 +159,7 @@ public sealed partial class MainWindow : Window
             SessionsViewModel.ProjectId = project?.Id;
             UpdateSpaceChrome();
             UpdateWorkspaceHighlight();
-            _ = SessionsViewModel.RefreshAsync();
+            _sessionsRefresh = SessionsViewModel.RefreshAsync();
         };
         // Space and ephemeral state can change from inside the view model too (opening a stored
         // session leaves ephemeral mode), so the chrome follows the properties, not the clicks.
@@ -186,8 +187,9 @@ public sealed partial class MainWindow : Window
         // before BackendHost has uvicorn up, so a fetch here fails silently and nothing would
         // retry it -- the sidebar stayed empty and the workspace picker stuck on its placeholder
         // until the first completed turn. Projects first; ActiveProjectChanged scopes and
-        // refreshes the session list. Also re-runs after a backend restart.
-        GovernorViewModel.BackendCameOnline += () => _ = ProjectsViewModel.RefreshAsync();
+        // refreshes the session list. The first time, the window then opens onto them. Also
+        // re-runs after a backend restart.
+        GovernorViewModel.BackendCameOnline += OnBackendCameOnline;
         // The session list virtualises and recycles its rows now, and Loaded does not fire
         // again for a recycled container, so the active tint is applied per content change too.
         SessionsList.ContainerContentChanging += (_, args) =>
@@ -553,13 +555,7 @@ public sealed partial class MainWindow : Window
         // SelectedIndex="1" in XAML fires this inside InitializeComponent.
         if (ChatViewModel is null || _syncingSpaceChrome) return;
         var target = SpaceSwitch.SelectedIndex == 0 ? ChatSpace.Freeform : ChatSpace.Workspace;
-        if (target == ChatViewModel.Space) return;
-        SetWorkspaceDropdownOpen(false);
-        SessionsViewModel.Space = target;
-        SaveSpace(target);
-        SessionsViewModel.Sessions.Clear(); // don't show the other space's list while it loads
-        await ChatViewModel.SwitchSpaceAsync(target);
-        _ = SessionsViewModel.RefreshAsync();
+        await SwitchSpaceAnimatedAsync(target);
     }
 
     private async void EphemeralToggle_Toggled(object sender, RoutedEventArgs e)
@@ -635,6 +631,19 @@ public sealed partial class MainWindow : Window
         WorkspaceDropdown.MinWidth = WorkspaceButton.ActualWidth;
         SetWorkspaceDropdownOpen(true);
         UpdateWorkspaceHighlight();
+        _ = LogDropdownGlassAsync();
+    }
+
+    /// <summary>Diagnostic (2026-09-24): the dropdown's rows stopped drawing, though they still
+    /// take clicks. Logs what the scene holds once the card has had a few frames to publish.</summary>
+    private async Task LogDropdownGlassAsync()
+    {
+        await Task.Delay(400);
+        var b = WorkspaceDropdown.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, WorkspaceDropdown.ActualWidth, WorkspaceDropdown.ActualHeight));
+        App.Log($"dropdown: visible={WorkspaceDropdown.Visibility} bounds={b} layer={WorkspaceDropdown.Layer} " +
+                $"opacity card={Jarvis_Glass.GlassMotion.OpacityFor(WorkspaceDropdown):F2} menu={Jarvis_Glass.GlassMotion.OpacityFor(WorkspaceMenu):F2} " +
+                $"menuItems='{WorkspaceMenu.Items}' menuSize={WorkspaceMenu.ActualWidth:F0}x{WorkspaceMenu.ActualHeight:F0} " +
+                $"faded: {Jarvis_Glass.GlassMotion.DescribeFaded()} | scene: {Glass.Scene.Describe()}");
     }
 
     /// <summary>Every slab's glass renders under all XAML, so the session rows' plain
@@ -788,49 +797,8 @@ public sealed partial class MainWindow : Window
     {
         if (SettingsHost.Children.Count > 0) return;
         var pane = new SettingsPane(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel);
-        pane.CloseRequested += () =>
-        {
-            SettingsHost.Children.Clear();
-            SettingsHost.Visibility = Visibility.Collapsed;
-            SetSheetOpen(false);
-        };
-        SettingsHost.Children.Add(pane);
-        SettingsHost.Visibility = Visibility.Visible;
-        SetSheetOpen(true);
-    }
-
-    /// <summary>What the window's own content fades to while a sheet is open.</summary>
-    private const double SheetBackdropOpacity = 0.08;
-
-    /// <summary>
-    /// A sheet in <see cref="SettingsHost"/> is a glass slab, and glass is drawn in the swapchain
-    /// *behind* the whole XAML tree -- so the sheet's frost and tint fall on the wallpaper and on
-    /// the panels' glass, and never on the window's own text, which paints on top of them. No
-    /// amount of tint can stop the chat and sidebar labels reading through a sheet; only taking
-    /// them out of the XAML layer can, which is what this does. Fading rather than collapsing:
-    /// a collapsed slab takes its glass with it (GlassSlab.IsCollapsedInTree), so every panel
-    /// stays exactly where it was and only the text that was competing with the sheet's goes.
-    /// </summary>
-    private void SetSheetOpen(bool open)
-    {
-        var to = open ? SheetBackdropOpacity : 1.0;
-        FadeTo(TitleBarRow, to);
-        FadeTo(BodyGrid, to);
-    }
-
-    private static void FadeTo(UIElement element, double to)
-    {
-        var fade = new DoubleAnimation
-        {
-            To = to,
-            Duration = new Duration(TimeSpan.FromMilliseconds(160)),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-        Storyboard.SetTarget(fade, element);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-        var storyboard = new Storyboard();
-        storyboard.Children.Add(fade);
-        storyboard.Begin();
+        pane.CloseRequested += () => CloseSheet(pane.SheetSurface);
+        OpenSheet(pane, pane.SheetSurface);
     }
 
     private void NewWorkspace_Click(object sender, RoutedEventArgs e)
@@ -838,17 +806,10 @@ public sealed partial class MainWindow : Window
         SetWorkspaceDropdownOpen(false);
         if (SettingsHost.Children.Count > 0) return;
         var pane = new NewWorkspacePane(ProjectsViewModel, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        pane.CloseRequested += () =>
-        {
-            SettingsHost.Children.Clear();
-            SettingsHost.Visibility = Visibility.Collapsed;
-            SetSheetOpen(false);
-        };
+        pane.CloseRequested += () => CloseSheet(pane.SheetSurface);
         // Nothing else to wire: the pane activates the new project, and ActiveProjectChanged
         // rescopes the chat and rebuilds the dropdown's rows.
-        SettingsHost.Children.Add(pane);
-        SettingsHost.Visibility = Visibility.Visible;
-        SetSheetOpen(true);
+        OpenSheet(pane, pane.SheetSurface);
     }
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();

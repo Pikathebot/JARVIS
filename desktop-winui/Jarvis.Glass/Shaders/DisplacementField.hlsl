@@ -28,8 +28,8 @@ struct GlassShape
     float4 Params2;        // x specular intensity, y layer, z max refraction magnitude, w blur radius px
     float4 Tint;           // rgb tint color, a tint amount (alpha blend)
     float4 Extra;          // x chromatic px, y shadow strength, z shadow radius px, w shadow y-offset px
-    float4 Params3;        // x magnify (fraction of the centre offset the sample moves inward)
-    float4 Clip;           // x, y, w, h px; w <= 0 = unclipped
+    float4 Params3;        // x magnify (fraction of the centre offset the sample moves inward), w fade (0 = solid, 1 = gone)
+    float4 Clip;          // x, y, w, h px; w <= 0 = unclipped
 };
 
 cbuffer ShapeConstants : register(b1)
@@ -209,7 +209,10 @@ float4 PSMain(VSOutput i) : SV_TARGET
     }
 
     float blur = Shapes[s].Params2.w;
-    float coverage = Coverage(sdf);
+    // Fade (GlassMotion.Opacity) scales coverage: the refraction pass blends the shape over its
+    // passthrough by coverage, so a half-faded shape is half glass, half what is beneath it.
+    float visible = 1.0 - saturate(Shapes[s].Params3.w);
+    float coverage = Coverage(sdf) * visible;
     float bezel = max(1.0, min(Shapes[s].Params.y, r));
     // Magnifier: every pixel samples toward the centre by this fraction of its offset. Applies
     // across the whole shape (interior and bezel alike) so it is continuous at the bezel's
@@ -218,7 +221,7 @@ float4 PSMain(VSOutput i) : SV_TARGET
     if (sdf < -bezel)
     {
         // Past the bezel band into the flat interior: covered, only the magnifier applies.
-        return float4(magnify, 1.0, blur);
+        return float4(magnify, visible, blur);
     }
 
     // Depth into the bezel band: 0 at the outer edge, 1 at the inner boundary -- the convention

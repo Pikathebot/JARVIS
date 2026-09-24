@@ -40,9 +40,11 @@ public static class GlassScroll
     }
 
     /// <summary>Republish <paramref name="element"/>'s shapes on every view change of its nearest
-    /// ancestor ScrollViewer. Call from Loaded; the hook releases itself on Unloaded.</summary>
+    /// ancestor ScrollViewer, and whenever something moves or fades it (<see cref="GlassMotion"/>).
+    /// Every glass control calls this from Loaded; the hooks release themselves on Unloaded.</summary>
     public static void Track(FrameworkElement element, Action republish)
     {
+        GlassMotion.Track(element, republish);
         DependencyObject? node = element;
         ScrollViewer? sv = null;
         while (node is not null && sv is null)

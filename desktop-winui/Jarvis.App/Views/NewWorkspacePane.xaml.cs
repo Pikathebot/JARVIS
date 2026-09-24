@@ -16,6 +16,9 @@ public sealed partial class NewWorkspacePane : UserControl
 {
     public event Action? CloseRequested;
 
+    /// <summary>The sheet itself, apart from its scrim: what rises on open (MainWindow.OpenSheet).</summary>
+    public UIElement SheetSurface => Sheet;
+
     public ObservableCollection<string> Folders { get; } = new();
 
     private readonly ProjectsViewModel _projects;

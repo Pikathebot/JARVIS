@@ -25,7 +25,8 @@ namespace Jarvis_Glass;
 ///      (GlassSlab.BaseLayerFor = nearest ancestor slab's Layer + 1)
 ///   3  those controls' moving parts: a lifted toggle thumb, a slider thumb, a segmented puck
 ///   3  the workspace dropdown, which floats over the panels  (4-5 for its own rows and puck)
-///   4  a modal sheet -- above every one of the above, so it covers AND frosts all of it
+///   4  a modal sheet -- above every one of the above, so it covers AND frosts all of it;
+///      also the startup card, which fades out over the panels fading in
 ///   5  the sheet's own controls   (6 for their moving parts)
 /// </code>
 /// </summary>

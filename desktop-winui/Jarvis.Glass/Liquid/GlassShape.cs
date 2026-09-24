@@ -46,7 +46,9 @@ public struct GlassShape
     /// the track out to its rim -- iOS 26's pressed switch thumb. y = edge ring: a ~1px bright
     /// outline just inside the rim, independent of the light direction (Apple's "this is glass"
     /// cue at rest). z = second light weight: how much the rim on the side AWAY from the light
-    /// catches an exit highlight (0 = lit from one edge only, 1 = symmetric). w reserved.</summary>
+    /// catches an exit highlight (0 = lit from one edge only, 1 = symmetric). w = fade: 0 solid,
+    /// 1 gone -- scales the shape's coverage, rim and shadow. Never set by controls; GlassScene
+    /// fills it from <see cref="GlassMotion.OpacityProperty"/>.</summary>
     public Vector4 Params3;
 
     /// <summary>Clip rect in window px (x, y, w, h); w &lt;= 0 = unclipped. Intersected with the

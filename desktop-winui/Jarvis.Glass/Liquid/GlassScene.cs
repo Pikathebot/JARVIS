@@ -62,6 +62,18 @@ public sealed class GlassScene
     /// on every LayoutUpdated, and a bumped version would re-render the window for nothing.</summary>
     public void Publish(object owner, params GlassShape[] shapes)
     {
+        // Faded by GlassMotion.Opacity: into each shape's fade (Params3.w, read by the shaders),
+        // and out of the scene entirely once invisible, so a hidden page costs no passes.
+        var opacity = OwnerOpacity(owner);
+        if (opacity <= 0.002f) shapes = Array.Empty<GlassShape>();
+        else if (opacity < 1f)
+        {
+            shapes = (GlassShape[])shapes.Clone();
+            for (var i = 0; i < shapes.Length; i++)
+            {
+                shapes[i].Params3.W = 1f - (1f - shapes[i].Params3.W) * opacity;
+            }
+        }
         lock (_gate)
         {
             if (_shapes.TryGetValue(owner, out var old)
@@ -75,12 +87,39 @@ public sealed class GlassScene
 
     public void PublishText(object owner, params GlassText[] texts)
     {
+        var opacity = OwnerOpacity(owner);
+        if (opacity <= 0.002f) texts = Array.Empty<GlassText>();
+        else if (opacity < 1f)
+        {
+            texts = texts.Select(t => t with { Color = t.Color with { W = t.Color.W * opacity } }).ToArray();
+        }
         lock (_gate)
         {
             if (_texts.TryGetValue(owner, out var old) && old.AsSpan().SequenceEqual(texts)) return;
             _texts[owner] = texts; _textsDirty = true; _version++;
         }
     }
+
+    /// <summary>One line for the glass log: shapes and texts per layer, and any faded shapes.</summary>
+    public string Describe()
+    {
+        lock (_gate)
+        {
+            var shapes = _shapes.Values.SelectMany(s => s).ToList();
+            var byLayer = string.Join(" ", shapes.GroupBy(s => (int)s.Params2.Y).OrderBy(g => g.Key)
+                .Select(g => $"L{g.Key}:{g.Count()}" + (g.Any(s => s.Params3.W > 0f) ? $"(faded {g.Count(s => s.Params3.W > 0f)})" : "")));
+            var texts = string.Join(" ", _texts.Values.SelectMany(t => t).GroupBy(t => t.Layer).OrderBy(g => g.Key)
+                .Select(g => $"L{g.Key}:{g.Count()}"));
+            return $"{shapes.Count} shapes [{byLayer}], texts [{texts}], empty owners {_shapes.Values.Count(s => s.Length == 0)}";
+        }
+    }
+
+    /// <summary>The publishing control's <see cref="GlassMotion.OpacityFor"/>, or 1 when the owner
+    /// is not an element or the call is off its UI thread (the tree can't be walked there).</summary>
+    private static float OwnerOpacity(object owner) =>
+        owner is UIElement element && element.DispatcherQueue?.HasThreadAccess == true
+            ? GlassMotion.OpacityFor(element)
+            : 1f;
 
     /// <summary>Drops both the owner's shapes and its text.</summary>
     public void Remove(object owner)

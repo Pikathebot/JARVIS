@@ -23,7 +23,7 @@ struct GlassShape
     float4 Params2;
     float4 Tint;
     float4 Extra;
-    float4 Params3;        // x magnify, y edge ring intensity, z second (exit) light weight
+    float4 Params3;        // x magnify, y edge ring intensity, z second (exit) light weight, w fade
     float4 Clip;           // x, y, w, h px; w <= 0 = unclipped
 };
 
@@ -194,7 +194,7 @@ float4 PSMain(VSOutput i) : SV_TARGET
     float rim = floorLight + (1.0 - floorLight) * lobes;
     rim *= saturate(tilt * 3.0);
     float edgeFalloff = pow(t, 8.0);
-    float coverage = Coverage(sdf);
+    float coverage = Coverage(sdf) * (1.0 - saturate(Shapes[s].Params3.w)); // fade: GlassMotion.Opacity
     float3 rimColor = float3(1.0, 1.0, 1.0) * rim * edgeFalloff * Shapes[s].Params2.x * coverage;
 
     // Edge ring: a ~1px bright line just inside the outline, independent of the bezel profile
