@@ -56,6 +56,9 @@ public sealed partial class GlassButton : UserControl
 
         public static float LabelSize = 14f;
         public static Vector4 LabelColor = Vector4.One;
+        /// <summary>DIPs kept clear between the label and each end of the pill; a longer label is
+        /// trimmed to an ellipsis rather than run out over the rim.</summary>
+        public static float LabelPadX = 16f;
     }
 
     private static readonly List<WeakReference<GlassButton>> Instances = new();
@@ -269,7 +272,8 @@ public sealed partial class GlassButton : UserControl
 
         // Caption on the button's own layer: composited after the slab, so it sits on the glass
         // (not bent by it) and scales with the lift like part of the slab.
+        var labelMax = Math.Max(1f, ((float)bounds.Width - 2f * Material.LabelPadX) * scale * grow);
         _scene.PublishText(this,
-            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: baseLayer, Clip: clip));
+            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: baseLayer, Clip: clip, MaxWidth: labelMax));
     }
 }

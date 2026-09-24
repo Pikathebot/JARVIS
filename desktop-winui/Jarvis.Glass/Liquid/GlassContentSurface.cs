@@ -50,7 +50,7 @@ internal sealed class GlassContentSurface : IDisposable
     private readonly ID2D1Factory1 _d2dFactory;
     private readonly IDWriteFactory _dwriteFactory;
     private readonly Dictionary<int, LayerSurface> _layers = new();
-    private readonly Dictionary<(int size10, int weight), IDWriteTextFormat> _formats = new();
+    private readonly Dictionary<(int size10, int weight, bool trim), IDWriteTextFormat> _formats = new();
     private int _width, _height;
 
     public GlassContentSurface(ID3D11Device device)
@@ -108,13 +108,16 @@ internal sealed class GlassContentSurface : IDisposable
 
     private void DrawText(LayerSurface s, in GlassText t)
     {
-        var format = GetFormat(t.FontSize, t.FontWeight);
+        var trim = t.MaxWidth > 0f;
+        var format = GetFormat(t.FontSize, t.FontWeight, trim);
         // Premultiplied target, straight colour in: D2D's brush takes straight RGBA and does the
         // multiply itself.
         s.Brush.Color = new Color4(t.Color.X, t.Color.Y, t.Color.Z, t.Color.W);
-        // Generous layout box centred on the requested point; the format centres both axes inside
-        // it, and the nudge lands the cap height (not the line box) on Center.Y.
-        const float boxW = 4096f, boxH = 512f;
+        // Layout box centred on the requested point -- generous, or MaxWidth when trimming; the
+        // format centres both axes inside it, and the nudge lands the cap height (not the line
+        // box) on Center.Y.
+        const float boxH = 512f;
+        var boxW = trim ? t.MaxWidth : 4096f;
         var y = t.Center.Y + t.FontSize * TightNudgeEm;
         var rect = new Rect(t.Center.X - boxW * 0.5f, y - boxH * 0.5f, boxW, boxH);
         var clipped = t.Clip.Z > 0f;
@@ -123,14 +126,19 @@ internal sealed class GlassContentSurface : IDisposable
         if (clipped) s.Target.PopAxisAlignedClip();
     }
 
-    private IDWriteTextFormat GetFormat(float size, int weight)
+    private IDWriteTextFormat GetFormat(float size, int weight, bool trim)
     {
-        var key = ((int)MathF.Round(size * 10f), weight);
+        var key = ((int)MathF.Round(size * 10f), weight, trim);
         if (_formats.TryGetValue(key, out var format)) return format;
         format = _dwriteFactory.CreateTextFormat(FontFamily, null, (FontWeight)weight, FontStyle.Normal, FontStretch.Normal, key.Item1 / 10f, "en-us");
         format.TextAlignment = TextAlignment.Center;
         format.ParagraphAlignment = ParagraphAlignment.Center;
         format.WordWrapping = WordWrapping.NoWrap;
+        if (trim)
+        {
+            using var ellipsis = _dwriteFactory.CreateEllipsisTrimmingSign(format);
+            format.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, ellipsis);
+        }
         _formats[key] = format;
         return format;
     }

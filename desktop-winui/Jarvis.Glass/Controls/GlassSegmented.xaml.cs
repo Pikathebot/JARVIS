@@ -407,20 +407,24 @@ public sealed partial class GlassSegmented : UserControl
 
         // Labels left-aligned (the renderer centres text, so centre each run on its own measured
         // width) on the card's layer beneath the pill; a dark copy rides the pill at rest.
+        // A label longer than the row (menu items are user-named) is trimmed to an ellipsis
+        // inside the pill's padding on both sides.
+        var labelMax = Math.Max(1f, (float)bounds.Width - 2f * (PillInset + PillPadX));
         var texts = new List<GlassText>(_labels.Length * 2);
         for (var i = 0; i < _labels.Length; i++)
         {
             var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
             var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
-            var labelW = _labelWidths.Length == Count ? _labelWidths[i] : 0f;
+            var labelW = Math.Min(_labelWidths.Length == Count ? _labelWidths[i] : 0f, labelMax);
             var at = new Vector2(left + (PillInset + PillPadX + labelW * 0.5f) * scale, top + (rowTop[i] + rowHeight[i] * 0.5f) * scale);
             var size = Material.LabelSize * scale;
-            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer - 1, Clip: clip));
+            var maxPx = labelMax * scale;
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer - 1, Clip: clip, MaxWidth: maxPx));
             var onPill = near * (1f - m);
             if (onPill > 0.002f)
             {
                 var d = Material.LabelSelectedValue;
-                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer, Clip: clip));
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer, Clip: clip, MaxWidth: maxPx));
             }
         }
         scene.PublishText(this, texts.ToArray());
