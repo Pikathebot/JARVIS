@@ -18,7 +18,7 @@ def test_strip_thinking_tags():
 async def test_health_check_true_on_200():
     provider = LlamaCppProvider(base_url="http://127.0.0.1:8001")
     mock_resp = MagicMock(status_code=200)
-    with patch.object(provider, "_port_accepts", new_callable=AsyncMock, return_value=True),          patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+    with patch.object(provider, "_port_listening", new_callable=AsyncMock, return_value=True),          patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_resp
         result = await provider.health_check()
         assert result is True
@@ -27,9 +27,9 @@ async def test_health_check_true_on_200():
 @pytest.mark.anyio
 async def test_health_check_skips_http_when_nothing_listens():
     # A refused localhost connect takes ~2 s on Windows; a closed port must answer False from
-    # the quick socket check without an HTTP request.
+    # the listener-table check without an HTTP request.
     provider = LlamaCppProvider(base_url="http://127.0.0.1:8001")
-    with patch.object(provider, "_port_accepts", new_callable=AsyncMock, return_value=False),          patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+    with patch.object(provider, "_port_listening", new_callable=AsyncMock, return_value=False),          patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
         assert await provider.health_check() is False
         mock_get.assert_not_called()
 

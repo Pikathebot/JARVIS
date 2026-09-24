@@ -4,6 +4,8 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, patch
 from app.main import app, governor
+from types import SimpleNamespace
+from app.governor import resource_governor as rg
 from app.governor.resource_governor import (
     ResourceGovernor,
     SystemMetrics,
@@ -11,6 +13,38 @@ from app.governor.resource_governor import (
     GovernorStatus,
     GovernorEvent,
 )
+
+
+@pytest.fixture(autouse=True)
+def quiet_hardware(request):
+    """
+    Every test here sees an idle machine unless it sets its own readings (a patch inside the
+    test wins over this one). They used to read the real card and CPU: run while Jarvis itself
+    was decoding, the governor saw a busy GPU, and the tests asserting IDLE failed. Only the
+    live-telemetry test keeps the real calls.
+    """
+    if request.node.name.startswith("test_governor_telemetry_collection"):
+        yield
+        return
+    mib = 1024 * 1024
+    patches = [
+        patch.object(rg.psutil, "cpu_percent", return_value=5.0),
+        patch.object(rg.psutil, "virtual_memory",
+                     return_value=SimpleNamespace(percent=30.0, used=4800 * mib, total=16000 * mib)),
+    ]
+    if rg.HAS_NVML:
+        patches += [
+            patch.object(rg.pynvml, "nvmlDeviceGetUtilizationRates", return_value=SimpleNamespace(gpu=0, memory=0)),
+            patch.object(rg.pynvml, "nvmlDeviceGetMemoryInfo",
+                         return_value=SimpleNamespace(total=8188 * mib, used=1000 * mib, free=7188 * mib)),
+        ]
+    for p in patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in reversed(patches):
+            p.stop()
 
 
 def test_governor_telemetry_collection():
@@ -880,3 +914,81 @@ async def test_runtime_busy_probe_treats_unknown_as_idle():
     assert await _gpu_only_governor(runtime_busy_provider=unknown)._probe_runtime_busy() is False
     assert await _gpu_only_governor(runtime_busy_provider=busy)._probe_runtime_busy() is True
     assert await _gpu_only_governor(runtime_busy_provider=broken)._probe_runtime_busy() is False
+
+
+# --- a model paged out of VRAM is reloaded once the card has room again ---
+
+def _paged_metrics(**overrides) -> SystemMetrics:
+    """The 9B (5000 MiB) partly demoted: 4000 MiB used on the card, of which the desktop's
+    pre-pressure share was 2000, so 3000 MiB of the model sits in shared memory."""
+    values = dict(
+        gpu_available=True, vram_total_mb=8188.0, vram_used_mb=4000.0, vram_free_mb=4188.0,
+        model_vram_mb=5000.0, model_resident=False, external_vram_baseline_mb=2000.0,
+    )
+    values.update(overrides)
+    return SystemMetrics(**values)
+
+
+def _paged_governor() -> ResourceGovernor:
+    return ResourceGovernor(
+        enabled=True, startup_grace_seconds=0.0,
+        on_paged_model_reload=AsyncMock(return_value=True), paged_reload_reserve_mb=384.0,
+    )
+
+
+def test_paged_model_reload_waits_for_the_settle_polls_then_fires():
+    gov = _paged_governor()
+    due = [gov._paged_reload_due(_paged_metrics()) for _ in range(ResourceGovernor.PAGED_SETTLE_POLLS)]
+    assert due == [False] * (ResourceGovernor.PAGED_SETTLE_POLLS - 1) + [True]
+
+
+def test_paged_model_is_not_reloaded_while_the_card_is_still_full():
+    gov = _paged_governor()
+    full = _paged_metrics(vram_used_mb=8000.0, vram_free_mb=188.0)
+    assert not any(gov._paged_reload_due(full) for _ in range(10))
+
+
+def test_resident_model_resets_the_paged_streak():
+    gov = _paged_governor()
+    gov._paged_reload_due(_paged_metrics())
+    gov._paged_reload_due(_paged_metrics())
+    assert gov._paged_reload_due(_paged_metrics(model_resident=True)) is False
+    assert gov._paged_streak == 0
+    assert gov._paged_reload_due(_paged_metrics()) is False  # counting starts over
+
+
+def test_paged_model_reload_holds_off_while_busy_or_cooling_down():
+    import time as _time
+
+    gov = _paged_governor()
+    gov._runtime_busy = True  # llama-server decoding a request
+    assert not any(gov._paged_reload_due(_paged_metrics()) for _ in range(5))
+    gov._runtime_busy = False
+    gov._last_paged_reload = _time.time()  # just reloaded: the next demotion waits
+    assert not any(gov._paged_reload_due(_paged_metrics()) for _ in range(5))
+    gov._last_paged_reload = _time.time() - ResourceGovernor.PAGED_RELOAD_COOLDOWN_S - 1
+    assert gov._paged_reload_due(_paged_metrics()) is True
+
+
+def test_paged_model_without_a_baseline_needs_room_for_the_whole_model():
+    gov = _paged_governor()
+    no_baseline = _paged_metrics(external_vram_baseline_mb=None)  # 4188 free < 5000 + 384
+    assert not any(gov._paged_reload_due(no_baseline) for _ in range(5))
+    roomy = _paged_metrics(external_vram_baseline_mb=None, vram_used_mb=2500.0, vram_free_mb=5688.0)
+    assert gov._paged_reload_due(roomy) is True
+
+
+@pytest.mark.anyio
+async def test_paged_model_reload_runs_as_a_model_loading_activity():
+    seen = []
+    gov = _paged_governor()
+
+    async def reload() -> bool:
+        seen.append(gov.status)
+        return True
+
+    gov.on_paged_model_reload = reload
+    gov._start_paged_reload(_paged_metrics())
+    await gov._paged_reload_task
+    assert seen == [GovernorStatus.LOADING]
+    assert gov.is_busy is False

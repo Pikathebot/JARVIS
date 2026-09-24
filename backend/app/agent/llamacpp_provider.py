@@ -211,9 +211,9 @@ class LlamaCppProvider(ModelProvider):
         """Probe GET /v1/models endpoint."""
         # Nothing listening is the usual case (no model loaded yet, or evicted), and on Windows a
         # connection to a closed localhost port takes ~2 s to be refused -- which made /health,
-        # polled by the client every 2 s and awaited by its startup, take 2.2 s. A listening
-        # port accepts at once, so a short connect settles it first.
-        if not await self._port_accepts(timeout=0.25):
+        # polled by the client every 2 s and awaited by its startup, take 2.2 s. The OS's table of
+        # listening sockets answers in ~1 ms.
+        if not await self._port_listening():
             return False
         url = f"{self.base_url}/v1/models"
         try:
@@ -223,11 +223,22 @@ class LlamaCppProvider(ModelProvider):
         except Exception:
             return False
 
-    async def _port_accepts(self, timeout: float) -> bool:
+    async def _port_listening(self) -> bool:
         parts = urlsplit(self.base_url)
+        port = parts.port or 80
+        try:
+            import psutil
+
+            return any(
+                c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN
+                for c in psutil.net_connections(kind="inet")
+            )
+        except Exception:
+            pass
+        # No listener table: a short connect instead (a listening localhost port accepts at once).
         try:
             _, writer = await asyncio.wait_for(
-                asyncio.open_connection(parts.hostname or "127.0.0.1", parts.port or 80), timeout
+                asyncio.open_connection(parts.hostname or "127.0.0.1", port), 0.25
             )
         except (OSError, asyncio.TimeoutError):
             return False

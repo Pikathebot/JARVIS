@@ -1,11 +1,11 @@
 import asyncio
+import contextlib
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
-from alembic.config import Config
-from alembic import command
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -66,10 +66,57 @@ KOKORO_WARMUP_DELAY_S = 8.0
 _background_tasks: set[asyncio.Task] = set()
 
 
+_REVISION_LINE = re.compile(r"""^(down_revision|revision)\b[^=\n]*=\s*["']([^"']+)["']""", re.MULTILINE)
+
+
+def _database_at_head(backend_dir: Path) -> bool:
+    """
+    True only when the SQLite database's stamped revision is the single head of the migration
+    chain. Checked without Alembic: importing it (and the SQL dialects it pulls in) cost ~0.9 s
+    of every backend start, to learn on almost every start that there was nothing to do.
+    Anything unexpected -- not SQLite, no version table, a branch, an unparsable file -- answers
+    False, and the full Alembic upgrade runs as before.
+    """
+    url = settings.database_url_resolved
+    if not url.startswith("sqlite:///"):
+        return False
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for script in (backend_dir / "alembic" / "versions").glob("*.py"):
+        found = dict(
+            (key, value) for key, value in _REVISION_LINE.findall(script.read_text(encoding="utf-8"))
+        )
+        if "revision" not in found:
+            return False
+        revisions.add(found["revision"])
+        if "down_revision" in found:
+            parents.add(found["down_revision"])
+    heads = revisions - parents
+    if len(heads) != 1:
+        return False
+    path = Path(url[len("sqlite:///"):])
+    if not path.exists():
+        return False
+    import sqlite3
+
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)) as db:
+            stamped = [row[0] for row in db.execute("SELECT version_num FROM alembic_version")]
+    except sqlite3.Error:
+        return False
+    return stamped == list(heads)
+
+
 def run_db_migrations() -> None:
     """Run pending Alembic database migrations synchronously in a worker thread."""
     try:
         backend_dir = Path(__file__).resolve().parent.parent
+        if _database_at_head(backend_dir):
+            logger.info("Database schema is current; no migrations to run.")
+            return
+        from alembic import command
+        from alembic.config import Config
+
         alembic_ini_path = backend_dir / "alembic.ini"
         if alembic_ini_path.exists():
             alembic_cfg = Config(str(alembic_ini_path))
@@ -101,6 +148,18 @@ async def auto_unload_models() -> bool:
 
 
 
+async def reload_paged_model() -> bool:
+    """Restart llama-server with the model it was serving, so a model WDDM demoted to shared
+    memory loads back into VRAM (the governor calls this once the card has room again). The
+    launch ladder still sizes the relaunch to the room there is, and announces a downgrade."""
+    pm = get_runtime_process_manager()
+    kind = pm.current_model_kind
+    if not kind:
+        return False
+    await pm.stop()
+    return await pm.ensure_running(kind)
+
+
 governor = ResourceGovernor(
     enabled=settings.governor_enabled,
     poll_interval=settings.governor_poll_interval,
@@ -118,6 +177,8 @@ governor = ResourceGovernor(
     external_vram_baseline_provider=lambda: get_runtime_process_manager().external_vram_baseline_mb,
     external_vram_growth_mb=settings.governor_external_vram_growth_mb,
     runtime_busy_provider=lambda: get_runtime_process_manager().is_processing(),
+    on_paged_model_reload=reload_paged_model,
+    paged_reload_reserve_mb=settings.llama_launch_vram_reserve_mb,
 )
 # The launch ladder asks the governor how much of the card is free before each rung.
 get_runtime_process_manager().vram_headroom_provider = (
@@ -310,11 +371,18 @@ async def lifespan(app: FastAPI):
         await process_watcher.start(governor)
 
     
-    # Connect MCP servers
-    try:
-        await mcp_manager.connect_all()
-    except Exception as e:
-        logger.warning("Error connecting MCP servers: %s", e)
+    # Connect MCP servers in the background: spawning and initialising the built-in server took
+    # ~0.26 s, all of it before the backend answered, and the client's window waits on that.
+    # Its tools join the registry a moment later -- long before any chat turn can arrive.
+    async def _connect_mcp() -> None:
+        try:
+            await mcp_manager.connect_all()
+        except Exception as e:
+            logger.warning("Error connecting MCP servers: %s", e)
+
+    mcp_connect = asyncio.create_task(_connect_mcp())
+    _background_tasks.add(mcp_connect)
+    mcp_connect.add_done_callback(_background_tasks.discard)
 
     # Start wake word listener
     wake_detector.start_listening()
@@ -377,7 +445,11 @@ async def lifespan(app: FastAPI):
         await process_watcher.stop()
         await governor.stop()
     
-    # Disconnect MCP servers
+    # Disconnect MCP servers (after a connect still in flight has been stopped)
+    if not mcp_connect.done():
+        mcp_connect.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await mcp_connect
     try:
         await mcp_manager.disconnect_all()
     except Exception as e:
@@ -547,7 +619,7 @@ async def health_check():
 
     throttled, _ = await governor.is_throttled()
     openrouter_client = get_openrouter_client()
-    sessions = await asyncio.to_thread(memory_store.list_sessions)
+    sessions_count = await asyncio.to_thread(memory_store.count_sessions)
     mcp_servers = mcp_manager.list_servers()
     skills = skills_loader.list_skills()
 
@@ -560,7 +632,7 @@ async def health_check():
         available_models=available_models,
         governor_throttled=throttled,
         openrouter_configured=openrouter_client.is_configured and settings.openrouter_enabled,
-        active_sessions_count=len(sessions),
+        active_sessions_count=sessions_count,
         active_mcp_servers_count=len([s for s in mcp_servers if s["connected"]]),
         available_skills_count=len(skills),
         voice_enabled=wake_detector.is_listening

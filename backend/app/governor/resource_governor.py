@@ -154,8 +154,18 @@ class ResourceGovernor:
         external_vram_baseline_provider: Optional[Callable[[], Optional[float]]] = None,
         external_vram_growth_mb: float = 1024.0,
         runtime_busy_provider: Optional[Callable[[], Awaitable[Optional[bool]]]] = None,
+        on_paged_model_reload: Optional[Callable[[], Awaitable[bool]]] = None,
+        paged_reload_reserve_mb: float = 384.0,
     ):
         self.enabled = enabled
+        # A model WDDM demoted to shared memory (another process wanted the card) stays there
+        # once the pressure is gone, and every token then crawls over PCIe. When the card has
+        # room for it again, this restarts the runtime with the same model so it loads resident.
+        self.on_paged_model_reload = on_paged_model_reload
+        self.paged_reload_reserve_mb = paged_reload_reserve_mb
+        self._paged_streak = 0
+        self._last_paged_reload = 0.0
+        self._paged_reload_task: Optional[asyncio.Task] = None
         # Whether our own llama-server is decoding right now (RuntimeProcessManager.is_processing,
         # from GET /slots). Only requests that come through the orchestrator register an activity;
         # one sent straight to the server's port -- a curl replay, a script, another client --
@@ -945,6 +955,9 @@ class ResourceGovernor:
 
                 self._check_status_transition(metrics)
 
+                if self._paged_reload_due(metrics):
+                    self._start_paged_reload(metrics)
+
                 # 4. Auto-unload logic: count consecutive DEBOUNCED throttled polls while idle
                 if self.is_busy or self.in_startup_grace or self._is_resume_override_active:
                     self._throttle_streak = 0
@@ -990,6 +1003,63 @@ class ResourceGovernor:
                 logger.error("Unexpected error in governor poll loop: %s", e)
 
             await asyncio.sleep(self.poll_interval)
+
+    # Polls the model must stay paged out before a reload is considered (a brief dip in the
+    # reading is not a demotion), and the least time between two reloads: if the card fills
+    # again at once, the second demotion waits instead of looping.
+    PAGED_SETTLE_POLLS = 3
+    PAGED_RELOAD_COOLDOWN_S = 60.0
+
+    def _paged_reload_due(self, metrics: SystemMetrics) -> bool:
+        """
+        True when our model has sat partly in shared memory for a few polls and the card now
+        has room for the part that is missing: whatever pushed it out has let go. The part still
+        on the card is estimated against the desktop's share from before the pressure (the live
+        external share is unknowable while the model is paged); with no such baseline, room for
+        the whole model is required.
+        """
+        if not metrics.gpu_available or metrics.model_vram_mb <= 0 or metrics.model_resident:
+            self._paged_streak = 0
+            return False
+        self._paged_streak += 1
+        if self.on_paged_model_reload is None or self._paged_streak < self.PAGED_SETTLE_POLLS:
+            return False
+        if (
+            self.is_busy
+            or self._runtime_busy
+            or self.in_startup_grace
+            or self._manual_paused
+            or self._debounced_throttled
+            or (self._paged_reload_task is not None and not self._paged_reload_task.done())
+            or time.time() - self._last_paged_reload < self.PAGED_RELOAD_COOLDOWN_S
+        ):
+            return False
+        baseline = metrics.external_vram_baseline_mb
+        if baseline is not None:
+            on_card = max(0.0, metrics.vram_used_mb - baseline)
+            missing = max(0.0, metrics.model_vram_mb - on_card)
+        else:
+            missing = metrics.model_vram_mb
+        return metrics.vram_free_mb >= missing + self.paged_reload_reserve_mb
+
+    def _start_paged_reload(self, metrics: SystemMetrics) -> None:
+        self._last_paged_reload = time.time()
+        self._paged_streak = 0
+        logger.warning(
+            "Model paged out of VRAM (%.0f MiB used on a card with %.0f MiB free; model %.0f MiB): "
+            "the pressure has passed, reloading it resident.",
+            metrics.vram_used_mb, metrics.vram_free_mb, metrics.model_vram_mb,
+        )
+
+        async def _run() -> None:
+            try:
+                async with self.activity(ActivityType.MODEL_LOADING, label="paged-out reload"):
+                    ok = await self.on_paged_model_reload()
+                logger.info("Paged-out model reload %s.", "succeeded" if ok else "failed")
+            except Exception as exc:
+                logger.warning("Paged-out model reload failed: %s", exc)
+
+        self._paged_reload_task = asyncio.create_task(_run())
 
     async def start(self) -> None:
         if self._running:

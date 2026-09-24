@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from typing import Any, Callable, Optional
-from sqlmodel import Session, select, col, or_
+from sqlmodel import Session, select, col, func, or_
 
 from app.database.models import (
     Project,
@@ -148,6 +148,16 @@ class MemoryStore:
             except Exception:
                 session.rollback()
                 raise
+
+    def count_sessions(self) -> int:
+        """Workspace sessions (Freeform ones left out, as in :meth:`list_sessions` without a
+        mode), counted in SQL: /health reports this on every client poll, and listing them for
+        it loaded every row plus each one's first message."""
+        with self._get_session() as session:
+            statement = select(func.count()).select_from(DBSession).where(
+                or_(col(DBSession.chat_mode).is_(None), DBSession.chat_mode != FREEFORM_CHAT_MODE)
+            )
+            return int(session.exec(statement).one())
 
     def list_sessions(
         self,

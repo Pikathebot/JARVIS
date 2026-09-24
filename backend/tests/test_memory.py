@@ -247,6 +247,17 @@ def test_list_sessions_default_workspace_includes_unscoped(temp_store):
     assert {s["session_id"] for s in temp_store.list_sessions(project_id="proj-x")} == {"in_other"}
 
 
+def test_count_sessions_matches_the_workspace_list(temp_store):
+    # /health reports this on every poll; it must count what list_sessions() would list
+    # (Freeform sessions left out) without loading the rows.
+    temp_store.get_or_create_session("count_a", project_id=None)
+    temp_store.get_or_create_session("count_b", project_id="proj-x")
+    temp_store.get_or_create_session("count_free", chat_mode="FREEFORM")
+
+    assert temp_store.count_sessions() == len(temp_store.list_sessions())
+    assert "count_free" not in {s["session_id"] for s in temp_store.list_sessions()}
+
+
 @pytest.mark.asyncio
 async def test_sessions_endpoint_defaults_to_fifty():
     for i in range(55):
