@@ -84,69 +84,16 @@ workspace creation and image attachments; git tools for the workspace repository
 
 In priority order. Each item says what "done" means and what still needs the user.
 
-### 4.0 Next session: tabbed navigation, spring transitions, startup sequence (queued 2026-09-23)
+### 4.0 Startup: what's left is the backend
 
-The user's brief, for `desktop-winui/Jarvis.App`:
-1. **Tabbed navigation:** `MainWindow` hosts distinct sections (Freeform, Workspaces,
-   Settings/sheets) with fluid switching -- builds on the Freeform/Workspace spaces landed the
-   same day (`ChatViewModel.SwitchSpaceAsync`, the sidebar `SpaceSwitch`).
-2. **Startup sequence:** a smooth window entrance that covers the BackendHost/uvicorn boot and
-   resolves into the saved space once the backend is up and state is loaded
-   (`GovernorViewModel.BackendCameOnline` is the existing "backend ready" signal; projects and
-   sessions load from it).
-3. **Apple-style spatial transitions:** tab shifts driven by springs (mass/stiffness/damping),
-   not linear or cubic-bezier curves. The damped springs in `GlassButton`/`GlassToggle`
-   (fitted to the iPad recording, 1/240 s substeps) are the house pattern to reuse.
-
-Constraints from the brief: glass layers only via `GlassLayers` constants; no glass in
-popups/flyouts; XAML always paints above the swapchain. Not allowed: circular spinners, abrupt
-cubic-bezier ease-ins, unthrottled Gaussian blur spikes, layout-shifting animations (animate
-transforms and opacity only). Frames must hold 60 fps with no GPU spikes in Jarvis.Glass --
-remember every glass shape that moves republishes to `GlassScene` and re-renders its layer (and
-everything above it) each frame, and frost is the expensive pass, so animate as few glass
-shapes as possible and measure with the per-process 3D counter (`Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'`, filtered by pid).
-
-Done means: tabs switch with smooth spatial transitions, no z-fighting or clipping against the
-swapchain; startup resolves cleanly to the initial tab when the backend is ready;
-`dotnet build Jarvis.slnx` 0 errors. Needs the user: the physical feel and frame pacing can only
-be judged on the device (the glass can't be screenshotted) -- ask them to run it.
-
-**Built 2026-09-24.** Seen on device the same day: the space transitions ("good"), Settings
-opening/closing, the workspace dropdown. Not yet commented on: the startup sequence itself, and
-GPU during transitions. In one earlier run the dropdown's rows (and Settings) didn't draw while
-still taking clicks; that run coincided with a machine-wide, intermittent block on new TCP
-connections (curl, PowerShell and Python all got WSAEACCES, cleared by a restart) and did not
-recur. `MainWindow.LogDropdownGlassAsync` logs the scene per layer to `jarvis-app.log` on each
-dropdown open -- remove it once the dropdown has stayed good for a while. Build 0/0; the three
-changed shaders compile under fxc ps_5_0. What was built:
-- *Glass can now move and fade with XAML.* `GlassMotion` (Jarvis.Glass): an attached glass
-  opacity that `GlassScene` folds into every shape's new fade (`Params3.w`: coverage, rim and
-  shadow scale by it in the shaders) and every text run's alpha; scoped republish of the controls
-  inside a moved element (ancestors captured once at Loaded, so the always-on publish path pays
-  nothing while nothing is faded); an animation tick the host runs *before* rendering, so glass
-  and XAML move in the same frame. `GlassTransition`: translate + opacity on damped springs
-  stated as (response, damping ratio), same 1/240 s substeps as the controls.
-- *Startup* (redone 2026-09-24 as materialise + staged assemble, seen working on device): the
-  card arrives as clear glass and its frost and tint condense on (`GlassMotion.Material`, a
-  second animatable glass value); a line fills on real steps (backend, workspaces, sessions);
-  then the card swells and evaporates while sidebar, header, chat and composer rise in as clear
-  glass 60 ms apart and frost a beat later. Whole-machine 3D GPU peaked at 12.8% in the hand-off
-  (baseline ~7%). `jarvis-app.log` logs "startup: <milestone> at N ms" from process start.
-- *Tabs* = the two spaces on the sidebar switch (Settings stays a sheet -- the brief's
-  "Settings/sheets"). A switch slides the message list's and session list's item panels 36 DIPs
-  toward the space being left and fades them out (0.22 s, critically damped), swaps transcript
-  and sessions while hidden (capped 600 ms), then slides the new ones in from the other side
-  (0.42 s, damping 0.86). The panels stay put and clip the moving bubbles, so only layer-2 rows
-  re-render. A switch overtaken mid-flight bows out to the newer one.
-- *Sheets* (Settings, New workspace) fade up while the sheet rises 28 DIPs; the window's text
-  dims to 8% on a spring (XAML only, as before), replacing the 160 ms cubic fade.
-- Both lists' default `ItemContainerTransitions` are removed: they animated each bubble's XAML
-  on the compositor while its glass stayed still. New messages now appear without that slide.
-
-To check on device: startup cold and warm; Freeform <-> Workspace repeatedly and rapidly;
-Settings open/close; GPU per process during each (`Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'`
-filtered by pid) -- the startup reveal moves frosted panels, so it re-blurs layer 1 each frame
-for ~0.6 s; if that spikes, cache the frost per layer (it depends only on the layer below).
+§4.0 (spaces, spring transitions, the materialising startup, startup CPU and time) is done --
+see `docs/MILESTONES.md`. After the shader cache (2026-09-24) the window shows 2.5 s after
+launch, but the reveal is still ~5.5 s: it waits for the backend, which is now the whole
+critical path (uvicorn spawned at 0.8 s, answering at ~5.5 s -- Python start, ~3.2 s of imports,
+then module-level setup). Next levers, unmeasured: what of the ~1.5 s beyond imports is
+module-level init in `app/main.py` (governor, voice objects, MCP); alembic's own ~0.4 s.
+Window side, measured and left: .NET/App SDK boot 0.53 s, main XAML 0.33 s, view models 0.38 s,
+HUD window ~0.3 s, tray and show ~0.3 s.
 
 ### 4.1 Liquid Glass fidelity (in progress)
 
@@ -198,25 +145,6 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 
 ### 4.4 Robustness backlog
 
-- **Done 2026-09-24: startup CPU burst.** The user saw ~80% CPU at launch. Measured (per-process
-  counters, 1 s): a ~3 s burst from the Kokoro TTS warm-up (ONNX Runtime on all 28 threads,
-  62-87% of the machine), plus ~50 s of `dotnet build` when the launcher rebuilds after code
-  changes. The warm-up now starts 8 s after the backend is ready (`KOKORO_WARMUP_DELAY_S`), past
-  the client's window assembly; confirmed live: reveal 10:31:52.5, Kokoro load 10:31:57.7.
-  Capping its threads was measured and rejected (load no shorter; replies RTF 0.55 -> 0.57-0.83).
-
-- **Done 2026-09-24: startup time.** Window open 15.4 s after launch -> 5.45 s (two runs).
-  Three waits, all measured: (1) on Windows a connect to a closed localhost port takes ~2 s to be
-  refused, and `/health` probed llama-server's port on every call, so with no model loaded it took
-  2.2 s -- now a 250 ms socket check first (`LlamaCppProvider._port_accepts`); (2) `BackendHost`
-  probed `/health` before launching uvicorn (2 s refused) and then only noticed it ready in ~2 s
-  steps -- it now reads the TCP listener table, launches uvicorn before the windows are built, and
-  pokes the governor poll the moment it answers; (3) `app.rag`'s `__init__` imported every
-  submodule, so the memory manager's import of embeddings loaded `qdrant_client` (1.9 s) --
-  now lazy (PEP 562); backend imports 5.2 s -> 3.2 s. Left: building the windows takes ~3.2 s
-  (launch 0.8 s -> window shown 4.0 s), now as long as the backend; alembic's ~0.4 s of its own
-  imports (would need skipping the migration check). Unverified on device beyond the logs.
-
 - **Paged-out model.** When another app claims VRAM, WDDM demotes our model to shared memory
   (`model_resident=False`) and inference crawls. The governor only avoids corrupting its baseline
   in that state; it should reload once the pressure passes.
@@ -238,14 +166,12 @@ ephemeral mode (ba778ab, 2026-09-23: backend tested and checked live against the
 ephemeral turns left every row count unchanged, a Freeform turn declined a file request -- but
 the sidebar switch, the header Ephemeral toggle, the per-space session lists and the saved
 space are unseen on screen). Profile memories now ride on every turn, not only ephemeral ones.
-The HUD keeps its own fixed session outside both spaces -- left for a dedicated HUD session. Older reports whose status is unknown:
-an intermittent white slab the HUD card's size at launch (2026-09-20), and the narrow-mode right
-panel covering its own close button. Lead on the white slab (2026-09-24): the first snapshot
-showed exactly that slab at the hidden HUD's rect (76,76 460x108) once its capture exclusion was
-cleared -- DWM keeps a blank surface for the hidden HUD. If the launch report recurs, suspect
-the HUD's show/affinity order at startup.
-
-**New, from the first snapshot (2026-09-24):** at the default 1280x800 window the header
-overflows -- the Panel button is cut off at the right edge. `ApplyResponsiveLayout` sheds
-captions below 700 px of *window* width, but the header's own available width (window minus
-sidebar) is what runs out.
+The HUD keeps its own fixed session outside both spaces -- left for a dedicated HUD session.
+Older reports whose status is unknown: the narrow-mode right panel covering its own close button,
+and an intermittent white slab the HUD card's size at launch (2026-09-20). The slab was
+reproduced once, in the first snapshot: clearing capture exclusion on the *hidden* HUD makes DWM
+hand capture a blank slab at its rect (76,76 460x108) -- snapshot mode now lifts it on visible
+windows only. No path in the code shows the HUD at launch (hidden in its constructor, shown only
+by the toggle), so the on-screen report is unexplained; ask the user if it recurs.
+Header fit at 1280x800 (2026-09-24): logged 753 px needed of 637, captions shed, fits in 586 --
+unseen on screen.

@@ -89,11 +89,6 @@ public static class GlassMotion
         return (float)Math.Clamp(product, 0, 1);
     }
 
-    /// <summary>Diagnostics: the faded elements, by name or type, with their glass opacity.</summary>
-    public static string DescribeFaded() =>
-        Faded.Count == 0 ? "none" : string.Join(", ", Faded.Select(kv =>
-            $"{(kv.Key is FrameworkElement { Name.Length: > 0 } fe ? fe.Name : kv.Key.GetType().Name)}={kv.Value:F2}"));
-
     private sealed record Tracked(Action Republish, HashSet<DependencyObject> Ancestors);
 
     private static readonly Dictionary<UIElement, Tracked> TrackedByElement = new();

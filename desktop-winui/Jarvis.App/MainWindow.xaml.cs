@@ -342,16 +342,58 @@ public sealed partial class MainWindow : Window
             RightPanel.Layer = 3;
         }
 
-        // Header: shed the least important things first.
-        var showCaptions = width >= 700;
-        GovernorLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
-        MicLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
-        EphemeralLabel.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
-        VoiceStateText.Visibility = showCaptions ? Visibility.Visible : Visibility.Collapsed;
-        var showExtras = width >= 560;
-        HudButton.Visibility = showExtras ? Visibility.Visible : Visibility.Collapsed;
-        SessionLabel.Visibility = showExtras ? Visibility.Visible : Visibility.Collapsed;
-        PanelButton.MinWidth = showExtras ? 80 : 56;
+        FitHeader();
+    }
+
+    /// <summary>Room the session title keeps before the header starts shedding things.</summary>
+    private const double HeaderTitleMinWidth = 120;
+
+    /// <summary>
+    /// Sheds the header's least important things until the rest fits: first the toggles'
+    /// captions, then the HUD button and the session title. Decided by what the header's
+    /// contents measure against its own width -- the window's width (what this used to go by)
+    /// doesn't say how much the sidebar and panel leave it, and at the default 1280x800 the
+    /// Panel button was cut off.
+    /// </summary>
+    private void FitHeader()
+    {
+        var available = HeaderGrid.ActualWidth - HeaderGrid.Padding.Left - HeaderGrid.Padding.Right;
+        if (available <= 0) return; // not laid out yet; SizeChanged calls again
+
+        for (var level = 0; level <= 2; level++)
+        {
+            SetHeaderLevel(level);
+            if (level == 2 || HeaderNeeds() <= available) return;
+        }
+    }
+
+    private void SetHeaderLevel(int level)
+    {
+        var captions = level < 1 ? Visibility.Visible : Visibility.Collapsed;
+        GovernorLabel.Visibility = captions;
+        MicLabel.Visibility = captions;
+        EphemeralLabel.Visibility = captions;
+        VoiceStateText.Visibility = captions;
+        var extras = level < 2 ? Visibility.Visible : Visibility.Collapsed;
+        HudButton.Visibility = extras;
+        SessionLabel.Visibility = extras;
+        PanelButton.MinWidth = level < 2 ? 80 : 56;
+    }
+
+    /// <summary>The header's natural width, with the session title (which trims) counted at
+    /// most <see cref="HeaderTitleMinWidth"/>.</summary>
+    private double HeaderNeeds()
+    {
+        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        double needed = 0;
+        foreach (var child in HeaderGrid.Children)
+        {
+            if (child is not FrameworkElement element || element.Visibility != Visibility.Visible) continue;
+            element.Measure(infinite);
+            var w = element.DesiredSize.Width; // includes the element's margin
+            needed += element == SessionLabel ? Math.Min(w, HeaderTitleMinWidth) : w;
+        }
+        return needed;
     }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
@@ -631,19 +673,6 @@ public sealed partial class MainWindow : Window
         WorkspaceDropdown.MinWidth = WorkspaceButton.ActualWidth;
         SetWorkspaceDropdownOpen(true);
         UpdateWorkspaceHighlight();
-        _ = LogDropdownGlassAsync();
-    }
-
-    /// <summary>Diagnostic (2026-09-24): the dropdown's rows stopped drawing, though they still
-    /// take clicks. Logs what the scene holds once the card has had a few frames to publish.</summary>
-    private async Task LogDropdownGlassAsync()
-    {
-        await Task.Delay(400);
-        var b = WorkspaceDropdown.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, WorkspaceDropdown.ActualWidth, WorkspaceDropdown.ActualHeight));
-        App.Log($"dropdown: visible={WorkspaceDropdown.Visibility} bounds={b} layer={WorkspaceDropdown.Layer} " +
-                $"opacity card={Jarvis_Glass.GlassMotion.OpacityFor(WorkspaceDropdown):F2} menu={Jarvis_Glass.GlassMotion.OpacityFor(WorkspaceMenu):F2} " +
-                $"menuItems='{WorkspaceMenu.Items}' menuSize={WorkspaceMenu.ActualWidth:F0}x{WorkspaceMenu.ActualHeight:F0} " +
-                $"faded: {Jarvis_Glass.GlassMotion.DescribeFaded()} | scene: {Glass.Scene.Describe()}");
     }
 
     /// <summary>Every slab's glass renders under all XAML, so the session rows' plain

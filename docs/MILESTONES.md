@@ -205,3 +205,55 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   callback and the render tick shared the immediate context unguarded). Measured 40% -> 0.6%
   idle, ~1.5% with a window streaming behind; the user confirmed the glass still follows the
   desktop and is current after restore. `Jarvis.GlassLab`'s capture copy is unchanged.
+
+- [x] **Spaces as tabs, spring transitions, a startup that materialises (2026-09-24)** — The
+  brief: fluid switching between Freeform and Workspace, an entrance that covers the backend's
+  boot, Apple-style springs; only transforms, opacity and glass layers from `GlassLayers`, no
+  spinners or bezier ease-ins, 60 fps with no GPU spikes. Seen working on device by the user.
+  - *Glass that moves, fades and materialises.* The glass is drawn under all XAML from shapes the
+    controls publish, so animating an element's XAML used to leave its glass behind.
+    `GlassMotion` (Jarvis.Glass) adds attached `Opacity` and `Material` values that `GlassScene`
+    folds into every shape (a fade in `Params3.w` that the shaders scale coverage, rim and
+    shadow by; material scales frost, tint and shadow: 0 = a clear lens, 1 = full glass) and
+    into text alpha. Moving an element republishes only the controls inside it (ancestor sets
+    captured at Loaded, so the always-on publish path pays nothing while nothing moves), and the
+    host runs animation ticks before it renders, so glass and XAML move in the same frame.
+    `GlassTransition`: translate, scale, opacity and material on springs stated as (response,
+    damping ratio), 1/240 s substeps like the controls.
+  - *Tabs* are the two spaces. A switch slides only the item panels (bubbles, session rows)
+    36 DIPs toward the space being left, swaps content while hidden, slides the new ones in; the
+    panels stay put and clip them, so only layer-2 rows re-render. Sheets rise 28 DIPs while the
+    window's text dims on a spring. The lists' default `ItemContainerTransitions` are gone (they
+    slid bubble XAML on the compositor while its glass stayed still).
+  - *Startup*: the first version (a frosted card that lifted away) was "kinda normal", so it is
+    now materialise + staged assemble: the card arrives as clear glass and condenses; a line
+    fills on real steps (backend, workspaces, sessions); then the card swells and evaporates
+    while sidebar, header, chat and composer rise in as clear glass 60 ms apart and frost a beat
+    later. Whole-machine 3D GPU peaked at 12.8% in the hand-off (baseline ~7%).
+  - *Startup CPU*: the user saw ~80% at launch -- a ~3 s Kokoro TTS warm-up (ONNX Runtime on all
+    28 threads) landing on the window assembly. It now starts 8 s after the backend is ready
+    (`KOKORO_WARMUP_DELAY_S`). Capping its threads was measured and rejected: the load took as
+    long and replies synthesised 5-50% slower (RTF 0.55 -> 0.57-0.83).
+  - *Startup time*: window open 15.4 s after launch -> 5.45 s. On Windows a connect to a closed
+    localhost port takes ~2 s to be refused; `/health` probed llama-server's port on every call
+    (2.2 s whenever no model was loaded) and `BackendHost` probed `/health` before launching
+    uvicorn and then saw it ready only in 2 s steps. Now `/health` tries a 250 ms socket connect
+    first, `BackendHost` launches uvicorn before building the windows and watches the TCP
+    listener table, and the window polls the governor the moment the backend answers. `app.rag`
+    resolves its names lazily, so `qdrant_client` (1.9 s) no longer loads at startup. uvicorn is
+    restarted if it dies during startup (the machine intermittently refuses new sockets with
+    WSAEACCES for a few seconds -- a launch in that window came up with no backend).
+  - *Shader cache*: each `GlassHost` compiled its HLSL from source at launch (0.67 s for the
+    main window, 0.88 s again for the HUD's -- ~1.55 s of the ~4 s before the window showed).
+    `ShaderPipeline` now keeps bytecode keyed by a hash of source + entry + profile, in memory
+    and in `%LOCALAPPDATA%\Jarvis\ShaderCache` (virtualised into the package's own folder, so it
+    is only visible to the app). Window shown 4.0 s -> 2.5 s after launch; the first launch after
+    a shader edit compiles once. The reveal stays ~5.5 s: it waits on the backend.
+  - *Snapshot mode* (`scripts\snapshot-window.ps1`): scripted screenshots with the glass in them
+    without turning capture exclusion off (a capturable window's glass captures itself and
+    renders every frame). The app freezes the glass and springs, lifts exclusion on visible
+    windows only -- and on the main window only while it is foreground -- and restores it.
+  - Also: long workspace names trim to an ellipsis in the button and dropdown (`GlassText.MaxWidth`);
+    the header sheds the toggles' captions (tooltips name them then), then the HUD button and
+    title, by measuring its contents against its own width -- at the default 1280x800 it needed
+    753 px of 637 and the Panel button was cut off.

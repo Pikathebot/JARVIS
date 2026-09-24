@@ -165,7 +165,7 @@
 
                 <!-- Header: session label, mode toggle, governor pill -->
                 <glass:GlassSlab x:Name="HeaderSlab" Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="14">
-                        <Grid Padding="16,10">
+                        <Grid x:Name="HeaderGrid" Padding="16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -187,14 +187,16 @@
                             </Button>
                             <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-                                <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). -->
+                                <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). The
+                                     captions are the first thing a narrow header sheds (FitHeader);
+                                     the tooltips name the switches then. -->
                                 <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
                                 <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
-                                <glass:GlassToggle x:Name="EphemeralToggle" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
+                                <glass:GlassToggle x:Name="EphemeralToggle" ToolTipService.ToolTip="Ephemeral: nothing from this chat is stored" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
                                 <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="GovernorToggle" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
+                                <glass:GlassToggle x:Name="GovernorToggle" ToolTipService.ToolTip="Governor" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
                                 <TextBlock x:Name="MicLabel" Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="MicToggle" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
+                                <glass:GlassToggle x:Name="MicToggle" ToolTipService.ToolTip="Microphone" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
                                 <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
                                 <glass:GlassButton x:Name="PanelButton" Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>

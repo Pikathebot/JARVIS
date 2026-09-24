@@ -105,20 +105,6 @@ public sealed class GlassScene
         }
     }
 
-    /// <summary>One line for the glass log: shapes and texts per layer, and any faded shapes.</summary>
-    public string Describe()
-    {
-        lock (_gate)
-        {
-            var shapes = _shapes.Values.SelectMany(s => s).ToList();
-            var byLayer = string.Join(" ", shapes.GroupBy(s => (int)s.Params2.Y).OrderBy(g => g.Key)
-                .Select(g => $"L{g.Key}:{g.Count()}" + (g.Any(s => s.Params3.W > 0f) ? $"(faded {g.Count(s => s.Params3.W > 0f)})" : "")));
-            var texts = string.Join(" ", _texts.Values.SelectMany(t => t).GroupBy(t => t.Layer).OrderBy(g => g.Key)
-                .Select(g => $"L{g.Key}:{g.Count()}"));
-            return $"{shapes.Count} shapes [{byLayer}], texts [{texts}], empty owners {_shapes.Values.Count(s => s.Length == 0)}";
-        }
-    }
-
     /// <summary>The publishing control's <see cref="GlassMotion.OpacityFor"/>, or 1 when the owner
     /// is not an element or the call is off its UI thread (the tree can't be walked there).</summary>
     private static float OwnerOpacity(object owner) =>
