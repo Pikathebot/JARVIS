@@ -149,10 +149,15 @@ public static class GlassMotion
     /// <summary>Advances every animator once for this frame. Called by each host before it
     /// renders and by the fallback hook; the frame's RenderingTime makes repeat calls (two
     /// hosted windows, then the fallback) no-ops.</summary>
+    /// <summary>Holds every animation where it is (XAML and glass stay in step, since both only
+    /// move here). For snapshots taken mid-transition; see GlassHost.Frozen.</summary>
+    public static bool Paused { get; set; }
+
     internal static void Step(object renderingArgs)
     {
         if (renderingArgs is not RenderingEventArgs args || args.RenderingTime == _lastFrame) return;
         _lastFrame = args.RenderingTime;
+        if (Paused) return; // on resume the first step's dt is clamped (GlassTransition), so nothing jumps
         if (Animators.Count == 0)
         {
             CompositionTarget.Rendering -= OnRendering;

@@ -180,8 +180,18 @@ Glass rules learned the hard way:
   `Window` root -- do it in code-behind.
 - Material constants are measured, not guessed: the reference is the user's iPad recording (see
   memory `liquid_glass_reference`); measure frames numerically, never trust a video model.
-- **You cannot screenshot the glass.** The window is excluded from capture (turning that off makes
-  the renderer capture itself and pin the GPU); `PrintWindow` returns black. Ask the user to look.
+- **Screenshots: `scripts\snapshot-window.ps1`** (-OutDir, -Window main|hud|all, -DelayMs), then
+  Read the PNG. The windows stay excluded from capture (`WDA_EXCLUDEFROMCAPTURE`); never just turn
+  that off -- a capturable window's glass captures its own output, renders every frame (~70% GPU)
+  and the governor evicts the model, and the shot shows glass refracting itself. The script asks
+  the app's `SnapshotService` (polls for `snapshot.request` beside the exe) to freeze the glass
+  and hold every spring (`GlassHost.Frozen`, `GlassMotion.Paused`), lift exclusion on the
+  *visible* windows only (a hidden HUD made capturable showed up as a white slab), and report
+  their rects; it copies the pixels and the app re-excludes and resumes (~0.5 s; self-releases
+  after 10 s). The main window is only captured while it is the foreground window (a covered
+  window would yield whoever covers it). Needs a running build that has SnapshotService
+  (2026-09-24+). The glass shows the user's desktop blurred behind it -- keep shots in the
+  scratchpad. Still ask the user about motion and feel; a still can't show those.
 
 ## Working with the user
 

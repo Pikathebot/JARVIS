@@ -285,9 +285,15 @@ public sealed class GlassHost : IDisposable
         _capture.WatchRect = _crop;
     }
 
+    /// <summary>Every host keeps its last presented frame and renders nothing. For snapshots:
+    /// capture exclusion can only be lifted (so a screen copy sees the window) while nothing
+    /// renders -- a rendering host would capture its own output and feed it back through the
+    /// glass (see WindowCaptureExclusion). Set by the app's SnapshotService.</summary>
+    public static bool Frozen { get; set; }
+
     private void RenderTick()
     {
-        if (_disposed || _rendering) return;
+        if (_disposed || _rendering || Frozen) return;
         // AppWindow.Changed does not reliably report a minimize, and a minimized window kept
         // rendering every capture frame. Two cheap calls per tick settle it either way.
         var shown = PInvoke.IsWindowVisible(_windowHwnd) && !PInvoke.IsIconic(_windowHwnd);

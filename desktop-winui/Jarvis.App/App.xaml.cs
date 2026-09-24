@@ -24,6 +24,7 @@ public partial class App : Application
     private JarvisApiClient _api = null!;
     private BackendHost _backendHost = null!;
     private TrayService? _tray;
+    private SnapshotService? _snapshots;
     private MainWindow _mainWindow = null!;
     private HudWindow _hudWindow = null!;
 
@@ -75,6 +76,12 @@ public partial class App : Application
             WindowCaptureExclusion.Register(_mainWindow);
             WindowCaptureExclusion.Register(_hudWindow);
             Window = _mainWindow;
+            // Dev screenshots with the glass in them (scripts/snapshot-window.ps1).
+            _snapshots = new SnapshotService(DispatcherQueue, new[]
+            {
+                ("main", WinRT.Interop.WindowNative.GetWindowHandle(_mainWindow)),
+                ("hud", WinRT.Interop.WindowNative.GetWindowHandle(_hudWindow)),
+            });
 
             SetupTray();
             // X hides to the tray only while there is a tray icon to come back through; without
@@ -152,6 +159,7 @@ public partial class App : Application
         if (_exiting) return;
         _exiting = true;
         _mainWindow.HideOnClose = false;
+        _snapshots?.Dispose();
         _tray?.Dispose();
         _backendHost.Dispose();
         Microsoft.UI.Xaml.Application.Current.Exit();

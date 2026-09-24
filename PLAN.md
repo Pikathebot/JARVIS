@@ -131,7 +131,9 @@ changed shaders compile under fxc ps_5_0. What was built:
   no GPU). Backend online -> projects -> the first session-list fetch (capped 1.5 s) -> the card
   lifts away and the sidebar, then 50 ms later the chat column, rise 18 DIPs into place. Held at
   least 450 ms so a warm backend doesn't flicker; opens anyway after 25 s offline.
-  `jarvis-app.log` records "startup: revealing (...) after N ms".
+  `jarvis-app.log` records "startup: revealing (...) after N ms". User's verdict: "kinda normal"
+-- to be replaced by materialise + staged assemble (clear glass whose frost and tint come in, a
+real-step progress line, panels materialising one by one), built with snapshot mode.
 - *Tabs* = the two spaces on the sidebar switch (Settings stays a sheet -- the brief's
   "Settings/sheets"). A switch slides the message list's and session list's item panels 36 DIPs
   toward the space being left and fades them out (0.22 s, critically damped), swaps transcript
@@ -228,4 +230,12 @@ the sidebar switch, the header Ephemeral toggle, the per-space session lists and
 space are unseen on screen). Profile memories now ride on every turn, not only ephemeral ones.
 The HUD keeps its own fixed session outside both spaces -- left for a dedicated HUD session. Older reports whose status is unknown:
 an intermittent white slab the HUD card's size at launch (2026-09-20), and the narrow-mode right
-panel covering its own close button.
+panel covering its own close button. Lead on the white slab (2026-09-24): the first snapshot
+showed exactly that slab at the hidden HUD's rect (76,76 460x108) once its capture exclusion was
+cleared -- DWM keeps a blank surface for the hidden HUD. If the launch report recurs, suspect
+the HUD's show/affinity order at startup.
+
+**New, from the first snapshot (2026-09-24):** at the default 1280x800 window the header
+overflows -- the Panel button is cut off at the right edge. `ApplyResponsiveLayout` sheds
+captions below 700 px of *window* width, but the header's own available width (window minus
+sidebar) is what runs out.

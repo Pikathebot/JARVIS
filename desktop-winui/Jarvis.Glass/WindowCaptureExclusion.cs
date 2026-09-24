@@ -54,6 +54,12 @@ public static class WindowCaptureExclusion
     /// here depends on that. Requires Windows 10 2004+ / Windows 11; on older builds
     /// SetWindowDisplayAffinity simply fails (returns false, no exception) and this silently no-ops.
     /// </summary>
+    /// <summary>One window only, ignoring <see cref="Enabled"/>. The snapshot path uses it to lift
+    /// exclusion on the windows actually showing: clearing it on the hidden HUD made DWM hand
+    /// capture a blank white slab of the HUD's size (the "white slab at launch" report).</summary>
+    public static void SetExcluded(IntPtr hwnd, bool excluded) =>
+        SetWindowDisplayAffinity(hwnd, excluded ? WdaExcludeFromCapture : WdaNone);
+
     public static void SetExcluded(bool excluded)
     {
         var affinity = excluded && Enabled ? WdaExcludeFromCapture : WdaNone;
