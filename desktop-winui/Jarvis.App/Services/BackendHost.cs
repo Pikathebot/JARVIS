@@ -17,6 +17,7 @@ public sealed class BackendHost : IDisposable
     private readonly JarvisApiClient _api;
     private readonly string _repoRoot;
     private Process? _process;
+    private TextWriter? _log;
     private nint _jobHandle;
 
     public BackendHost(JarvisApiClient api, string repoRoot)
@@ -36,17 +37,33 @@ public sealed class BackendHost : IDisposable
         Start();
 
         var deadline = DateTime.UtcNow + timeout;
+        var starts = 1;
         while (DateTime.UtcNow < deadline)
         {
             if (await IsHealthyAsync(ct).ConfigureAwait(false))
             {
                 return true;
             }
+            // uvicorn sometimes dies within a second of launch: this machine intermittently
+            // refuses new sockets with WSAEACCES (10013) for a few seconds -- seen 2026-09-24, from
+            // curl and every other process too -- and asyncio's event loop needs a loopback
+            // socketpair before it serves anything. Starting it again a moment later works.
+            if (_process is { HasExited: true } && starts < MaxStarts)
+            {
+                App.Log($"backend: uvicorn exited with {_process.ExitCode} during startup; starting it again ({starts + 1}/{MaxStarts})");
+                await Task.Delay(RestartDelay, ct).ConfigureAwait(false);
+                Start();
+                starts++;
+                continue;
+            }
             await Task.Delay(300, ct).ConfigureAwait(false);
         }
 
         return false;
     }
+
+    private const int MaxStarts = 4;
+    private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(1.5);
 
     private async Task<bool> IsHealthyAsync(CancellationToken ct)
     {
@@ -89,9 +106,12 @@ public sealed class BackendHost : IDisposable
         // backend.log as they happen rather than in 8 KB bursts.
         startInfo.Environment["PYTHONUNBUFFERED"] = "1";
 
+        _process?.Dispose();
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 
-        var logStream = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+        // One writer for every start: the file is opened without write sharing, so a restart
+        // can't open it a second time.
+        var logStream = _log ??= TextWriter.Synchronized(new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true });
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) logStream.WriteLine(e.Data); };
         _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) logStream.WriteLine(e.Data); };
 
@@ -104,6 +124,8 @@ public sealed class BackendHost : IDisposable
 
     private void AttachToJobObject(Process process)
     {
+        // A restart gets a fresh job; closing the old one kills nothing (its process is gone).
+        if (_jobHandle != nint.Zero) JobObjectInterop.CloseHandle(_jobHandle);
         _jobHandle = JobObjectInterop.CreateJobObject(nint.Zero, null);
         if (_jobHandle == nint.Zero)
         {
