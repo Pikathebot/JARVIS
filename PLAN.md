@@ -126,14 +126,12 @@ changed shaders compile under fxc ps_5_0. What was built:
   nothing while nothing is faded); an animation tick the host runs *before* rendering, so glass
   and XAML move in the same frame. `GlassTransition`: translate + opacity on damped springs
   stated as (response, damping ratio), same 1/240 s substeps as the controls.
-- *Startup:* the panels start invisible (glass too) and lowered; a frosted "JARVIS" card on the
-  sheet layer shows "Starting up" with a breathing caption (a XAML storyboard, so the wait costs
-  no GPU). Backend online -> projects -> the first session-list fetch (capped 1.5 s) -> the card
-  lifts away and the sidebar, then 50 ms later the chat column, rise 18 DIPs into place. Held at
-  least 450 ms so a warm backend doesn't flicker; opens anyway after 25 s offline.
-  `jarvis-app.log` records "startup: revealing (...) after N ms". User's verdict: "kinda normal"
--- to be replaced by materialise + staged assemble (clear glass whose frost and tint come in, a
-real-step progress line, panels materialising one by one), built with snapshot mode.
+- *Startup* (redone 2026-09-24 as materialise + staged assemble, seen working on device): the
+  card arrives as clear glass and its frost and tint condense on (`GlassMotion.Material`, a
+  second animatable glass value); a line fills on real steps (backend, workspaces, sessions);
+  then the card swells and evaporates while sidebar, header, chat and composer rise in as clear
+  glass 60 ms apart and frost a beat later. Whole-machine 3D GPU peaked at 12.8% in the hand-off
+  (baseline ~7%). `jarvis-app.log` logs "startup: <milestone> at N ms" from process start.
 - *Tabs* = the two spaces on the sidebar switch (Settings stays a sheet -- the brief's
   "Settings/sheets"). A switch slides the message list's and session list's item panels 36 DIPs
   toward the space being left and fades them out (0.22 s, critically damped), swaps transcript
@@ -206,6 +204,18 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
   changes. The warm-up now starts 8 s after the backend is ready (`KOKORO_WARMUP_DELAY_S`), past
   the client's window assembly; confirmed live: reveal 10:31:52.5, Kokoro load 10:31:57.7.
   Capping its threads was measured and rejected (load no shorter; replies RTF 0.55 -> 0.57-0.83).
+
+- **Done 2026-09-24: startup time.** Window open 15.4 s after launch -> 5.45 s (two runs).
+  Three waits, all measured: (1) on Windows a connect to a closed localhost port takes ~2 s to be
+  refused, and `/health` probed llama-server's port on every call, so with no model loaded it took
+  2.2 s -- now a 250 ms socket check first (`LlamaCppProvider._port_accepts`); (2) `BackendHost`
+  probed `/health` before launching uvicorn (2 s refused) and then only noticed it ready in ~2 s
+  steps -- it now reads the TCP listener table, launches uvicorn before the windows are built, and
+  pokes the governor poll the moment it answers; (3) `app.rag`'s `__init__` imported every
+  submodule, so the memory manager's import of embeddings loaded `qdrant_client` (1.9 s) --
+  now lazy (PEP 562); backend imports 5.2 s -> 3.2 s. Left: building the windows takes ~3.2 s
+  (launch 0.8 s -> window shown 4.0 s), now as long as the backend; alembic's ~0.4 s of its own
+  imports (would need skipping the migration check). Unverified on device beyond the logs.
 
 - **Paged-out model.** When another app claims VRAM, WDDM demotes our model to shared memory
   (`model_resident=False`) and inference crawls. The governor only avoids corrupting its baseline

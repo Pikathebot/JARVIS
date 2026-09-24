@@ -61,8 +61,12 @@ public partial class App : Application
             var chatStreamClient = new ChatStreamClient(streamHttpClient);
             var awarenessStreamClient = new AwarenessStreamClient(streamHttpClient);
 
+            // The backend first: uvicorn takes seconds to import and start, and building the
+            // windows needn't come before it.
             var repoRoot = FindRepoRoot();
             _backendHost = new BackendHost(_api, repoRoot);
+            var backendReady = _backendHost.EnsureRunningAsync(TimeSpan.FromSeconds(20));
+            LogStartup("backend launched");
 
             _mainWindow = new MainWindow(_api, chatStreamClient, awarenessStreamClient);
             _hudWindow = new HudWindow(_api);
@@ -93,19 +97,26 @@ public partial class App : Application
                 DispatcherQueue.TryEnqueue(() => _mainWindow.ShowFromBackground());
 
             Window.Activate();
+            LogStartup("window shown");
 
-            var ready = await _backendHost.EnsureRunningAsync(TimeSpan.FromSeconds(20)).ConfigureAwait(true);
-            if (!ready)
+            var ready = await backendReady.ConfigureAwait(true);
+            LogStartup(ready ? "backend ready" : "backend did not come up");
+            if (ready)
             {
-                // The governor pill / health poll already surfaces "Offline"; nothing further to do
-                // here beyond letting the user retry once the backend comes up on its own.
+                _mainWindow.GovernorViewModel.PollNow();
             }
+            // Otherwise the governor pill / health poll already surfaces "Offline", and the
+            // window opens anyway once the backend comes up on its own.
         }
         catch (Exception ex)
         {
             LogCrash(ex);
         }
     }
+
+    /// <summary>Startup milestones in jarvis-app.log, timed from process start.</summary>
+    public static void LogStartup(string milestone) =>
+        Log($"startup: {milestone} at {(DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds:F0} ms");
 
     private static void LogCrash(Exception? ex) => Log("jarvis-app-crash.log", $"{ex}\n");
 

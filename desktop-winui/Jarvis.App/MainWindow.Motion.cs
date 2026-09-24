@@ -137,6 +137,7 @@ public sealed partial class MainWindow
     /// refreshes.</summary>
     private async void OnBackendCameOnline()
     {
+        if (!_revealed) App.LogStartup("window heard the backend");
         if (!_revealed) SetStartupStep(0.45, LoadSavedSpace() == ChatSpace.Freeform ? "Opening Freeform" : "Loading workspaces");
         await ProjectsViewModel.RefreshAsync();
         if (_revealed) return;
@@ -193,6 +194,7 @@ public sealed partial class MainWindow
         if (_revealed) return;
         _revealed = true;
         App.Log($"startup: revealing ({why}) after {System.Diagnostics.Stopwatch.GetElapsedTime(_launchedAt).TotalMilliseconds:F0} ms");
+        App.LogStartup("reveal");
 
         // Let the card finish condensing and the line finish filling if the backend beat them
         // (an already-running backend answers well inside the card's entrance), so the sequence

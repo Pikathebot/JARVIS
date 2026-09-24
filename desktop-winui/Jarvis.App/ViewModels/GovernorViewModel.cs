@@ -57,6 +57,10 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
 
     public void StopPolling() => _cts?.Cancel();
 
+    /// <summary>Poll now rather than on the next tick -- BackendHost calls this the moment the
+    /// backend answers, so the window doesn't wait up to a period to find out.</summary>
+    public void PollNow() => _ = PollOnceAsync(_cts?.Token ?? CancellationToken.None);
+
     private async Task PollLoopAsync(CancellationToken ct)
     {
         await PollOnceAsync(ct).ConfigureAwait(false);

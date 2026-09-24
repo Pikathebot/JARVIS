@@ -26,12 +26,18 @@ public sealed class BackendHost : IDisposable
         _repoRoot = repoRoot;
     }
 
-    /// <summary>Returns once /health responds, starting the backend first if needed.</summary>
+    private const int Port = 8000;
+
+    /// <summary>Returns once /health responds, starting the backend first if needed.
+    /// Nothing here connects to the port until something is listening on it: on Windows a
+    /// connection to a closed localhost port takes ~2 s to be refused (it retries the SYN), so
+    /// probing /health cost 2 s before uvicorn was even launched and then noticed it ready only
+    /// in 2 s steps. The TCP listener table answers instantly.</summary>
     public async Task<bool> EnsureRunningAsync(TimeSpan timeout, CancellationToken ct = default)
     {
-        if (await IsHealthyAsync(ct).ConfigureAwait(false))
+        if (IsListening() && await IsHealthyAsync(ct).ConfigureAwait(false))
         {
-            return true;
+            return true; // already running (a dev server started by hand)
         }
 
         Start();
@@ -40,7 +46,7 @@ public sealed class BackendHost : IDisposable
         var starts = 1;
         while (DateTime.UtcNow < deadline)
         {
-            if (await IsHealthyAsync(ct).ConfigureAwait(false))
+            if (IsListening() && await IsHealthyAsync(ct).ConfigureAwait(false))
             {
                 return true;
             }
@@ -56,7 +62,7 @@ public sealed class BackendHost : IDisposable
                 starts++;
                 continue;
             }
-            await Task.Delay(300, ct).ConfigureAwait(false);
+            await Task.Delay(100, ct).ConfigureAwait(false);
         }
 
         return false;
@@ -64,6 +70,19 @@ public sealed class BackendHost : IDisposable
 
     private const int MaxStarts = 4;
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(1.5);
+
+    private static bool IsListening()
+    {
+        try
+        {
+            return System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpListeners().Any(e => e.Port == Port);
+        }
+        catch
+        {
+            return true; // can't tell: fall back to probing
+        }
+    }
 
     private async Task<bool> IsHealthyAsync(CancellationToken ct)
     {
@@ -99,7 +118,7 @@ public sealed class BackendHost : IDisposable
         startInfo.ArgumentList.Add("--host");
         startInfo.ArgumentList.Add("127.0.0.1");
         startInfo.ArgumentList.Add("--port");
-        startInfo.ArgumentList.Add("8000");
+        startInfo.ArgumentList.Add(Port.ToString());
 
         startInfo.Environment["PYTHONPATH"] = $"{backendDir};{_repoRoot}";
         // Python block-buffers stdout when it is a pipe; unbuffered so prints land in
