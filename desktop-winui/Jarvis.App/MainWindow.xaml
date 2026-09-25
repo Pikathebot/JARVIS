@@ -192,11 +192,11 @@
                                      the tooltips name the switches then. -->
                                 <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
                                 <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
-                                <glass:GlassToggle x:Name="EphemeralToggle" ToolTipService.ToolTip="Ephemeral: nothing from this chat is stored" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
+                                <glass:GlassToggle x:Name="EphemeralToggle" SwitchScale="0.75" ToolTipService.ToolTip="Ephemeral: nothing from this chat is stored" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
                                 <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="GovernorToggle" ToolTipService.ToolTip="Governor" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
+                                <glass:GlassToggle x:Name="GovernorToggle" SwitchScale="0.75" ToolTipService.ToolTip="Governor" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
                                 <TextBlock x:Name="MicLabel" Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="MicToggle" ToolTipService.ToolTip="Microphone" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
+                                <glass:GlassToggle x:Name="MicToggle" SwitchScale="0.75" ToolTipService.ToolTip="Microphone" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
                                 <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
                                 <glass:GlassButton x:Name="PanelButton" Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>

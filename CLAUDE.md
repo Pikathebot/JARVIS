@@ -192,6 +192,10 @@ Glass rules learned the hard way:
   window would yield whoever covers it). Needs a running build that has SnapshotService
   (2026-09-24+). The glass shows the user's desktop blurred behind it -- keep shots in the
   scratchpad. Still ask the user about motion and feel; a still can't show those.
+  Each snapshot also writes `snapshot.shapes.txt` beside the exe: every published glass shape
+  with its owner, centre/half size (px), layer, clip and fade (`GlassScene.Describe`). When a
+  still shows glass in the wrong place, read it first -- it splits "published wrong" from
+  "rendered wrong".
 
 ## Working with the user
 

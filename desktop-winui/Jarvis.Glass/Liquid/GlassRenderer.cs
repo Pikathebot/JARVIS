@@ -208,6 +208,16 @@ internal sealed class GlassRenderer : IDisposable
         if (resized)
         {
             foreach (var c in _layerCache) c.Valid = false;
+            // Release the targets of layers not in use right now; they are rebuilt at the new size
+            // if those layers come back. Only resizing the layers in use left the rest at the old
+            // size for good (`resized` is false by the time they return): open Settings, close it,
+            // maximize, reopen -- and the sheet's layers drew into window-sized-before textures,
+            // so the sheet came out missing, cut off or stale.
+            for (var i = layerCount; i < _layerTextures.Count; i++)
+            {
+                _layerSrvs[i]?.Dispose(); _layerRtvs[i]?.Dispose(); _layerTextures[i]?.Dispose();
+                _layerSrvs[i] = null; _layerRtvs[i] = null; _layerTextures[i] = null;
+            }
         }
         while (_layerTextures.Count < layerCount)
         {

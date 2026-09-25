@@ -301,3 +301,15 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   (`_SHARED_CLIENTS`, calls serialised under an RLock): the indexer's and retriever's separate
   clients locked each other out ("already accessed by another instance"), so semantic
   retrieval was always 0. Open: no project memories are ever written for a workspace.
+
+- [x] **Header toggles at iOS proportions, smaller; Settings glass after a resize (2026-09-25,
+  confirmed on device)** — `GlassToggle.SwitchScale` scales the whole measured switch (track,
+  puck, travel, bezels, shadows) uniformly; the header's three use 0.75 (54x24 DIP, was 71x32,
+  as tall as the buttons beside them), Settings keeps 1. The "broken Settings" report turned
+  out to be the renderer: `EnsureLayerTargets` resized only the layers in use at the moment of a
+  resize, so layers above them (the sheet on 4, its toggle on 5-6) kept textures at the old
+  window size for good -- open Settings, close it, maximize, reopen, and the sheet drew into
+  stale, too-small targets (cut off, frozen frost, stray toggle tracks). A resize now releases
+  the targets of layers not in use; they are rebuilt at the current size when they return.
+  Found with a new diagnostic: snapshots write `snapshot.shapes.txt` (`GlassScene.Describe`),
+  which showed every shape published correctly and so put the fault in the renderer.

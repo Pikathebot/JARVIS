@@ -58,6 +58,32 @@ public sealed class GlassScene
         lock (RegistryGate) ByWindowId.Remove(windowId);
     }
 
+    /// <summary>Every scene's shapes, one line each with its owner, for diagnosing a shape that
+    /// draws in the wrong place (written beside a snapshot). Pixels: centre, half size, layer,
+    /// clip (x y w h; w &lt;= 0 = none) and fade (0 = opaque).</summary>
+    public static IEnumerable<string> Describe()
+    {
+        List<(ulong Id, GlassScene Scene)> scenes;
+        lock (RegistryGate) scenes = ByWindowId.Select(kv => (kv.Key, kv.Value)).ToList();
+        foreach (var (id, scene) in scenes)
+        {
+            List<(object Owner, GlassShape[] Shapes)> owners;
+            lock (scene._gate) owners = scene._shapes.Select(kv => (kv.Key, kv.Value)).ToList();
+            yield return $"# window 0x{id:X}: {owners.Sum(o => o.Shapes.Length)} shapes from {owners.Count} owners";
+            foreach (var (owner, shapes) in owners)
+            {
+                var name = owner is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name)
+                    ? $"{owner.GetType().Name}:{fe.Name}" : $"{owner.GetType().Name}@{owner.GetHashCode():X}";
+                foreach (var s in shapes)
+                {
+                    var c = s.CenterHalfSize;
+                    yield return FormattableString.Invariant(
+                        $"{name} centre ({c.X:F0},{c.Y:F0}) half ({c.Z:F0},{c.W:F0}) layer {s.Params2.Y:F0} clip ({s.Clip.X:F0} {s.Clip.Y:F0} {s.Clip.Z:F0} {s.Clip.W:F0}) fade {s.Params3.W:F2}");
+                }
+            }
+        }
+    }
+
     /// <summary>A publish identical to the owner's current shapes is a no-op: controls publish
     /// on every LayoutUpdated, and a bumped version would re-render the window for nothing.</summary>
     public void Publish(object owner, params GlassShape[] shapes)

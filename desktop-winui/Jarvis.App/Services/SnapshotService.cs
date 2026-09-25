@@ -107,6 +107,10 @@ public sealed class SnapshotService : IDisposable
             lines.Add($"{name} {r.Left} {r.Top} {r.Right - r.Left} {r.Bottom - r.Top}");
         }
         lines.AddRange(skipped);
+        // The glass geometry as held, beside the ready file: a still shows *that* a shape is
+        // misplaced, this says which owner published it and where.
+        try { File.WriteAllLines(Path.ChangeExtension(_readyPath, ".shapes.txt"), GlassScene.Describe()); }
+        catch (Exception ex) { App.Log($"snapshot: shape dump failed: {ex.Message}"); }
         File.WriteAllLines(_readyPath, lines);
         App.Log($"snapshot: holding ({string.Join("; ", lines)})");
     }

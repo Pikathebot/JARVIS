@@ -131,7 +131,7 @@ public sealed partial class GlassToggle : UserControl
     {
         foreach (var weak in Instances)
         {
-            if (weak.TryGetTarget(out var toggle)) { toggle.Width = TrackWidth; toggle.PublishShapes(); }
+            if (weak.TryGetTarget(out var toggle)) toggle.ApplySize();
         }
         GlassSlider.RepublishAll();
         GlassButton.RepublishAll();
@@ -177,13 +177,33 @@ public sealed partial class GlassToggle : UserControl
         set => SetValue(IsOnProperty, value);
     }
 
+    public static readonly DependencyProperty SwitchScaleProperty = DependencyProperty.Register(
+        nameof(SwitchScale), typeof(double), typeof(GlassToggle), new PropertyMetadata(1.0, (d, _) => ((GlassToggle)d).ApplySize()));
+
+    /// <summary>Uniform size of the whole switch; 1 = iOS 26's 28pt switch at our scale (71.4x32
+    /// DIP). Everything -- track, puck, travel, bezels, shadows -- scales together, so the
+    /// measured proportions hold at any size (the header uses a smaller one).</summary>
+    public double SwitchScale
+    {
+        get => (double)GetValue(SwitchScaleProperty);
+        set => SetValue(SwitchScaleProperty, value);
+    }
+
+    private float Size => (float)Math.Max(0.1, SwitchScale);
+
+    private void ApplySize()
+    {
+        Width = TrackWidth * Size;
+        Height = TrackHeight * Size;
+        PublishShapes();
+    }
+
     public event RoutedEventHandler? Toggled;
 
     public GlassToggle()
     {
         InitializeComponent();
-        Width = TrackWidth;
-        Height = TrackHeight;
+        ApplySize();
         _travel = IsOn ? 1f : 0f;
         Instances.Add(new WeakReference<GlassToggle>(this));
 
@@ -253,7 +273,7 @@ public sealed partial class GlassToggle : UserControl
 
         // One full Travel of pointer movement moves the thumb from one end to the other; past an
         // end it keeps following on a rubber band (iOS lets the lens overrun and springs it back).
-        var travel = Math.Max(1f, Travel);
+        var travel = Math.Max(1f, Travel * Size);
         _dragTarget = RubberBand(_dragStartTravel + delta / travel);
         e.Handled = true;
     }
@@ -393,6 +413,7 @@ public sealed partial class GlassToggle : UserControl
         var clip = GlassSlab.ClipFor(this, scale);
 
         var trackCenter = new Vector2((float)(bounds.X + bounds.Width * 0.5), (float)(bounds.Y + bounds.Height * 0.5)) * scale;
+        scale *= Size; // from here on, sizes: the whole switch scales together
         var trackHalf = new Vector2(TrackWidth * 0.5f, TrackHeight * 0.5f) * scale;
         var trackRadius = TrackHeight * 0.5f * scale;
 
