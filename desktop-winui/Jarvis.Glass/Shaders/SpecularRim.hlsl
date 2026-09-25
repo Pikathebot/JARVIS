@@ -14,7 +14,7 @@ cbuffer SpecularRimConstants : register(b0)
     float _Pad1;
 };
 
-#define MAX_SHAPES 96
+#define MAX_SHAPES 256
 
 struct GlassShape
 {

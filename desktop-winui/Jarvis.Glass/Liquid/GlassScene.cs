@@ -31,10 +31,10 @@ public sealed class GlassScene
 
     /// <summary>Per-window budget. The main window alone is pane + 5 slabs + ~7 pills + 2 toggles + a
     /// segmented (2 shapes each), and every visible message bubble and session row is a slab
-    /// too -- 48 truncated the top layer (thumbs) off with a long chat. Shapes are 112 bytes
-    /// each, so 96 is a 10.8 KB cbuffer; the shaders loop only over the active layer's shapes,
-    /// so the count that matters per pixel is a layer's, not the total.</summary>
-    public const int MaxShapes = 96;
+    /// too. Shapes are 112 bytes each, so 256 is a 28.6 KB cbuffer (well under D3D11's 64 KB limit);
+    /// the shaders loop only over the active layer's shapes, so the count that matters per pixel
+    /// is a layer's, not the total.</summary>
+    public const int MaxShapes = 256;
 
     /// <summary>The scene of the window <paramref name="element"/> is in, or null while the
     /// element is not yet in a hosted window's tree (controls should simply skip publishing).</summary>

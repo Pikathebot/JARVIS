@@ -18,7 +18,7 @@ cbuffer DisplacementConstants : register(b0)
     float2 _Pad0;
 };
 
-#define MAX_SHAPES 96
+#define MAX_SHAPES 256
 #define LENS_FALLOFF 1.2 // Lens ramp exponent; 1 = linear (BezelProfileMath.LensFalloff)
 
 struct GlassShape
