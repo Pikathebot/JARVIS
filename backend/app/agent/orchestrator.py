@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import uuid
@@ -10,6 +11,7 @@ from sqlmodel import select
 
 from app.config import settings, MAX_TOOL_CALLS_PER_TURN
 from app.persona import persona_manager
+from app.agent.tools.file_search import IGNORED_DIRS
 from app.agent.tools.registry import AVAILABLE_TOOLS, FREEFORM_MODE, execute_tool, get_tool_schema, get_relevant_tools
 from app.agent.permissions import (
     BASE_TOOL_RISK_MAP,
@@ -54,7 +56,7 @@ class OrchestratorResult:
     spoken: Optional[str] = None
 
 
-def extract_tool_calls_from_text(content: str, user_prompt: str = "") -> tuple[str, list[dict[str, Any]]]:
+def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
     """
     Extract embedded tool calls outputted as raw text by models:
     1. <tool_call> ... </tool_call> tags
@@ -176,31 +178,8 @@ def extract_tool_calls_from_text(content: str, user_prompt: str = "") -> tuple[s
         cleaned_content = json_block_regex.sub("", content).strip()
         return cleaned_content, extracted
 
-    # 4. Infer write_file if a file path is requested and the model generated a code block in markdown
-    if not extracted and ("```" in content):
-        combined_text = (user_prompt or "") + "\n" + content
-        path_matches = re.findall(r"(?:in|to|at|file|into|create)\s+[`'\"]?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)[`'\"]?", combined_text, re.IGNORECASE)
-        code_block_match = re.search(r"```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]*?)\n```", content)
-        if path_matches and code_block_match:
-            target_file_path = path_matches[0].strip().replace("\\", "/")
-            if any(target_file_path.endswith(ext) for ext in [".py", ".js", ".ts", ".html", ".css", ".json", ".md", ".txt", ".sh", ".bat", ".ps1", ".yml", ".yaml"]):
-                code_content = code_block_match.group(1)
-                if len(code_content.strip()) > 10:
-                    logger.info("Inferred write_file tool call for '%s' from generated code block", target_file_path)
-                    extracted.append({
-                        "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {
-                            "name": "write_file",
-                            "arguments": {
-                                "file_path": target_file_path,
-                                "content": code_content,
-                                "overwrite": True
-                            }
-                        }
-                    })
-                    return content, extracted
-
+    # A plain markdown code block is an answer, never a write: write_file inside the workspace is
+    # LOW_RISK, so guessing one from "a filename was mentioned" silently created/overwrote files.
     return content, []
 
 
@@ -300,6 +279,47 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
     return "\n\n".join(sections)
 
 
+TOOL_HISTORY_MAX_CHARS = 2000
+WORKSPACE_LISTING_LIMIT = 50
+# The project's own bookkeeping, not the user's files (see routers/projects.py's subdirs).
+_WORKSPACE_LISTING_SKIP_DIRS = {"indexes", "memory"}
+
+
+def workspace_file_listing(workspace_path: Path | str, limit: int = WORKSPACE_LISTING_LIMIT) -> str:
+    """
+    The project's files as a per-turn block, so the model knows what exists without guessing a
+    glob first (it once searched ``*enhancer*`` for a project whose file was
+    ``prompt_principles.md`` and concluded there was nothing). Paths are relative to the
+    workspace root -- the form the file tools take. Empty when there is nothing to list.
+    """
+    root = Path(workspace_path)
+    if not root.is_dir():
+        return ""
+    skip = IGNORED_DIRS | _WORKSPACE_LISTING_SKIP_DIRS
+    entries: list[str] = []
+    total = 0
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in skip and not d.startswith("."))
+        for name in sorted(files):
+            if name.startswith("."):
+                continue
+            total += 1
+            if len(entries) < limit:
+                path = Path(dirpath) / name
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                entries.append(f"- {path.relative_to(root).as_posix()} ({size:,} bytes)")
+    if not entries:
+        return "WORKSPACE FILES: the project workspace is empty."
+    more = f"\n- ... and {total - len(entries)} more" if total > len(entries) else ""
+    return (
+        "WORKSPACE FILES (paths relative to the workspace root; read_file them rather than guessing "
+        "their contents):\n" + "\n".join(entries) + more
+    )
+
+
 FREEFORM_TURN_NOTE = (
     "SPACE: Freeform conversation. There is no project, workspace or working directory here, so "
     "you cannot read, write, search or run anything on files. If the user asks for that, say so "
@@ -358,13 +378,52 @@ class AgentOrchestrator:
         kept in process memory only (see ``app.memory.ephemeral``)."""
         return isinstance(self.memory_store, EphemeralMemoryStore)
 
-    def _space_context(self, chat_mode: str) -> str:
+    def _persist_tool_result(self, session_id: str, call_id: str, name: str, args: Any, result: str) -> None:
+        """
+        Keep a tool call and a capped copy of its result in history, so what a tool found is
+        still known next turn (a file read, then "now change the second section" used to find
+        nothing: only user/assistant rows were stored). The row carries its own call, and
+        ``ContextManager`` replays it as the call/result pair. Capped: the next turn needs to
+        know what was there, not every byte of it -- it can read again.
+        """
+        text = result or ""
+        if len(text) > TOOL_HISTORY_MAX_CHARS:
+            text = (
+                text[:TOOL_HISTORY_MAX_CHARS]
+                + f"\n[... {len(result) - TOOL_HISTORY_MAX_CHARS:,} more chars not kept in history; run the tool again for them]"
+            )
+        call = {
+            "id": call_id or f"call_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {"name": name, "arguments": args if isinstance(args, dict) else {}},
+        }
+        try:
+            self.memory_store.append_message(session_id, role="tool", content=text, name=name, tool_calls=[call])
+        except Exception as e:
+            logger.warning("Could not store the %s result in history: %s", name, e)
+
+    def _space_context(
+        self,
+        chat_mode: str,
+        project_id: Optional[str] = None,
+        workspace_path: Optional[Path] = None,
+    ) -> str:
         """Per-turn lines about the user and where this conversation lives: the user's profile
         memories on every turn, Freeform's lack of a workspace (said outright, or a model with no
-        file tools writes a tool call out as text), and an ephemeral turn's off-the-record note."""
+        file tools writes a tool call out as text), an ephemeral turn's off-the-record note, and
+        a project workspace's file list. The list changes as files are written, which is why it
+        rides on the user turn and never in the cached prefix."""
         parts = []
         if chat_mode == FREEFORM_MODE:
             parts.append(FREEFORM_TURN_NOTE)
+        elif (
+            chat_mode == "WORKSPACE" and project_id and workspace_path is not None
+            # A project without its own folder falls back to the shared root, i.e. every project.
+            and Path(workspace_path).resolve() != Path(settings.workspace_path).resolve()
+        ):
+            listing = workspace_file_listing(workspace_path)
+            if listing:
+                parts.append(listing)
         session_factory = getattr(self.memory_store, "_session_factory", None)
         profile = build_profile_context(session_factory, ephemeral=self.is_ephemeral) if session_factory else ""
         if profile:
@@ -753,7 +812,7 @@ class AgentOrchestrator:
 
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str))
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
@@ -958,12 +1017,7 @@ class AgentOrchestrator:
 
             # Fallback tool call extraction from text if needed
             if not tool_calls:
-                latest_user_prompt = ""
-                for msg in reversed(messages):
-                    if isinstance(msg, dict) and msg.get("role") == "user":
-                        latest_user_prompt = msg.get("content", "")
-                        break
-                content, extracted_calls = extract_tool_calls_from_text(content, user_prompt=latest_user_prompt)
+                content, extracted_calls = extract_tool_calls_from_text(content)
                 if extracted_calls:
                     logger.info("Extracted %d tool call(s) from raw model text stream", len(extracted_calls))
                     tool_calls = extracted_calls
@@ -1280,7 +1334,7 @@ class AgentOrchestrator:
                     "name": fn_name,
                     "content": tool_output
                 })
-                self.memory_store.append_message(session_id, role="tool", content=tool_output, name=fn_name)
+                self._persist_tool_result(session_id, call_id, fn_name, fn_args, tool_output)
 
         logger.warning("Max tool iterations reached (%d). Requesting final summary from %s.", max_iterations, provider.name)
         final_response = await provider.chat(
@@ -1332,7 +1386,7 @@ class AgentOrchestrator:
         active_skill_names = [s.name for s in matched_skills]
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str))
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
@@ -1499,12 +1553,7 @@ class AgentOrchestrator:
             self._log_model_reply(model, content, tool_calls)
 
             if not tool_calls:
-                latest_user_prompt = ""
-                for msg in reversed(messages):
-                    if isinstance(msg, dict) and msg.get("role") == "user":
-                        latest_user_prompt = msg.get("content", "")
-                        break
-                cleaned_content, extracted_calls = extract_tool_calls_from_text(content, user_prompt=latest_user_prompt)
+                cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
                 if extracted_calls:
                     tool_calls = extracted_calls
                     content = cleaned_content
@@ -1660,6 +1709,7 @@ class AgentOrchestrator:
                     "name": t_name,
                     "content": result_str
                 })
+                self._persist_tool_result(session_id, t_id, t_name, t_args, result_str)
 
     async def _run_openrouter_stream_loop(
         self,

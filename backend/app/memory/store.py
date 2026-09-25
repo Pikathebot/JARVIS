@@ -264,8 +264,17 @@ class MemoryStore:
                     .order_by(col(Message.id).asc())
                 )
                 if limit is not None and limit > 0:
-                    statement = statement.limit(limit)
-                rows = session.exec(statement).all()
+                    # The newest `limit`, still oldest-first. An ascending LIMIT returned the
+                    # *first* rows, so past it the model saw the opening turns forever.
+                    statement = (
+                        select(Message)
+                        .where(Message.session_id == session_id)
+                        .order_by(col(Message.id).desc())
+                        .limit(limit)
+                    )
+                    rows = list(reversed(session.exec(statement).all()))
+                else:
+                    rows = session.exec(statement).all()
 
 
                 messages = []

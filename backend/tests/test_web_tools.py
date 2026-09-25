@@ -191,3 +191,20 @@ def test_extract_tool_calls_from_text():
     assert calls_4[0]["function"]["arguments"]["pattern"] == "AgentOrchestrator"
 
 
+def test_markdown_code_block_mentioning_a_file_is_not_a_write():
+    """A code block plus a filename in the text used to be turned into write_file(overwrite=True),
+    which runs unconfirmed inside the workspace -- it created a TASKS.md nobody asked for."""
+    from app.agent.orchestrator import extract_tool_calls_from_text
+
+    reply = (
+        "Here is what I'd put in TASKS.md:\n"
+        "```markdown\n"
+        "- [ ] draft the prompt principles\n"
+        "- [ ] review with the team\n"
+        "```\n"
+    )
+    cleaned, calls = extract_tool_calls_from_text(reply)
+    assert calls == []
+    assert cleaned == reply
+
+

@@ -211,4 +211,13 @@ async def test_orchestrator_run_stream_with_tool_call():
     assert "tool_end" in event_types
     assert "done" in event_types
 
+    # The tool result is kept in history, carrying its call, before the final reply.
+    stored = [(c.kwargs.get("role"), c.kwargs) for c in mock_store.append_message.call_args_list]
+    roles = [r for r, _ in stored]
+    assert roles.index("tool") < len(roles) - 1 - roles[::-1].index("assistant")
+    tool_row = next(kw for r, kw in stored if r == "tool")
+    assert tool_row["name"] == "list_directory"
+    assert tool_row["tool_calls"][0]["id"] == "call_123"
+    assert tool_row["tool_calls"][0]["function"]["arguments"] == {"path": "."}
+
 

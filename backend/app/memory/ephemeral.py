@@ -182,7 +182,7 @@ class EphemeralMemoryStore:
         if sess is None:
             return []
         messages = [dict(m) for m in sess.messages]
-        return messages[:limit] if limit is not None and limit > 0 else messages
+        return messages[-limit:] if limit is not None and limit > 0 else messages
 
     def append_message(
         self,

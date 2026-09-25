@@ -283,3 +283,21 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   synthetic metrics only. Also: `test_governor.py` now runs on a stubbed idle machine
   (psutil/NVML patched) except the live-telemetry test -- two tests asserting IDLE had failed
   once while Jarvis was decoding on the card.
+
+- [x] **Workspace awareness (2026-09-25, confirmed on device)** — Fixes for what the model knows
+  about a project's files across turns (diagnosed 2026-09-24 on the Prompt Enhancer project,
+  where it searched `*enhancer*`, found nothing, and wrote an unrequested TASKS.md).
+  (a) Removed the "markdown code block + a filename in the text -> write_file(overwrite=True)"
+  fallback from `extract_tool_calls_from_text`: in-workspace writes are LOW_RISK, so it wrote
+  files unconfirmed. (b) Every WORKSPACE turn with a project carries the file list
+  (`workspace_file_listing`, via `_space_context`, on the user turn -- it changes as files are
+  written, so never in the cached prefix; max 50, skips `indexes/`/`memory/`). (c) Tool results
+  are stored as `role=tool` rows capped at 2,000 chars, each carrying its own call, and
+  `ContextManager` replays each as an assistant-call/tool-result pair that a budget cut can't
+  split; rows without a call are skipped (a bare tool message breaks the template); the client
+  hides them on reload. Found on the way: `get_messages(limit=)` returned the *oldest* rows, so
+  past 20 messages every chat saw its opening turns forever -- now the newest, and tool rows
+  don't count toward the 20. (d) One embedded Qdrant client per index folder for the process
+  (`_SHARED_CLIENTS`, calls serialised under an RLock): the indexer's and retriever's separate
+  clients locked each other out ("already accessed by another instance"), so semantic
+  retrieval was always 0. Open: no project memories are ever written for a workspace.

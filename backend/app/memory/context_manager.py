@@ -10,6 +10,54 @@ from app.memory.store import MemoryStore
 logger = logging.getLogger("jarvis.memory.context_manager")
 
 
+def _recent_rows(stored: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """The newest rows holding at most `limit` user/assistant/system messages. Tool rows ride
+    along without counting, so a turn that ran five tools doesn't push five older turns out."""
+    kept: list[dict[str, Any]] = []
+    spoken = 0
+    for msg in reversed(stored):
+        if spoken >= limit:
+            break
+        if msg.get("role") != "tool":
+            spoken += 1
+        kept.append(msg)
+    kept.reverse()
+    return kept
+
+
+def _replay_units(stored: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """
+    Stored rows as the messages to send, grouped so a budget cut never splits a pair. A stored
+    tool row carries its own call (see ``AgentOrchestrator._persist_tool_result``) and replays as
+    the assistant tool call plus its result -- the shape the model produced it in. A tool row
+    without its call (older rows) can't be paired and is skipped: a bare tool message with no
+    call before it is malformed for the chat template.
+    """
+    units: list[list[dict[str, Any]]] = []
+    for msg in stored:
+        role = msg.get("role", "user")
+        if role == "tool":
+            calls = msg.get("tool_calls") or []
+            call = calls[0] if calls and isinstance(calls[0], dict) else None
+            if not call or not call.get("id"):
+                continue
+            units.append([
+                {"role": "assistant", "content": "", "tool_calls": [call]},
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "name": msg.get("name") or call.get("function", {}).get("name", ""),
+                    "content": msg.get("content", ""),
+                },
+            ])
+            continue
+        msg_dict: dict[str, Any] = {"role": role, "content": msg.get("content", "")}
+        if msg.get("tool_calls"):
+            msg_dict["tool_calls"] = msg["tool_calls"]
+        units.append([msg_dict])
+    return units
+
+
 class ContextPackage(BaseModel):
     """
     Structured context package output by ContextManager.
@@ -342,8 +390,10 @@ class ContextManager:
         if session_id:
             try:
                 # Fetch recent messages
-                limit = settings.context_tier4_max_messages
-                stored_messages = self.memory_store.get_messages(session_id, limit=limit)
+                stored_messages = _recent_rows(
+                    self.memory_store.get_messages(session_id),
+                    settings.context_tier4_max_messages,
+                )
                 
                 # Check for rolling compaction summary
                 compaction_summary = None
@@ -369,25 +419,20 @@ class ContextManager:
 
 
                 # Fit recent messages starting from newest backwards
-                included_stored: list[dict[str, Any]] = []
-                for msg in reversed(stored_messages):
-                    msg_dict = {
-                        "role": msg.get("role", "user"),
-                        "content": msg.get("content", "")
-                    }
-                    if "tool_calls" in msg and msg["tool_calls"]:
-                        msg_dict["tool_calls"] = msg["tool_calls"]
-
-                    msg_cost = self.token_counter.count_messages([msg_dict])
-                    if remaining_budget - msg_cost >= 0:
-                        included_stored.insert(0, msg_dict)
-                        tier4_tokens += msg_cost
-                        remaining_budget -= msg_cost
+                all_units = _replay_units(stored_messages)
+                included_units: list[list[dict[str, Any]]] = []
+                for unit in reversed(all_units):
+                    unit_cost = self.token_counter.count_messages(unit)
+                    if remaining_budget - unit_cost >= 0:
+                        included_units.insert(0, unit)
+                        tier4_tokens += unit_cost
+                        remaining_budget -= unit_cost
                     else:
                         break
+                truncated = len(included_units) < len(all_units)
 
                 # If older messages were truncated and we have a compaction summary, prepend it
-                if compaction_summary and (len(included_stored) < len(stored_messages) or not included_stored):
+                if compaction_summary and (truncated or not included_units):
                     summary_msg = {
                         "role": "system",
                         "content": f"--- Prior Conversation Summary ---\n{compaction_summary}"
@@ -395,9 +440,9 @@ class ContextManager:
                     summary_cost = self.token_counter.count_messages([summary_msg])
 
                     # If remaining budget is too tight for summary, drop oldest included message to make room
-                    while included_stored and remaining_budget < summary_cost:
-                        popped = included_stored.pop(0)
-                        popped_cost = self.token_counter.count_messages([popped])
+                    while included_units and remaining_budget < summary_cost:
+                        popped = included_units.pop(0)
+                        popped_cost = self.token_counter.count_messages(popped)
                         tier4_tokens -= popped_cost
                         remaining_budget += popped_cost
 
@@ -407,7 +452,8 @@ class ContextManager:
                         remaining_budget -= summary_cost
                         summary_included = True
 
-                history_messages.extend(included_stored)
+                for unit in included_units:
+                    history_messages.extend(unit)
 
 
             except Exception as hist_err:

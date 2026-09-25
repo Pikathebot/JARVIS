@@ -359,6 +359,9 @@ public partial class ChatViewModel : ObservableObject
                 foreach (var entry in raw)
                 {
                     var msg = MapRawMessage(entry);
+                    // Stored tool results are the model's memory of what a tool returned, not
+                    // part of the transcript the user saw.
+                    if (msg.Role == MessageRole.Tool) continue;
                     Messages.Add(msg);
                     if (msg.Role == MessageRole.Assistant)
                     {

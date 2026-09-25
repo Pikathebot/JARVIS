@@ -1,5 +1,6 @@
 import shutil
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional
 from qdrant_client import QdrantClient
@@ -10,6 +11,13 @@ from app.rag.chunker import DocumentChunkModel
 from app.rag.embeddings import EmbeddingService
 
 logger = logging.getLogger("jarvis.rag.vector_store")
+
+# One embedded Qdrant client per index folder for the whole process. Embedded Qdrant locks its
+# folder to a single client, and the indexer, the retriever and every orchestrator each built
+# their own VectorStoreService -- so whichever opened a project second failed every upsert
+# ("already accessed by another instance of Qdrant client") and semantic retrieval found 0.
+_SHARED_CLIENTS: dict[str, QdrantClient] = {}
+_SHARED_LOCK = threading.RLock()  # also serialises calls: embedded Qdrant isn't documented thread-safe
 
 
 class VectorStoreService:
@@ -26,7 +34,6 @@ class VectorStoreService:
     ):
         self.workspace_root = Path(workspace_root or settings.workspace_path).resolve()
         self.embedding_service = embedding_service or EmbeddingService()
-        self._clients: dict[str, QdrantClient] = {}
         self._probed_dim: Optional[int] = None
 
     def _get_project_index_dir(self, project_id: str) -> Path:
@@ -50,18 +57,20 @@ class VectorStoreService:
 
     def get_client(self, project_id: str) -> tuple[QdrantClient, str]:
         """
-        Retrieve or initialize a local Qdrant client instance bound to a project's workspace directory.
+        The process-wide Qdrant client for a project's index folder (see ``_SHARED_CLIENTS``),
+        opened and given its collection on first use.
         """
         collection_name = f"project_{project_id}_chunks"
+        qdrant_path = self._get_project_index_dir(project_id)
+        key = str(qdrant_path.resolve())
 
-        if project_id not in self._clients:
-            qdrant_path = self._get_project_index_dir(project_id)
-            client = QdrantClient(path=str(qdrant_path))
-            dim = self._probe_embedding_dimension()
-
-            # Ensure collection exists
-            existing = [c.name for c in client.get_collections().collections]
-            if collection_name not in existing:
+        with _SHARED_LOCK:
+            client = _SHARED_CLIENTS.get(key)
+            if client is None:
+                client = QdrantClient(path=key)
+                _SHARED_CLIENTS[key] = client
+            if not client.collection_exists(collection_name):
+                dim = self._probe_embedding_dimension()
                 client.create_collection(
                     collection_name=collection_name,
                     vectors_config=qmodels.VectorParams(
@@ -71,9 +80,7 @@ class VectorStoreService:
                 )
                 logger.info("Created local Qdrant collection '%s' (dim=%d)", collection_name, dim)
 
-            self._clients[project_id] = client
-
-        return self._clients[project_id], collection_name
+        return client, collection_name
 
     def _ensure_valid_uuid(self, val: str) -> str:
         """Ensure point ID is a valid RFC 4122 UUID string for Qdrant."""
@@ -128,11 +135,12 @@ class VectorStoreService:
             )
 
 
-        client.upsert(
-            collection_name=collection_name,
-            points=points,
-            wait=True
-        )
+        with _SHARED_LOCK:
+            client.upsert(
+                collection_name=collection_name,
+                points=points,
+                wait=True
+            )
 
         logger.debug("Upserted %d vector points to Qdrant collection '%s'", len(points), collection_name)
         return len(points)
@@ -163,13 +171,14 @@ class VectorStoreService:
             if must_clauses:
                 qdrant_filter = qmodels.Filter(must=must_clauses)
 
-        results = client.query_points(
-            collection_name=collection_name,
-            query=query_vector,
-            limit=top_k,
-            query_filter=qdrant_filter,
-            with_payload=True
-        ).points
+        with _SHARED_LOCK:
+            results = client.query_points(
+                collection_name=collection_name,
+                query=query_vector,
+                limit=top_k,
+                query_filter=qdrant_filter,
+                with_payload=True
+            ).points
 
         matched_chunks: list[dict[str, Any]] = []
         for rank, res in enumerate(results, start=1):
@@ -199,12 +208,13 @@ class VectorStoreService:
         client, collection_name = self.get_client(project_id)
         by_point = {self._ensure_valid_uuid(c): c for c in chunk_ids}
         try:
-            points = client.retrieve(
-                collection_name=collection_name,
-                ids=list(by_point.keys()),
-                with_payload=False,
-                with_vectors=True,
-            )
+            with _SHARED_LOCK:
+                points = client.retrieve(
+                    collection_name=collection_name,
+                    ids=list(by_point.keys()),
+                    with_payload=False,
+                    with_vectors=True,
+                )
         except Exception as e:
             logger.debug("Vector read-back failed for project %s: %s", project_id, e)
             return {}
@@ -246,23 +256,25 @@ class VectorStoreService:
         if not chunk_ids:
             return
         client, collection_name = self.get_client(project_id)
-        client.delete(
-            collection_name=collection_name,
-            points_selector=qmodels.PointIdsList(points=[self._ensure_valid_uuid(c) for c in chunk_ids]),
-        )
+        with _SHARED_LOCK:
+            client.delete(
+                collection_name=collection_name,
+                points_selector=qmodels.PointIdsList(points=[self._ensure_valid_uuid(c) for c in chunk_ids]),
+            )
 
     def delete_project_index(self, project_id: str) -> None:
         """
         Close client and completely purge the on-disk Qdrant storage for a project.
         """
-        if project_id in self._clients:
-            client = self._clients.pop(project_id)
+        qdrant_dir = self.workspace_root / "projects" / project_id / "indexes" / "qdrant"
+        with _SHARED_LOCK:
+            client = _SHARED_CLIENTS.pop(str(qdrant_dir.resolve()), None)
+        if client is not None:
             try:
                 client.close()
             except Exception:
                 pass
 
-        qdrant_dir = self.workspace_root / "projects" / project_id / "indexes" / "qdrant"
         if qdrant_dir.exists():
             shutil.rmtree(qdrant_dir, ignore_errors=True)
             logger.info("Purged local Qdrant directory for project %s", project_id)
