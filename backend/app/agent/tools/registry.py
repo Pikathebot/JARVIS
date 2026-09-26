@@ -21,6 +21,7 @@ from app.agent.tools.audio_playback import play_audio, stop_playback
 from app.agent.tools.artifacts import create_artifact, update_artifact, read_artifact
 from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_checkout
+from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -59,6 +60,9 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "git_log": git_log,
     "git_commit": git_commit,
     "git_checkout": git_checkout,
+    # Long-term memory the model keeps for itself
+    "remember": remember,
+    "forget": forget,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -97,6 +101,9 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     git_log,
     git_commit,
     git_checkout,
+    # Memory
+    remember,
+    forget,
 ]
 
 
@@ -251,6 +258,24 @@ class GitCheckoutArgs(BaseModel):
     repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
 
 
+class RememberArgs(BaseModel):
+    content: str = Field(..., description="One fact, stated plainly so it makes sense on its own later (under 300 characters)")
+    kind: Literal[tuple(MEMORY_KINDS)] = Field(  # type: ignore[valid-type]
+        default="project",
+        description=(
+            "about_user: who the user is. preference: how they like things. workflow: how to work "
+            "with them. project: facts/conventions of this project. decision: what was settled "
+            "and why. task: open work to pick up later. The first three follow the user everywhere; "
+            "the rest belong to this workspace."
+        ),
+    )
+    replaces: str = Field(default="", description="Id of an existing memory this corrects or updates, from the memory list; empty for a new one")
+
+
+class ForgetArgs(BaseModel):
+    memory_id: str = Field(..., description="Id of the memory to delete, as shown in the memory list")
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "list_directory": ListDirectoryArgs,
@@ -285,6 +310,8 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "git_log": GitLogArgs,
     "git_commit": GitCommitArgs,
     "git_checkout": GitCheckoutArgs,
+    "remember": RememberArgs,
+    "forget": ForgetArgs,
 }
 
 
@@ -379,7 +406,15 @@ def get_relevant_tools(
     tools = _select_tools(query, chat_mode, matched_skills)
     if (chat_mode or "").upper() == FREEFORM_MODE:
         tools = [t for t in tools if t.__name__ not in WORKSPACE_BOUND_TOOLS]
+    # Memory is offered on every turn: what is worth keeping is the model's call, and it can come
+    # up in any message ("I'm on the night shift this week", "let's go with SQLite"), not only
+    # after a trigger word. Always the same two, so the offered set -- and the prompt prefix --
+    # stays stable.
+    tools = list(tools) + [t for t in MEMORY_TOOLS if t not in tools]
     return tools
+
+
+MEMORY_TOOLS = (remember, forget)
 
 
 def _select_tools(

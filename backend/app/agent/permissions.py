@@ -79,6 +79,9 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "git_log": RiskTier.LOW_RISK,
     "git_commit": RiskTier.CONFIRMATION_REQUIRED,
     "git_checkout": RiskTier.CONFIRMATION_REQUIRED,
+    # Memory: the model's own notes, shown to the user as a tool card; ephemeral turns refuse.
+    "remember": RiskTier.LOW_RISK,
+    "forget": RiskTier.LOW_RISK,
 }
 
 

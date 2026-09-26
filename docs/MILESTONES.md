@@ -313,3 +313,17 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   the targets of layers not in use; they are rebuilt at the current size when they return.
   Found with a new diagnostic: snapshots write `snapshot.shapes.txt` (`GlassScene.Describe`),
   which showed every shape published correctly and so put the fault in the renderer.
+
+- [x] **Long-term memory the model keeps itself (2026-09-25, confirmed on device 2026-09-26)** --
+  nothing had ever written a memory (live DB: 0 rows) and project memories were never read into
+  a turn. Now `remember`/`forget` (`agent/tools/memory.py`, LOW_RISK) are offered every turn and
+  rule 20 says to save unprompted what later chats need; about_user/preference/workflow are
+  global, project/decision/task belong to the workspace (a general fact outside one), all listed
+  back per turn with short ids (`build_project_memory_context` + the profile block). The 9B with
+  thinking off mostly *said* "noted" and saved nothing (3/8; 0/3 for "keep every prompt under
+  200 words"), so a message matching `memory_cue` (lasting-sounding, not a question) gets a
+  post-reply capture (`agent/memory_capture.py`): one side request, `remember` vs
+  `nothing_to_remember`, tool_choice=required, shown only the new message. Live probe, 8
+  messages x3: all 5 facts saved, repeats caught by `_same_fact`, chit-chat/questions saved
+  nothing. On device: a fact settled in one chat was recalled in a new chat in the same
+  workspace. Known gap: synonym near-duplicates ("answers" vs "responses") both get saved.

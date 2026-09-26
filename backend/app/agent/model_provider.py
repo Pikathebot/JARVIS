@@ -39,9 +39,13 @@ class ModelProvider(ABC):
         profile: str = "general",
         timeout: Optional[float] = None,
         thinking: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send a non-streaming chat completion request.
+
+        ``tool_choice`` is the OpenAI field ("auto" when None; "required" makes the model call one
+        of ``tools``). Providers that can't force a call treat it as auto.
 
         ``thinking`` overrides the model's launch-time reasoning setting for this one request
         (None = leave it as launched). Providers without a reasoning switch ignore it.

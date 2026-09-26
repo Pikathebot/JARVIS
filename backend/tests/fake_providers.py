@@ -32,7 +32,7 @@ class ClientBackedProvider(ModelProvider):
     async def list_models(self) -> list[str]:
         return []
 
-    async def chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None) -> dict[str, Any]:
+    async def chat(self, messages, model=None, tools=None, temperature=None, profile="general", timeout=None, thinking=None, tool_choice=None) -> dict[str, Any]:
         res = await self.client.chat(model=model, messages=messages, tools=tools)
         if isinstance(res, dict):
             return res

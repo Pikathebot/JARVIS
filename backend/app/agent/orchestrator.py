@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -29,10 +30,11 @@ from app.agent.confirmations import get_confirmation_registry
 from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
+from app.agent.memory_capture import capture_memory
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
-from app.memory.ephemeral import EphemeralMemoryStore, build_profile_context
+from app.memory.ephemeral import EphemeralMemoryStore, build_profile_context, build_project_memory_context
 from app.memory.compactor import ContextCompactor
 from app.skills.loader import SkillsLoader, Skill
 from app.mcp.manager import MCPManager
@@ -204,7 +206,8 @@ TOOL_PROTOCOL_RULES = (
     "16. Strip surrounding quotation marks from user queries if present.\n"
     "17. Always use clean relative workspace paths (e.g. '.', 'backend/app', 'scripts', 'docs').\n"
     "18. When the user asks to delete or remove a file, invoke 'delete_file(file_path=...)'. It asks the user to confirm first; that is expected.\n"
-    "19. NEVER report an action as done unless a tool result in this turn confirms it. If you have no tool for what was asked, or the tool was not run, say so plainly instead of describing a result you did not observe."
+    "19. NEVER report an action as done unless a tool result in this turn confirms it. If you have no tool for what was asked, or the tool was not run, say so plainly instead of describing a result you did not observe.\n"
+    "20. MEMORY: you keep your own long-term notes with 'remember' and 'forget'; what you saved earlier is listed with each message, tagged [id]. Save, without being asked, whatever a later conversation would need and could not get from the files: who the user is and how they like to work (about_user/preference/workflow), and in a workspace the project's conventions, decisions with their reason, and open tasks (project/decision/task). Also save whenever the user says to remember something, and forget when they say to forget it. Do NOT save passing chat, one-off requests, file contents or anything the files already record. One plain fact per memory. If a listed memory is wrong or outdated, fix it with replaces=<id> or forget it -- never add a near-duplicate. Save quietly, alongside your answer."
 )
 
 
@@ -255,6 +258,46 @@ def current_time_line(now: Optional[datetime] = None) -> str:
     return moment.strftime("%A %Y-%m-%d %H:%M") + (f" {zone}" if zone else "")
 
 
+# Phrasings that usually carry something worth keeping: a standing rule, a preference, a fact
+# about the user, a settled decision. Rule 20 alone (in the prefix, among 19 others) moved the
+# 9B to save 3 times in 8 on such messages -- it answered "noted" and saved nothing -- so a match
+# starts the post-reply capture (``memory_capture``). The regex only selects messages to ask
+# about; the model still decides and words the memory, so a loose match ("always" in a
+# question) costs one quick skip, not a junk memory.
+_MEMORY_CUE_RE = re.compile(
+    r"\b(?:remember|keep in mind|note that|make a note|from now on|going forward|henceforth|"
+    r"always|never|i (?:prefer|'d prefer|would prefer|like|love|hate|don't like|do not like|want you to)|"
+    r"my (?:name|job|role|timezone|birthday|wife|husband|partner|team|boss|company) is|call me|"
+    r"i(?:'m| am) (?:a|an|the|on|in|based|working)|i work (?:as|at|on|in)|"
+    r"let'?s (?:keep|use|go with|stick|make|do|stay|always|never|call)|"
+    r"we(?:'ll| will| should)? (?:use|go with|stick with|keep)|we(?:'ve)? decided|decided to|settled on|"
+    r"the plan is|deadline)\b",
+    re.IGNORECASE,
+)
+_FORGET_CUE_RE = re.compile(r"\b(?:forget (?:that|about|it|what)|don'?t remember|stop remembering|no longer true)\b", re.IGNORECASE)
+
+MEMORY_FORGET_NUDGE = (
+    "MEMORY: the user wants something forgotten. Call 'forget' with the id of the matching listed "
+    "memory (or fix it with remember(replaces=<id>)); saying so without the tool changes nothing."
+)
+
+
+def memory_cue(user_message: str) -> str:
+    """"save" when the message reads like something lasting (the post-reply capture then asks the
+    model to save or skip it), "forget" when it asks for something to be forgotten, else ""."""
+    text = user_message or ""
+    if _FORGET_CUE_RE.search(text):
+        return "forget"
+    # A question rarely states anything lasting, and "does python always pass by reference?"
+    # got itself saved as "User asked about Python passing by reference." -- unless it says
+    # "remember" outright ("can you remember that I'm off Fridays?").
+    if text.rstrip().endswith("?") and not re.search(r"\bremember\b", text, re.IGNORECASE):
+        return ""
+    if _MEMORY_CUE_RE.search(text):
+        return "save"
+    return ""
+
+
 def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None, profile_context: str = "") -> str:
     """
     The per-turn block: the current date and time, the user's profile on an ephemeral turn (see
@@ -278,6 +321,9 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
         sections.append(skill_injection.strip())
     return "\n\n".join(sections)
 
+
+# Fire-and-forget tasks started after a reply (memory capture); held so they aren't collected mid-run.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 TOOL_HISTORY_MAX_CHARS = 2000
 WORKSPACE_LISTING_LIMIT = 50
@@ -411,20 +457,22 @@ class AgentOrchestrator:
         """Per-turn lines about the user and where this conversation lives: the user's profile
         memories on every turn, Freeform's lack of a workspace (said outright, or a model with no
         file tools writes a tool call out as text), an ephemeral turn's off-the-record note, and
-        a project workspace's file list. The list changes as files are written, which is why it
-        rides on the user turn and never in the cached prefix."""
+        a project workspace's file list and what Jarvis remembers about the project. Both change
+        (files are written, memories saved), which is why they ride on the user turn and never
+        in the cached prefix."""
         parts = []
+        session_factory = getattr(self.memory_store, "_session_factory", None)
         if chat_mode == FREEFORM_MODE:
             parts.append(FREEFORM_TURN_NOTE)
-        elif (
-            chat_mode == "WORKSPACE" and project_id and workspace_path is not None
+        elif chat_mode == "WORKSPACE" and project_id:
             # A project without its own folder falls back to the shared root, i.e. every project.
-            and Path(workspace_path).resolve() != Path(settings.workspace_path).resolve()
-        ):
-            listing = workspace_file_listing(workspace_path)
-            if listing:
-                parts.append(listing)
-        session_factory = getattr(self.memory_store, "_session_factory", None)
+            if workspace_path is not None and Path(workspace_path).resolve() != Path(settings.workspace_path).resolve():
+                listing = workspace_file_listing(workspace_path)
+                if listing:
+                    parts.append(listing)
+            project_memory = build_project_memory_context(session_factory, project_id) if session_factory else ""
+            if project_memory:
+                parts.append(project_memory)
         profile = build_profile_context(session_factory, ephemeral=self.is_ephemeral) if session_factory else ""
         if profile:
             parts.append(profile)
@@ -813,6 +861,11 @@ class AgentOrchestrator:
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
         turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
+        cue = "" if self.is_ephemeral else memory_cue(user_message)
+        # Only "forget" is nudged inside the turn (it needs the listed ids); saving is left to the
+        # post-reply capture, which judged better than an in-turn nudge: that one fired on "always"
+        # in a question and saved junk, and added near-duplicates of listed memories.
+        turn_directive = MEMORY_FORGET_NUDGE if cue == "forget" else ""
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
@@ -877,6 +930,7 @@ class AgentOrchestrator:
             user_message=user_message,
             system_prompt=base_system_prompt,
             turn_context=turn_context,
+            turn_directive=turn_directive,
             project_id=active_rag_project_id,
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
@@ -1387,6 +1441,11 @@ class AgentOrchestrator:
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
         turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
+        cue = "" if self.is_ephemeral else memory_cue(user_message)
+        # Only "forget" is nudged inside the turn (it needs the listed ids); saving is left to the
+        # post-reply capture, which judged better than an in-turn nudge: that one fired on "always"
+        # in a question and saved junk, and added near-duplicates of listed memories.
+        turn_directive = MEMORY_FORGET_NUDGE if cue == "forget" else ""
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
         relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
@@ -1428,6 +1487,7 @@ class AgentOrchestrator:
             user_message=user_message,
             system_prompt=base_system_prompt,
             turn_context=turn_context,
+            turn_directive=turn_directive,
             project_id=active_rag_project_id,
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
@@ -1467,6 +1527,7 @@ class AgentOrchestrator:
             return
 
         target_provider = self.provider
+        saved_in_turn = finished = False
         async for ev in self._run_provider_stream_loop(
             provider=target_provider,
             session_id=active_session_id,
@@ -1485,7 +1546,26 @@ class AgentOrchestrator:
             tool_context=tool_context,
             thinking=thinking,
         ):
+            if ev.get("event") == "tool_start" and (ev.get("data") or {}).get("tool") == "remember":
+                saved_in_turn = True
+            elif ev.get("event") == "done":
+                finished = True
             yield ev
+
+        if cue == "save" and finished and not saved_in_turn:
+            self._start_memory_capture(target_provider, decision.model, user_message, tool_context)
+
+    def _start_memory_capture(
+        self,
+        provider: ModelProvider,
+        model: str,
+        user_message: str,
+        tool_context: dict[str, Any],
+    ) -> None:
+        """Run the memory safety net (``memory_capture``) after the reply, off the response path."""
+        task = asyncio.create_task(capture_memory(provider, model, user_message, dict(tool_context)))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 
     async def _run_provider_stream_loop(

@@ -277,6 +277,7 @@ class ContextManager:
         max_context_tokens: Optional[int] = None,
         vision: bool = False,
         turn_context: Optional[str] = None,
+        turn_directive: Optional[str] = None,
     ) -> ContextPackage:
         """
         Main entrypoint: Assembles strict tier-budgeted context package.
@@ -326,6 +327,8 @@ class ContextManager:
         turn_context_text = (turn_context or "").strip()
         if turn_context_text:
             tier1_tokens += self.token_counter.count(turn_context_text) + 4
+        if turn_directive and turn_directive.strip():
+            tier1_tokens += self.token_counter.count(turn_directive.strip())
         remaining_budget -= tier1_tokens
 
         # -------------------------------------------------------------
@@ -491,6 +494,11 @@ class ContextManager:
                 + "\n\n".join(trailing_parts)
                 + "]"
             ).strip()
+        # An instruction for this turn (the "forget" nudge) goes last and outside the "use only
+        # if relevant" bracket: inside it, and before a workspace's RAG chunks, a nudge moved the
+        # 9B on only some of the messages it was meant for.
+        if turn_directive and turn_directive.strip():
+            tier2_full_user_text = ((tier2_full_user_text or "").rstrip() + "\n\n" + turn_directive.strip()).strip()
 
         # Append current turn user prompt (if provided). With images the turn becomes a parts
         # list (text first, then image_url parts), which is what llama-server's OpenAI-compatible

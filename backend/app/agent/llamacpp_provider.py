@@ -353,6 +353,7 @@ class LlamaCppProvider(ModelProvider):
         profile: str = "general",
         timeout: Optional[float] = None,
         thinking: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send a non-streaming chat completion request to llama-server.
@@ -380,7 +381,7 @@ class LlamaCppProvider(ModelProvider):
                     formatted_tools.append(schema)
             if formatted_tools:
                 payload["tools"] = formatted_tools
-                payload["tool_choice"] = "auto"
+                payload["tool_choice"] = tool_choice or "auto"
 
         client_timeout = httpx.Timeout(connect=30.0, read=300.0, write=60.0, pool=None)
         if isinstance(req_timeout, (int, float)):

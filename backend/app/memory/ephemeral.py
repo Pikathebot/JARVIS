@@ -280,12 +280,12 @@ def build_profile_context(session_factory: Callable[[], Session], ephemeral: boo
                 .order_by(col(Memory.pinned).desc(), col(Memory.confidence).desc(), col(Memory.updated_at).desc())
                 .limit(PROFILE_MAX_ITEMS)
             ).all()
-            facts = [r.content.strip() for r in rows if r.content and r.content.strip()]
+            facts = [(r.id, r.content.strip()) for r in rows if r.content and r.content.strip()]
     except Exception:
         facts = []
     sections = []
     if facts:
-        lines = "\n".join(f"- {fact}" for fact in facts)
+        lines = "\n".join(f"- [{_short(mid)}] {fact}" for mid, fact in facts)
         sections.append(f"WHAT YOU KNOW ABOUT THE USER (long-term; use it naturally, do not recite it):\n{lines}")
     if ephemeral:
         sections.append(
@@ -293,3 +293,46 @@ def build_profile_context(session_factory: Callable[[], Session], ephemeral: boo
             "here will be remembered afterwards."
         )
     return "\n\n".join(sections)
+
+
+PROJECT_MEMORY_MAX_ITEMS = 25
+
+
+def _short(memory_id: str) -> str:
+    from app.agent.tools.memory import short_id
+    return short_id(memory_id)
+
+
+def build_project_memory_context(session_factory: Callable[[], Session], project_id: Optional[str]) -> str:
+    """
+    The per-turn block of what Jarvis has kept about this project -- conventions, decisions, open
+    tasks -- written by its own ``remember`` calls in earlier conversations. Each line carries the
+    memory's short id so it can be replaced or forgotten rather than duplicated. Per-turn, like
+    the profile, because it changes. Read-only; empty without a project or memories.
+    """
+    if not project_id:
+        return ""
+    from app.database.models import Memory
+
+    try:
+        with session_factory() as db:
+            rows = db.exec(
+                select(Memory)
+                .where(col(Memory.project_id) == project_id)
+                .order_by(col(Memory.pinned).desc(), col(Memory.updated_at).desc())
+                .limit(PROJECT_MEMORY_MAX_ITEMS)
+            ).all()
+            items = [(r.id, r.category, r.content.strip()) for r in rows if r.content and r.content.strip()]
+    except Exception:
+        return ""
+    if not items:
+        return ""
+    labels = {"important_decision": "decision", "persistent_task_context": "open task"}
+    lines = "\n".join(
+        f"- [{_short(mid)}] " + (f"({labels[cat]}) " if cat in labels else "") + text
+        for mid, cat, text in items
+    )
+    return (
+        "WHAT YOU REMEMBER ABOUT THIS PROJECT (from earlier conversations; replace or forget "
+        f"entries that are outdated):\n{lines}"
+    )
