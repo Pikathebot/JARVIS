@@ -135,13 +135,20 @@ def git_log(
     return out or "No commits yet."
 
 
-def git_commit(message: str, repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
+def git_commit(
+    message: str,
+    files: Optional[list[str]] = None,
+    repo_path: str = ".",
+    workspace_path: Optional[str] = None,
+) -> str:
     """
-    Stage all changes and create a git commit -- only when the user explicitly asks to commit.
-    Stages everything (git add -A) in the repository, then commits with the given message.
+    Create a git commit of all changes, or only the listed files -- only when the user explicitly asks to commit.
+    With `files`, only those paths are staged and committed (anything else already staged stays
+    staged, uncommitted); without it, everything is staged (git add -A) first.
 
     Args:
         message: The commit message.
+        files: Paths (relative to the repository) to commit; omit to commit every change.
         repo_path: Repository directory relative to the workspace (default '.').
         workspace_path: Optional active project workspace root boundary.
     """
@@ -151,14 +158,21 @@ def git_commit(message: str, repo_path: str = ".", workspace_path: Optional[str]
     cwd = _resolve_repo(repo_path, workspace_path)
     if isinstance(cwd, str):
         return cwd
-    code, out = _git(["add", "-A"], cwd)
+    if isinstance(files, str):
+        files = [files]
+    paths = [str(f).strip() for f in (files or []) if str(f or "").strip()]
+    # "--" before the paths: a model-supplied "-A" or "--force" is a file name, never an option.
+    code, out = _git(["add", "--", *paths] if paths else ["add", "-A"], cwd)
     if code != 0:
         return f"Error: git add failed: {out}"
-    code, staged = _git(["diff", "--staged", "--name-only"], cwd)
+    code, staged = _git(["diff", "--staged", "--name-only", "--", *paths], cwd)
     if code == 0 and not staged:
+        if paths:
+            return "Nothing to commit: those files have no changes."
         return "Nothing to commit: the working tree is clean."
-    logger.info("Committing in '%s': %s", cwd, msg[:80])
-    code, out = _git(["commit", "-m", msg], cwd)
+    logger.info("Committing in '%s' (%s): %s", cwd, ", ".join(paths) or "all changes", msg[:80])
+    # With paths, commit only them: `git commit -- <paths>` leaves other staged files out.
+    code, out = _git(["commit", "-m", msg, "--", *paths] if paths else ["commit", "-m", msg], cwd)
     if code != 0:
         return f"Error: git commit failed: {out}"
     return out

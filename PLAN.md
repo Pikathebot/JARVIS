@@ -158,6 +158,96 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
 - **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
   goes through `AwarenessMonitor` actions.
 
+### 4.6 Tool review with the user (started 2026-09-26)
+
+Going through the model's tools one at a time as a conversation with the user; the points for
+each are noted here and fixes are applied at the end (or next session), not mid-discussion.
+
+Done before the review started (2026-09-26, tests only): `kill_process` always asks (it was
+LOW_RISK for any single non-critical process); `stop_playback`/`play_audio` removed from the
+tool tables (speech plays in the client, the backend never plays audio); `git_commit` takes an
+optional `files` list and commits only those.
+
+Queued for discussion: keyword tool offering (`get_relevant_tools`: action words offer all
+tools, "open"/"task" offer every OS tool, offered tools accumulate per session); missing tools
+(routines from chat, screen look, open a URL in the browser).
+
+Per-tool notes:
+- `read_file` (agreed): (1) outside the workspace it asks, and once approved it reads -- today
+  the permission layer asks but the tool refuses anything outside the workspace anyway, so the
+  approval is pointless; the tool needs to know the call was approved. (2) Keep the "search the
+  workspace for that file name" fallback, but say so in the result ("wasn't at that path; this
+  is src/config.json"). (3) Check whether `projects.local_folders_json` is used; if it is,
+  linked folders count as inside the workspace. (4) Binary files: refuse with type and size
+  instead of returning replacement characters.
+- `list_directory` (agreed): (1) same as read_file -- asks outside the workspace, lists once
+  approved. (2) Size and modified date on files. (3) Known bulk folders (`node_modules`, `.git`,
+  `__pycache__`, `.venv`/`venv`, `bin`/`obj`, `dist`/`build`, ...) are shown as one line with
+  their entry count, not expanded; plus a hard cap (~200 entries, then "...and N more, use
+  find_files"). (4) Folders and files in separate groups, folders first.
+- `find_files` (agreed): (1) skip only clutter folders (`.git`, `node_modules`, `__pycache__`,
+  `.venv`, `bin`/`obj`) -- today it also hides every `data`/`build`/`dist` folder and every
+  dot-folder, and every image/media/archive/db/exe file, so `*.png` finds nothing; the
+  extension skip belongs to grep only. (2) Match folders too (the docstring already says so).
+  (3) Same as read_file outside the workspace. (4) Size + modified date per result, as in
+  list_directory (newest first).
+- `grep_in_files` (agreed): (1) skip files over a few MB and detect binaries by sniffing the
+  first bytes, not by extension (`.gguf`/`.bin`/`.pdf`/`.safetensors` are read whole today).
+  (2) Cut a matching line to ~200 chars around the match (minified JS / one-line JSON floods
+  the result). (3) Always show a small snippet: one line above and below each match. (4) Same
+  clutter-only folder skip as find_files. (5) Same as read_file outside the workspace.
+  (6) **Later session:** search inside PDFs / Word docs (needs text extraction).
+- `write_file` (agreed): (1) creating a new file runs; **overwriting an existing file asks**, and
+  the old version is copied to `.jarvis/backups/` in the workspace first so it can be restored
+  (today it overwrites silently, LOW_RISK). (2) Outside the workspace: allowed once approved,
+  and the card must say **why** -- add a short `reason` arg the model fills, shown on the
+  confirmation card (for overwrites too). (3) Encoding (UTF-16/BOM becomes UTF-8): leave it.
+- `patch_file` (agreed): (1) **bug:** re-index the file for RAG after a patch (write_file does,
+  patch_file doesn't, so workspace search returns the pre-edit text). (2) When the search block
+  isn't found, show the closest-matching region of the file, not its first 400 chars.
+  (3) Keeps running without asking, but backs the old version up to `.jarvis/backups/` like
+  write_file. (4) Wrong-file fallback says which file it patched (as read_file). (5) Optional
+  `replace_all`. (6) Outside the workspace: as write_file (asks, with a reason on the card).
+- `delete_file` (agreed): (1) send to the Windows Recycle Bin instead of `os.remove`.
+  (2) **bug:** drop the file from the RAG index (deleted files stay searchable today).
+  (3) Folders too -- Recycle Bin, asks, card shows how many files are inside. (4) Outside the
+  workspace: as write_file. (5) `reason` arg shown on the card.
+- `execute_command` (agreed; **(1) is the highest-priority fix of the review**): (1) **security
+  bug:** `SAFE_COMMAND_PREFIXES` is a prefix match, so `echo hi; Remove-Item -Recurse ...`,
+  `dir && del x`, `echo "" > notes.md`, `echo $(Stop-Computer)` run without asking. Safe only
+  when it is one plain command: no `;`, `&&`/`||`, `|`, `>`/`<`, `$(`, backtick, newline.
+  (2) A "safe" command must only touch paths inside the workspace (`cat C:\x\secret.txt`
+  bypasses read_file's gate today). (3) Timeout 30 s -> ~2 min, and return the output
+  captured before a timeout. (4) `reason` arg on the card -- matters most here. (5) Add
+  PowerShell spellings to `DANGEROUS_COMMAND_PATTERNS` (`Remove-Item -Recurse`, `Format-Volume`,
+  `Stop-Computer`/`Restart-Computer`, `Clear-Disk`, ...).
+- Artifacts (`create_`/`update_`/`read_artifact`, agreed): (1) **the user hit this in real
+  chats:** the model can't find an artifact again (update/read need an ID and nothing lists
+  them) -- list the workspace's artifacts (name + ID, ~20 most recent) in each turn's context,
+  like memories. (2) Rule for when to use one, Claude-style, in the tool description / protocol
+  rules: an artifact is substantial, self-contained content the user will reuse, edit or keep
+  (plan, report, spec, documents the workspace needs, longer code meant to be read/iterated);
+  short answers/snippets/explanations stay in chat; anything that must live on disk to be used
+  (a script to run, config, a change to project code) is a file. (3) `patch_artifact`
+  (find/replace like patch_file) instead of resending the whole content. (4) `read_artifact`
+  scoped to the current workspace.
+
+**Resume here (next session):** the git family (`git_status`/`git_diff`/`git_log`/`git_commit`/
+`git_checkout`) was presented, the user hasn't answered yet. Points raised: (1) split
+`git_checkout` into `git_switch` (branch) and `git_restore` (file; the card says it discards
+uncommitted changes, backup to `.jarvis/backups/` first); (2) no way to create a branch
+(`git_switch create=true`); (3) large diffs arrive cut in the middle -- show `--stat` first when
+big; (4) no push/pull -- deliberate? (suggested: push left out or card-only; pull risky with
+conflicts). After git: `web_search`, `fetch_url`, then the OS tools (`launch_app` has the
+Temp-escape bug noted above), `get_system_status`, `remember`/`forget`, then points 3 and 5
+(keyword offering, missing tools).
+- `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,
+  `"\appdata\local\temp\\"` in plain strings: `\t` is a tab and `\a` a bell, so the Temp
+  escalation never matches.
+- `stop_playback` leftovers: `tools/audio_playback.py` is dead (nothing calls `play_audio`);
+  only `main.py`'s shutdown call and the always-false `is_playing_audio` status field
+  (unused `IsPlayingAudio` in `ApiModels.cs`) keep it alive.
+
 ### 4.5 Waiting on the device
 
 **Paged-out model reload (2026-09-24, tests only):** when WDDM demotes our model to shared

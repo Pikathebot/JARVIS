@@ -68,10 +68,9 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "get_clipboard": RiskTier.CONFIRMATION_REQUIRED,
     "set_clipboard": RiskTier.CONFIRMATION_REQUIRED,
     "list_processes": RiskTier.LOW_RISK,
-    "kill_process": RiskTier.LOW_RISK,
+    # Killing a program loses its unsaved work, so it always asks; the reason says which kind.
+    "kill_process": RiskTier.CONFIRMATION_REQUIRED,
     "send_toast": RiskTier.LOW_RISK,
-    "play_audio": RiskTier.LOW_RISK,
-    "stop_playback": RiskTier.LOW_RISK,
     "get_system_status": RiskTier.LOW_RISK,
     # Git: reads are free; commit and checkout rewrite the working tree / history.
     "git_status": RiskTier.LOW_RISK,
@@ -320,7 +319,8 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
     1. Target matching Jarvis's own backend process (PID or self-process) is flagged for self-protection.
     2. Target process in MAJOR_PROCESS_NAMES -> CONFIRMATION_REQUIRED.
     3. Process name matching > 1 running instances -> CONFIRMATION_REQUIRED (multi-instance safety stop).
-    4. Single non-major instance or explicit non-major PID -> LOW_RISK.
+    4. Anything else still asks: a killed program loses its unsaved work, which can't be undone.
+    Always CONFIRMATION_REQUIRED; the tier stays in the return so the reason can name the case.
     """
     target_str = str(pid_or_name or "").strip()
     if not target_str:
@@ -344,9 +344,9 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
                     return RiskTier.CONFIRMATION_REQUIRED, f"Target process '{proc_name}' (PID {pid_num}) is a Windows core/critical system process."
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-            return RiskTier.LOW_RISK, "Explicit single PID termination."
+            return RiskTier.CONFIRMATION_REQUIRED, f"Terminating PID {pid_num} discards any unsaved work in it."
         except Exception:
-            return RiskTier.LOW_RISK, "PID lookup failed, defaulting to LOW_RISK."
+            return RiskTier.CONFIRMATION_REQUIRED, "PID lookup failed."
 
     # 2. String process name check
     raw_name = target_str.lower()
@@ -372,7 +372,7 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
     if match_count > 1:
         return RiskTier.CONFIRMATION_REQUIRED, f"Process name '{target_str}' matches {match_count} running instances. Multi-instance termination requires user confirmation."
 
-    return RiskTier.LOW_RISK, None
+    return RiskTier.CONFIRMATION_REQUIRED, f"Terminating '{target_str}' discards any unsaved work in it."
 
 
 

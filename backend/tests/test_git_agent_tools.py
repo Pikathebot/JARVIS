@@ -108,6 +108,22 @@ def test_commit_stages_everything_and_keeps_the_message_literal(repo):
 
 
 @needs_git
+def test_commit_with_files_commits_only_those(repo):
+    (repo / "keep.txt").write_text("mine\n", encoding="utf-8")
+    (repo / "other.txt").write_text("not mine\n", encoding="utf-8")
+    _run(repo, "add", "other.txt")  # already staged by someone else: must stay uncommitted
+    out = git_commit("only keep", files=["keep.txt"], workspace_path=str(repo))
+    assert not out.startswith("Error"), out
+    committed = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=repo,
+                               check=True, capture_output=True, text=True).stdout
+    assert "keep.txt" in committed and "other.txt" not in committed
+    assert "other.txt" in git_status(workspace_path=str(repo))
+    assert "no changes" in git_commit("again", files=["keep.txt"], workspace_path=str(repo))
+    # A path that looks like an option is still just a path.
+    assert git_commit("x", files=["--amend"], workspace_path=str(repo)).startswith("Error")
+
+
+@needs_git
 def test_checkout_switches_branch_and_refuses_options(repo):
     _run(repo, "branch", "feature")
     git_checkout("feature", workspace_path=str(repo))

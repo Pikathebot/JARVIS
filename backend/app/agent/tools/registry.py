@@ -17,7 +17,6 @@ from app.agent.tools.media_control import set_volume, mute_toggle, media_key
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
 from app.agent.tools.process_control import list_processes, kill_process
 from app.agent.tools.notify import send_toast
-from app.agent.tools.audio_playback import play_audio, stop_playback
 from app.agent.tools.artifacts import create_artifact, update_artifact, read_artifact
 from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_checkout
@@ -51,8 +50,6 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "list_processes": list_processes,
     "kill_process": kill_process,
     "send_toast": send_toast,
-    "play_audio": play_audio,
-    "stop_playback": stop_playback,
     "get_system_status": get_system_status,
     # Git (ported from the never-offered app/tools BaseTool stack)
     "git_status": git_status,
@@ -91,9 +88,8 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     list_processes,
     kill_process,
     send_toast,
-    # play_audio is deliberately absent: it takes raw audio bytes, which no model can supply
-    # (a string from a model just raises). It stays in TOOL_FUNCTIONS for the backend's own use.
-    stop_playback,
+    # No play_audio/stop_playback: Jarvis's speech is played by the client, so the backend has
+    # no audio of its own for a model to start or stop (removed 2026-09-26).
     get_system_status,
     # Git
     git_status,
@@ -220,14 +216,6 @@ class SendToastArgs(BaseModel):
     urgent: bool = Field(default=False, description="Flag for urgent/high priority toast")
 
 
-class PlayAudioArgs(BaseModel):
-    audio_bytes: bytes = Field(..., description="Raw audio bytes to play")
-
-
-class StopPlaybackArgs(BaseModel):
-    pass
-
-
 class GetSystemStatusArgs(BaseModel):
     pass
 
@@ -250,6 +238,7 @@ class GitLogArgs(BaseModel):
 
 class GitCommitArgs(BaseModel):
     message: str = Field(..., description="The commit message")
+    files: Optional[list[str]] = Field(default=None, description="Only these paths (relative to the repository) are committed; omit to commit every change")
     repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
 
 
@@ -302,8 +291,6 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "list_processes": ListProcessesArgs,
     "kill_process": KillProcessArgs,
     "send_toast": SendToastArgs,
-    "play_audio": PlayAudioArgs,
-    "stop_playback": StopPlaybackArgs,
     "get_system_status": GetSystemStatusArgs,
     "git_status": GitStatusArgs,
     "git_diff": GitDiffArgs,

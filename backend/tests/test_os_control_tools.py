@@ -100,19 +100,20 @@ def test_toast_low_risk():
     assert decision.risk_tier == RiskTier.LOW_RISK
 
 
-def test_kill_process_ordinary_single_low_risk():
-    """Terminating a single instance non-major process by name or PID is LOW_RISK."""
+def test_kill_process_ordinary_single_still_asks():
+    """Even a single ordinary process asks: killing it loses its unsaved work."""
     with patch("psutil.process_iter") as mock_iter:
         mock_proc = MagicMock()
         mock_proc.info = {"pid": 99999, "name": "dummy_calculator.exe"}
         mock_iter.return_value = [mock_proc]
 
         tier, reason = evaluate_kill_process_risk("dummy_calculator.exe")
-        assert tier == RiskTier.LOW_RISK
+        assert tier == RiskTier.CONFIRMATION_REQUIRED
+        assert "unsaved work" in reason
 
         dec = evaluate_tool_permission("kill_process", {"pid_or_name": "dummy_calculator.exe"})
-        assert dec.allowed is True
-        assert dec.risk_tier == RiskTier.LOW_RISK
+        assert dec.allowed is False
+        assert dec.risk_tier == RiskTier.CONFIRMATION_REQUIRED
 
 
 def test_kill_process_multi_instance_confirmation_required():
