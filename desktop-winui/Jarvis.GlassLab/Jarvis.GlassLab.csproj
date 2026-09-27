@@ -90,4 +90,9 @@
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- The design system's colours, shared as one source file (pure data, no Jarvis.Glass code):
+         this project still has no reference to Jarvis.Glass. -->
+    <Compile Include="..\Jarvis.Glass\Theme\JarvisPalette.cs" Link="Theme\JarvisPalette.cs" />
+  </ItemGroup>
 </Project>

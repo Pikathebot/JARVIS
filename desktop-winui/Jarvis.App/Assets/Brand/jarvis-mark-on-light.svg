@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Jarvis mark, for light grounds</title>
+  <defs><clipPath id="orb"><circle cx="25" cy="39" r="15"/></clipPath></defs>
+  <circle cx="25" cy="39" r="15" fill="#007aff"/>
+  <rect x="21" y="11" width="33" height="33" rx="10" fill="#1c1c1e" fill-opacity="0.06"/>
+  <g clip-path="url(#orb)"><rect x="21" y="11" width="33" height="33" rx="10" fill="#5eaeff"/></g>
+  <rect x="21" y="11" width="33" height="33" rx="10" fill="none" stroke="#1c1c1e" stroke-width="2.4"/>
+  <path d="M26.5 20.5 a6 6 0 0 1 6 -4.5" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="2" stroke-linecap="round"/></svg>

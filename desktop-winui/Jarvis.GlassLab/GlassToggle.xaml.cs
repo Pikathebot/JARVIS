@@ -38,8 +38,8 @@ public sealed partial class GlassToggle : UserControl
     public static class Material
     {
         // Track (always opaque).
-        public static Vector3 OnColor = new(0.204f, 0.780f, 0.349f);
-        public static Vector3 OffColor = new(0.914f, 0.914f, 0.922f);
+        public static Vector3 OnColor => Jarvis_Glass.JarvisPalette.ToVector3(Jarvis_Glass.JarvisPalette.Current.ToggleOn);
+        public static Vector3 OffColor => Jarvis_Glass.JarvisPalette.Over(Jarvis_Glass.JarvisPalette.Current.ToggleOff, Jarvis_Glass.JarvisPalette.Current.GlassTint);
         public static float TrackBezel = 4f;
         public static float TrackRefraction = 2f;
         public static float TrackSpecular = 0.25f;

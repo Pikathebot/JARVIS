@@ -34,9 +34,11 @@ public sealed partial class GlassSegmented : UserControl
         /// <summary>The selected pill grows by this factor when lifted.</summary>
         public static float LiftScale = 1.12f;
         public static float LabelSize = 13f;
-        /// <summary>Label grey on the track and near-black under the pill.</summary>
-        public static float LabelRestValue = 0.72f;
-        public static float LabelSelectedValue = 1.0f;
+        /// <summary>Unselected labels: label-secondary; the one the puck is nearest: label; the
+        /// copy riding the accent puck: on-accent.</summary>
+        public static Vector4 LabelRest => JarvisPalette.ToVector4(JarvisPalette.Current.LabelSecondary);
+        public static Vector4 LabelSelected => JarvisPalette.ToVector4(JarvisPalette.Current.Label);
+        public static Vector4 LabelOnPuck => JarvisPalette.ToVector4(JarvisPalette.Current.OnAccent);
         public static float LiftRefraction = 10f;
         public static float LiftBezelFraction = 0.5f;
     }
@@ -414,17 +416,17 @@ public sealed partial class GlassSegmented : UserControl
         for (var i = 0; i < _labels.Length; i++)
         {
             var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
-            var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
+            var labelColor = Vector4.Lerp(Material.LabelRest, Material.LabelSelected, near);
             var labelW = Math.Min(_labelWidths.Length == Count ? _labelWidths[i] : 0f, labelMax);
             var at = new Vector2(left + (PillInset + PillPadX + labelW * 0.5f) * scale, top + (rowTop[i] + rowHeight[i] * 0.5f) * scale);
             var size = Material.LabelSize * scale;
             var maxPx = labelMax * scale;
-            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer - 1, Clip: clip, MaxWidth: maxPx));
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, labelColor, Layer: baseLayer - 1, Clip: clip, MaxWidth: maxPx));
             var onPill = near * (1f - m);
             if (onPill > 0.002f)
             {
-                var d = Material.LabelSelectedValue;
-                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer, Clip: clip, MaxWidth: maxPx));
+                var d = Material.LabelOnPuck;
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, d with { W = onPill }, Layer: baseLayer, Clip: clip, MaxWidth: maxPx));
             }
         }
         scene.PublishText(this, texts.ToArray());
@@ -529,15 +531,15 @@ public sealed partial class GlassSegmented : UserControl
         for (var i = 0; i < _labels.Length; i++)
         {
             var near = Math.Clamp(1f - Math.Abs(_travel - i), 0f, 1f);
-            var v = Material.LabelRestValue + (Material.LabelSelectedValue - Material.LabelRestValue) * near;
+            var labelColor = Vector4.Lerp(Material.LabelRest, Material.LabelSelected, near);
             var at = new Vector2(left + (segLeft[i] + segWidth[i] * 0.5f) * scale, centerY);
             var size = Material.LabelSize * scale;
-            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(v, v, v, 1f), Layer: baseLayer, Clip: clip));
+            texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, labelColor, Layer: baseLayer, Clip: clip));
             var onPill = near * (1f - m);
             if (onPill > 0.002f)
             {
-                var d = Material.LabelSelectedValue;
-                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, new Vector4(d, d, d, onPill), Layer: baseLayer + 1, Clip: clip));
+                var d = Material.LabelOnPuck;
+                texts.Add(new GlassText(_labels[i], at, size, GlassText.SemiBold, d with { W = onPill }, Layer: baseLayer + 1, Clip: clip));
             }
         }
         _scene.PublishText(this, texts.ToArray());

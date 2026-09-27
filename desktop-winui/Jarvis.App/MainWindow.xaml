@@ -31,14 +31,12 @@
         <Grid x:Name="TitleBarRow" Grid.Row="0" Background="Transparent">
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
                 <!-- Only at narrow widths, where the sidebar is hidden and floats on demand. -->
-                <Button x:Name="SidebarToggleButton" Content="☰" FontSize="14" Padding="8,2" Background="Transparent" BorderThickness="0"
-                        Foreground="#06B6D4" Visibility="Collapsed" Click="SidebarToggle_Click" />
-                <TextBlock
-                    Text="JARVIS"
-                    Foreground="#06B6D4"
-                    FontWeight="SemiBold"
-                    FontSize="13"
-                    VerticalAlignment="Center" />
+                <Button x:Name="SidebarToggleButton" Padding="8,4" Background="Transparent" BorderThickness="0"
+                        Visibility="Collapsed" Click="SidebarToggle_Click" ToolTipService.ToolTip="Sidebar">
+                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE700;" FontSize="20" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                </Button>
+                <Image Source="{ThemeResource MarkSource}" Width="16" Height="16" VerticalAlignment="Center" />
+                <TextBlock Text="Jarvis" Style="{StaticResource BodyEmphasisText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
             </StackPanel>
         </Grid>
 
@@ -51,7 +49,7 @@
 
             <!-- Sidebar: floating glass slab. At narrow widths it leaves the grid and floats over
                  the chat from the ☰ button (see ApplyResponsiveLayout). -->
-            <glass:GlassSlab x:Name="SidebarSlab" Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="18">
+            <glass:GlassSlab x:Name="SidebarSlab" Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="{StaticResource RadiusPanel}">
                     <!--
                         Header / list / footer rows rather than one StackPanel: a ListView in a
                         StackPanel is measured with infinite height and realises every row. Each
@@ -66,7 +64,10 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Spacing="12">
-                        <TextBlock Text="Jarvis" Foreground="White" FontSize="18" FontWeight="Bold" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Image Source="{ThemeResource MarkSource}" Width="24" Height="24" VerticalAlignment="Center" />
+                            <TextBlock Text="Jarvis" Style="{StaticResource Title3Text}" VerticalAlignment="Center" />
+                        </StackPanel>
 
                         <!--
                             The two spaces. Freeform: plain conversation, no project, no working
@@ -83,8 +84,8 @@
                         -->
                         <glass:GlassButton x:Name="WorkspaceButton" Text="Default Workspace" HorizontalAlignment="Stretch" Click="WorkspaceButton_Click" />
 
-                        <glass:GlassButton Text="+ New Chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
-                        <TextBlock x:Name="RecentSessionsHeader" Text="Recent Sessions" Foreground="#94A3B8" FontSize="12" Margin="0,12,0,0" />
+                        <glass:GlassButton Text="New chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
+                        <TextBlock x:Name="RecentSessionsHeader" Text="Recent sessions" Style="{StaticResource SectionHeaderText}" Margin="0,12,0,0" />
                         </StackPanel>
                         <!--
                             Each session is a small glass row nested in the sidebar slab (auto
@@ -114,7 +115,8 @@
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="models:Session">
                                     <glass:GlassSlab
-                                        SlabCornerRadius="10"
+                                        Material="Clear"
+                                        SlabCornerRadius="{StaticResource RadiusRow}"
                                         TintAmount="0.14"
                                         Frost="0"
                                         BezelWidth="4"
@@ -131,19 +133,19 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
                                             Text="{x:Bind local:MainWindow.SessionRowLabel(SessionId, LastMessage)}"
-                                            Foreground="#CBD5E1"
-                                            FontSize="12"
+                                            Style="{StaticResource BodyText}"
                                             VerticalAlignment="Center"
                                             TextTrimming="CharacterEllipsis" />
                                         <Button
                                             Grid.Column="1"
-                                            Content="✕"
-                                            FontSize="10"
                                             Padding="4"
                                             Background="Transparent"
                                             BorderThickness="0"
+                                            ToolTipService.ToolTip="Delete session"
                                             Tag="{x:Bind}"
-                                            Click="DeleteSession_Click" />
+                                            Click="DeleteSession_Click">
+                                            <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                                        </Button>
                                     </glass:GlassSlab>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -164,7 +166,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Header: session label, mode toggle, governor pill -->
-                <glass:GlassSlab x:Name="HeaderSlab" Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="14">
+                <glass:GlassSlab x:Name="HeaderSlab" Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="{StaticResource RadiusPanel}">
                         <Grid x:Name="HeaderGrid" Padding="16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -172,15 +174,19 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="SessionLabel" Text="Default Workspace" Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                            <Button Grid.Column="1" Margin="0,0,12,0" Padding="10,4" Background="Transparent" BorderThickness="1">
-                                <TextBlock x:Name="GovernorPillText" Text="Offline" Foreground="#F43F5E" FontSize="12" />
+                            <TextBlock x:Name="SessionLabel" Text="Default Workspace" Style="{StaticResource HeadlineText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <Button Grid.Column="1" Margin="0,0,12,0" Padding="10,4" Background="Transparent" BorderThickness="1" CornerRadius="{StaticResource PillCornerRadius}">
+                                <!-- Status is an icon, a word and a colour (UpdateGovernorPill). -->
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon x:Name="GovernorPillIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xEA39;" FontSize="12" Foreground="{ThemeResource StatusErrorBrush}" />
+                                    <TextBlock x:Name="GovernorPillText" Text="Offline" Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusErrorBrush}" />
+                                </StackPanel>
                                 <Button.Flyout>
                                     <Flyout Placement="Bottom">
                                         <StackPanel Spacing="8" MinWidth="220">
-                                            <TextBlock x:Name="GovernorBackendRow" Text="Backend: —" FontSize="12" Foreground="#CBD5E1" />
-                                            <TextBlock x:Name="GovernorModelRow" Text="Model: —" FontSize="12" Foreground="#CBD5E1" />
-                                            <TextBlock x:Name="GovernorStatusRow" Text="Status: —" FontSize="12" Foreground="#CBD5E1" />
+                                            <TextBlock x:Name="GovernorBackendRow" Text="Backend: —" Style="{StaticResource BodyText}" />
+                                            <TextBlock x:Name="GovernorModelRow" Text="Model: —" Style="{StaticResource BodyText}" />
+                                            <TextBlock x:Name="GovernorStatusRow" Text="Status: —" Style="{StaticResource BodyText}" />
                                         </StackPanel>
                                     </Flyout>
                                 </Button.Flyout>
@@ -191,20 +197,20 @@
                                      captions are the first thing a narrow header sheds (FitHeader);
                                      the tooltips name the switches then. -->
                                 <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
-                                <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
                                 <glass:GlassToggle x:Name="EphemeralToggle" SwitchScale="0.75" ToolTipService.ToolTip="Ephemeral: nothing from this chat is stored" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
-                                <TextBlock x:Name="GovernorLabel" Text="Governor" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <TextBlock x:Name="GovernorLabel" Text="Governor" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" Margin="8,0,0,0" />
                                 <glass:GlassToggle x:Name="GovernorToggle" SwitchScale="0.75" ToolTipService.ToolTip="Governor" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
-                                <TextBlock x:Name="MicLabel" Text="Mic" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <TextBlock x:Name="MicLabel" Text="Mic" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" Margin="8,0,0,0" />
                                 <glass:GlassToggle x:Name="MicToggle" SwitchScale="0.75" ToolTipService.ToolTip="Microphone" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
-                                <TextBlock x:Name="VoiceStateText" Text="" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="VoiceStateText" Text="" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
                                 <glass:GlassButton x:Name="PanelButton" Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
                             </StackPanel>
                         </Grid>
                 </glass:GlassSlab>
 
                 <!-- Message list -->
-                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" SlabCornerRadius="18">
+                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" SlabCornerRadius="{StaticResource RadiusPanel}">
                         <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -251,7 +257,7 @@
                 </glass:GlassSlab>
 
                 <!-- Composer -->
-                <glass:GlassSlab x:Name="ComposerSlab" Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="14">
+                <glass:GlassSlab x:Name="ComposerSlab" Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="{StaticResource RadiusPanel}">
                         <StackPanel Padding="12" Spacing="6">
                             <ItemsControl x:Name="AttachmentChips">
                                 <ItemsControl.ItemsPanel>
@@ -262,14 +268,17 @@
                             </ItemsControl>
                             <!-- Only shown while an image is attached: says whether the model will
                                  actually see it, or have it described by the captioner. -->
-                            <TextBlock x:Name="VisionHint" FontSize="11" Opacity="0.7" Visibility="Collapsed" TextWrapping="Wrap" />
+                            <TextBlock x:Name="VisionHint" Style="{StaticResource SecondaryFootnoteText}" Visibility="Collapsed" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <Button Content="📎" FontSize="14" Padding="8,4" Click="AttachFile_Click" />
+                                <Button Padding="8,4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center"
+                                        ToolTipService.ToolTip="Attach a file" Click="AttachFile_Click">
+                                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE723;" FontSize="20" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                                </Button>
                                 <glass:GlassTextField
                                     x:Name="ComposerBox"
                                     Grid.Column="1"
@@ -305,7 +314,7 @@
                 x:Name="RightPanel"
                 Grid.Column="2"
                 Margin="8,0,0,0"
-                SlabCornerRadius="18"
+                SlabCornerRadius="{StaticResource RadiusPanel}"
                 Visibility="Collapsed">
                     <!--
                         Tabs are a GlassSegmented (labels rendered inside the glass, the pill
@@ -320,7 +329,7 @@
                         <Grid Margin="12,12,12,0">
                             <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Reasoning|Context|Activity" SelectionChanged="RightPanelTabs_SelectionChanged" />
                             <!-- Reasoning-is-streaming badge, top-right of the tab strip. -->
-                            <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="#06B6D4" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0" Visibility="Collapsed" />
+                            <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="{ThemeResource AccentBrush}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0" Visibility="Collapsed" />
                         </Grid>
                         <Grid Grid.Row="1">
                             <Grid x:Name="ArtifactsPage" Visibility="Visible">
@@ -344,8 +353,8 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{x:Bind Name}" Foreground="#CBD5E1" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Grid.Column="1" Text="{x:Bind Type}" Foreground="#64748B" FontSize="10" />
+                                                <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind Type}" Style="{StaticResource CaptionText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
                                             </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
@@ -354,9 +363,7 @@
                                     <TextBlock
                                         x:Name="ArtifactContent"
                                         Text="{x:Bind RightPanelViewModel.SelectedContent, Mode=OneWay}"
-                                        FontFamily="Cascadia Mono, Consolas, monospace"
-                                        FontSize="12"
-                                        Foreground="#E2E8F0"
+                                        Style="{StaticResource CodeBlockText}"
                                         TextWrapping="Wrap"
                                         IsTextSelectionEnabled="True" />
                                 </ScrollViewer>
@@ -376,7 +383,7 @@
                                     SelectionMode="None">
                                     <ListView.ItemTemplate>
                                         <DataTemplate x:DataType="models:ProjectFile">
-                                            <TextBlock Text="{x:Bind Name}" Foreground="#CBD5E1" FontSize="12" Padding="8,4" />
+                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" Padding="8,4" />
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
                                 </ListView>
@@ -385,14 +392,13 @@
                             <Grid x:Name="ReasoningPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <TextBlock x:Name="ReasoningText" Text="No reasoning for this turn yet."
-                                           TextWrapping="Wrap" FontSize="12" Foreground="#94A3B8"
-                                           FontFamily="Cascadia Mono, Consolas, monospace" />
+                                           TextWrapping="Wrap" Style="{StaticResource DataText}" />
                             </ScrollViewer>
                             </Grid>
                             <Grid x:Name="ContextPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <StackPanel Spacing="10">
-                                    <TextBlock x:Name="ContextBudgetHeader" Text="No turn yet" Foreground="White" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ContextBudgetHeader" Text="No turn yet" Style="{StaticResource HeadlineText}" />
                                     <Grid x:Name="ContextBudgetGrid" ColumnSpacing="8" RowSpacing="4">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -402,12 +408,12 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Grid.Column="0" x:Name="Tier1Text" Text="Tier1 System: —" FontSize="11" Foreground="#94A3B8" />
-                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="Tier2Text" Text="Tier2 User+Files: —" FontSize="11" Foreground="#94A3B8" />
-                                        <TextBlock Grid.Row="1" Grid.Column="0" x:Name="Tier3Text" Text="Tier3 RAG: —" FontSize="11" Foreground="#94A3B8" />
-                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="Tier4Text" Text="Tier4 History: —" FontSize="11" Foreground="#94A3B8" />
+                                        <TextBlock Grid.Row="0" Grid.Column="0" x:Name="Tier1Text" Text="Tier1 System: —" Style="{StaticResource DataText}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="Tier2Text" Text="Tier2 User+Files: —" Style="{StaticResource DataText}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" x:Name="Tier3Text" Text="Tier3 RAG: —" Style="{StaticResource DataText}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="Tier4Text" Text="Tier4 History: —" Style="{StaticResource DataText}" />
                                     </Grid>
-                                    <TextBlock Text="Retrieved Code Chunks" Foreground="#64748B" FontSize="11" Margin="0,8,0,0" />
+                                    <TextBlock Text="Retrieved code chunks" Style="{StaticResource SectionHeaderText}" Margin="0,8,0,0" />
                                     <ItemsControl x:Name="RetrievedChunksList">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -453,7 +459,8 @@
             Visibility="Collapsed"
             HorizontalAlignment="Left"
             VerticalAlignment="Top"
-            SlabCornerRadius="14"
+            Material="Thick"
+            SlabCornerRadius="{StaticResource RadiusSheet}"
             TintAmount="0.55"
             Frost="16"
             BezelWidth="8"
@@ -468,7 +475,7 @@
                 <!-- Rows + the sliding puck are the vertical segmented control; Items set from code. -->
                 <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" DragPullChanged="WorkspaceMenu_DragPullChanged" />
                 <!-- Not a row of the menu: creating is an action, not a selection the puck should land on. -->
-                <glass:GlassButton x:Name="NewWorkspaceButton" Text="＋ New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
+                <glass:GlassButton x:Name="NewWorkspaceButton" Text="New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
             </StackPanel>
         </glass:GlassSlab>
 
@@ -484,21 +491,25 @@
                 x:Name="StartupCard"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
-                SlabCornerRadius="24"
+                Material="Thick"
+                SlabCornerRadius="{StaticResource RadiusSheet}"
                 TintAmount="0.3"
                 Frost="12"
-                Padding="44,26,44,22">
+                Padding="32,24,32,20">
                 <StackPanel Spacing="10" Width="200">
-                    <TextBlock Text="JARVIS" Foreground="#06B6D4" FontSize="24" FontWeight="SemiBold" CharacterSpacing="360" HorizontalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                        <Image Source="{ThemeResource MarkSource}" Width="34" Height="34" VerticalAlignment="Center" />
+                        <TextBlock Text="Jarvis" Style="{StaticResource LargeTitleText}" VerticalAlignment="Center" />
+                    </StackPanel>
                     <!-- Progress: a fixed track; the fill is scaled from its left edge, never resized. -->
-                    <Grid Height="2" CornerRadius="1" Background="#1F94A3B8">
-                        <Rectangle x:Name="StartupProgress" Fill="#06B6D4" RadiusX="1" RadiusY="1" RenderTransformOrigin="0,0.5">
+                    <Grid Height="2" CornerRadius="1" Background="{ThemeResource MeterTrackBrush}">
+                        <Rectangle x:Name="StartupProgress" Fill="{ThemeResource AccentBrush}" RadiusX="1" RadiusY="1" RenderTransformOrigin="0,0.5">
                             <Rectangle.RenderTransform>
                                 <ScaleTransform x:Name="StartupProgressScale" ScaleX="0" />
                             </Rectangle.RenderTransform>
                         </Rectangle>
                     </Grid>
-                    <TextBlock x:Name="StartupStatus" Text="Starting the backend" Foreground="#94A3B8" FontSize="12" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="StartupStatus" Text="Starting the backend" Style="{StaticResource SecondaryFootnoteText}" HorizontalAlignment="Center" />
                 </StackPanel>
             </glass:GlassSlab>
         </Grid>

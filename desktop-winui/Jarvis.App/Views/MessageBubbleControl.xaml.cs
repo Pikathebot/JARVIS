@@ -60,7 +60,17 @@ public sealed partial class MessageBubbleControl : UserControl
         DataContextChanged += (_, _) => Bind(DataContext as ChatMessage);
         // The ListView recycles these controls; a timer left running would render into a
         // container that has since been handed to a different message.
-        Unloaded += (_, _) => _renderThrottle.Stop();
+        Unloaded += (_, _) =>
+        {
+            _renderThrottle.Stop();
+            Themes.JarvisTheme.Applied -= Render;
+        };
+        // Markdown and code runs take their brushes when built; rebuild on an appearance change.
+        Loaded += (_, _) =>
+        {
+            Themes.JarvisTheme.Applied -= Render;
+            Themes.JarvisTheme.Applied += Render;
+        };
     }
 
     private void Bind(ChatMessage? message)
@@ -182,9 +192,8 @@ public sealed partial class MessageBubbleControl : UserControl
             {
                 _streamingText = new TextBlock
                 {
+                    Style = Themes.JarvisTheme.Style("MessageText"),
                     TextWrapping = TextWrapping.Wrap,
-                    FontSize = 14,
-                    Foreground = new SolidColorBrush(Color.FromArgb(255, 243, 247, 252)),
                     IsTextSelectionEnabled = true,
                 };
                 ContentHost.Content = _streamingText;

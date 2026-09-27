@@ -18,12 +18,12 @@
         <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
         <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
         <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
-        <SolidColorBrush x:Key="TextControlForeground" Color="White" />
-        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="White" />
-        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="White" />
-        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#8CFFFFFF" />
-        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#A0FFFFFF" />
-        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#70FFFFFF" />
+        <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource LabelColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource LabelColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource LabelColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource PlaceholderColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource PlaceholderColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource PlaceholderColor}" />
         <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
         <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
     </UserControl.Resources>

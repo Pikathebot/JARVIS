@@ -26,8 +26,9 @@ public sealed partial class GlassSlider : UserControl
 
     public static class Material
     {
-        public static Vector3 RailColor = new(0.914f, 0.914f, 0.922f);
-        public static Vector3 FillColor = new(0.039f, 0.518f, 1.0f); // system blue #0A84FF
+        /// <summary>The toggle-off track colour (fill-primary in the tokens reads the same), flattened over glass-tint.</summary>
+        public static Vector3 RailColor => JarvisPalette.Over(JarvisPalette.Current.ToggleOff, JarvisPalette.Current.GlassTint);
+        public static Vector3 FillColor => JarvisPalette.ToVector3(JarvisPalette.Current.Accent);
         public static float RailSpecular = 0.2f;
         public static float RailBezel = 2.5f;
         // Measured off the iPad recording's Liquid Glass slider (t=36.5-63, 60 fps, 570 resting

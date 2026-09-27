@@ -24,8 +24,8 @@ public sealed partial class GlassSlider : UserControl
 
     public static class Material
     {
-        public static Vector3 RailColor = new(0.914f, 0.914f, 0.922f);
-        public static Vector3 FillColor = new(0.039f, 0.518f, 1.0f); // system blue #0A84FF
+        public static Vector3 RailColor => Jarvis_Glass.JarvisPalette.Over(Jarvis_Glass.JarvisPalette.Current.ToggleOff, Jarvis_Glass.JarvisPalette.Current.GlassTint);
+        public static Vector3 FillColor => Jarvis_Glass.JarvisPalette.ToVector3(Jarvis_Glass.JarvisPalette.Current.Accent);
         public static float RailSpecular = 0.2f;
         public static float RailBezel = 2.5f;
         /// <summary>Thumb width / height at rest: >1 is a lozenge along the rail, 1 a circle.</summary>

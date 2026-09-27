@@ -9,18 +9,19 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <!-- Port of AwarenessTray.tsx: bottom-right stack of dismissible severity-coded cards. -->
+    <!-- Port of AwarenessTray.tsx: bottom-right stack of dismissible severity-coded cards.
+         Each card is an icon, a title and a detail; the colour repeats what the icon says. -->
     <UserControl.Resources>
         <local:SeverityToBrushConverter x:Key="SeverityToBrush" />
         <local:SeverityToBackgroundConverter x:Key="SeverityToBackground" />
+        <local:SeverityToGlyphConverter x:Key="SeverityToGlyph" />
     </UserControl.Resources>
 
     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="8" Width="320">
         <TextBlock
             x:Name="DismissAllLink"
             Text=""
-            Foreground="#94A3B8"
-            FontSize="11"
+            Style="{StaticResource SecondaryFootnoteText}"
             HorizontalAlignment="Right"
             Tapped="DismissAll_Tapped" />
         <ItemsControl x:Name="ObservationsList" ItemsSource="{x:Bind ViewModel.Observations, Mode=OneWay}">
@@ -33,35 +34,37 @@
                 <DataTemplate x:DataType="models:Observation">
                     <Border
                         BorderThickness="1"
-                        CornerRadius="12"
+                        CornerRadius="{StaticResource CardCornerRadius}"
                         Padding="12,10"
                         BorderBrush="{x:Bind Severity, Converter={StaticResource SeverityToBrush}}"
                         Background="{x:Bind Severity, Converter={StaticResource SeverityToBackground}}">
-                        <Grid>
+                        <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Ellipse
-                                Width="8"
-                                Height="8"
-                                Margin="0,4,8,0"
+                            <FontIcon
+                                Style="{StaticResource JarvisIcon}"
+                                Margin="0,2,0,0"
                                 VerticalAlignment="Top"
-                                Fill="{x:Bind Severity, Converter={StaticResource SeverityToBrush}}" />
+                                Glyph="{x:Bind Severity, Converter={StaticResource SeverityToGlyph}}"
+                                Foreground="{x:Bind Severity, Converter={StaticResource SeverityToBrush}}" />
                             <StackPanel Grid.Column="1" Spacing="2">
-                                <TextBlock Text="{x:Bind Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                <TextBlock Text="{x:Bind Detail}" Foreground="#CBD5E1" FontSize="11" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind Title}" Style="{StaticResource HeadlineText}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind Detail}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
                             </StackPanel>
                             <Button
                                 Grid.Column="2"
-                                Content="✕"
-                                FontSize="10"
                                 Padding="4"
+                                VerticalAlignment="Top"
                                 Background="Transparent"
                                 BorderThickness="0"
+                                ToolTipService.ToolTip="Dismiss"
                                 Tag="{x:Bind}"
-                                Click="DismissObservation_Click" />
+                                Click="DismissObservation_Click">
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                            </Button>
                         </Grid>
                     </Border>
                 </DataTemplate>

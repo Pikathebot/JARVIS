@@ -154,15 +154,16 @@ public sealed partial class HudWindow : Window
     private void UpdateVoiceVisuals()
     {
         var active = VoiceViewModel.IsActive;
-        MicButton.Stroke = new Microsoft.UI.Xaml.Media.SolidColorBrush(active ? Colors.Cyan : Colors.SlateGray);
+        MicButton.Stroke = Themes.JarvisTheme.Brush(active ? "Accent" : "LabelSecondary");
         StateLabel.Text = active ? VoiceViewModel.State switch
         {
-            VoiceState.Listening => "LISTENING",
-            VoiceState.Armed => "GO AHEAD",
-            VoiceState.Thinking => "WORKING",
-            VoiceState.Speaking => "SPEAKING",
-            _ => "OFFLINE",
-        } : "OFFLINE";
+            VoiceState.Listening => "Listening",
+            VoiceState.Armed => "Go ahead",
+            VoiceState.Thinking => "Working",
+            VoiceState.Speaking => "Speaking",
+            _ => "Offline",
+        } : "Offline";
+        StateLabel.Foreground = Themes.JarvisTheme.Brush(active ? "Label" : "LabelSecondary");
 
         var scale = 1.0 + Math.Min(1.0, VoiceViewModel.Level) * 0.35;
         MicButton.RenderTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { ScaleX = scale, ScaleY = scale, CenterX = 26, CenterY = 26 };
@@ -242,16 +243,19 @@ public sealed partial class HudWindow : Window
         }
         catch
         {
-            DispatcherQueue.TryEnqueue(() => StateLabel.Text = "OFFLINE");
+            DispatcherQueue.TryEnqueue(() => StateLabel.Text = "Offline");
         }
     }
 
     private void ApplySnapshot(AwarenessSnapshot snapshot)
     {
-        VramRing.Text = $"VRAM {snapshot.VramUtilPercent:0}%";
-        GpuRing.Text = $"GPU {snapshot.GpuUtilPercent:0}%";
-        VramRing.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(snapshot.VramUtilPercent >= 88 ? Colors.OrangeRed : Colors.Cyan);
-        GpuRing.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(snapshot.GpuUtilPercent >= 90 ? Colors.Orange : Colors.Gold);
+        // Meters: normal under the soft limit, warning past it -- and the word says so too.
+        var vramHigh = snapshot.VramUtilPercent >= 88;
+        var gpuHigh = snapshot.GpuUtilPercent >= 90;
+        VramRing.Text = $"VRAM {snapshot.VramUtilPercent:0}%" + (vramHigh ? " · high" : "");
+        GpuRing.Text = $"GPU {snapshot.GpuUtilPercent:0}%" + (gpuHigh ? " · busy" : "");
+        VramRing.Foreground = Themes.JarvisTheme.Brush(vramHigh ? "MeterHigh" : "LabelSecondary");
+        GpuRing.Foreground = Themes.JarvisTheme.Brush(gpuHigh ? "MeterHigh" : "LabelSecondary");
     }
 
     /// <summary>Non-streaming chat turn for the HUD — mirrors sendChatApi() in api.ts. The

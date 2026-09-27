@@ -248,6 +248,45 @@ Temp-escape bug noted above), `get_system_status`, `remember`/`forget`, then poi
   only `main.py`'s shutdown call and the always-false `is_playing_audio` status field
   (unused `IsPlayingAudio` in `ApiModels.cs`) keep it alive.
 
+### 4.7 Design system v2 (started 2026-09-27)
+
+Spec: the "Jarvis" Design System artifact (https://claude.ai/artifact/Hf6FFbtmz7dFhnTrBoERzQ) --
+tokens, guidelines, component cards, an audit of v1 and a migration map from every old literal.
+Decisions: iOS 26 + "calm instrument"; iOS blue as the one accent; iOS status colours with
+icon + word; a desktop type scale (body 13, messages 15, floor 11; not Dynamic Type); themes
+dark / light glass / high contrast; Segoe Fluent icons; new mark (blue orb behind a glass pane).
+
+**a. Code phase 1 -- tokens into the app (2026-09-27, build-verified):**
+- `Jarvis.Glass/Theme/JarvisPalette.cs`: every colour per appearance, the one source. GlassLab
+  links the file (still no project reference).
+- `Jarvis.App/Themes/JarvisTheme.cs` builds `{Token}Brush` / `{Token}Color` theme dictionaries
+  from it (Dark, Light, and HighContrast for Windows' own HC); Jarvis's HC recolours the Dark
+  brushes in place. `Themes/Typography.xaml`: text styles, radii, control sizes.
+  `Themes/StatusStyle.cs`: status kind -> colour + glyph.
+- `GlassSlab.Material` (Regular / Thick / Clear / Accent): tint colour from the palette, tint
+  floors per appearance (dark unchanged), HC outline and no shadows.
+- Every XAML/C# colour literal, font size and emoji in Jarvis.App migrated; Settings has an
+  Appearance switch (Dark | Light | High contrast), saved in LocalSettings.
+
+Runs on the device (2026-09-27): dark seen in a snapshot; the user switched to Light and High
+contrast and both work -- fine-tuning of those two is deferred. Saved choice across restarts
+not yet confirmed. Two startup crashes fixed on the way: one ResourceDictionary under both "Dark" and
+"Default" (WinUI refuses it), and `Application.Resources` throwing E_UNEXPECTED in the App
+constructor -- `JarvisTheme.Install` now runs at the top of `OnLaunched`.
+
+**c. Next -- the AppLayout (approved by the user 2026-09-27):** the artifact's `AppLayout` card.
+Plain-row sidebar (date groups, search, compose icon, hover "..."); toolbar as clear-glass
+capsules in the caption row; one status pill (model + VRAM) whose popover holds meters,
+Governor, fast model, Free VRAM, Models...; one thick reading surface; 720 px transcript,
+assistant turns without a bubble, one-line tool-step rows; composer as one capsule (attach,
+field, mic, round send/stop); inspector (old right panel) closed until an artifact/context
+arrives; Ephemeral as a toolbar eye. Popover must be inline glass, not a Flyout.
+
+**b. Still open:** adaptive glass (renderer: per-slab luminance, flip small chrome between
+dark/light, raise tint on reading areas -- thresholds in the artifact); app tile PNGs from
+`Assets/Brand/jarvis-app-tile.svg` (manifest assets are still the template cross); awareness
+toasts as glass (they are XAML borders, and a sibling slab would share the messages layer).
+
 ### 4.5 Waiting on the device
 
 **Paged-out model reload (2026-09-24, tests only):** when WDDM demotes our model to shared

@@ -30,7 +30,16 @@ public partial class App : Application
 
     public App()
     {
-        InitializeComponent();
+        try
+        {
+            InitializeComponent();
+        }
+        catch (Exception ex)
+        {
+            // A bad resource here kills the process before any handler below exists.
+            LogCrash(ex);
+            throw;
+        }
         UnhandledException += (_, e) =>
         {
             LogCrash(e.Exception);
@@ -49,6 +58,10 @@ public partial class App : Application
                 Microsoft.UI.Xaml.Application.Current.Exit();
                 return;
             }
+
+            // Colours before any window: every page resolves {ThemeResource ...Brush} from these.
+            // Not in the constructor: Application.Resources throws E_UNEXPECTED there.
+            Themes.JarvisTheme.Install(this);
 
             DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
@@ -71,6 +84,8 @@ public partial class App : Application
             _mainWindow = new MainWindow(_api, chatStreamClient, awarenessStreamClient);
             _hudWindow = new HudWindow(_api);
             _mainWindow.Hud = _hudWindow;
+            Themes.JarvisTheme.Attach(_mainWindow);
+            Themes.JarvisTheme.Attach(_hudWindow);
             WindowPositionService.Register(_mainWindow);
             WindowPositionService.Register(_hudWindow);
             // Keep capture exclusion ON. Turning it off (tried for scripted screenshots) makes

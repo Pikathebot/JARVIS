@@ -15,26 +15,34 @@
         could be glass. Here the sheet is a layer-2 slab over the panels and its switches are real
         GlassToggles. The scrim is XAML above the glass (it dims the panels beneath).
     -->
-    <Grid Background="#66000000" Tapped="Scrim_Tapped">
-        <glass:GlassSlab x:Name="Sheet" SlabCornerRadius="20" TintAmount="0.62" Frost="36"
+    <Grid Background="{ThemeResource ScrimBrush}" Tapped="Scrim_Tapped">
+        <glass:GlassSlab x:Name="Sheet" Material="Thick" SlabCornerRadius="{StaticResource RadiusSheet}" TintAmount="0.62" Frost="36"
                          Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
                          Background="Transparent" Tapped="Sheet_Tapped">
-            <Grid Padding="20,16,20,16">
+            <Grid Padding="24,20,24,24">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <Grid Margin="0,0,0,12">
-                    <TextBlock Text="Settings" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    <glass:GlassButton Text="✕" Width="34" Height="34" MinWidth="34" MinHeight="34" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
+                    <TextBlock Text="Settings" Style="{StaticResource Title2Text}" VerticalAlignment="Center" />
+                    <glass:GlassButton Text="✕" Width="36" Height="36" MinWidth="36" MinHeight="36" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
                 </Grid>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
         <StackPanel Spacing="16" MinWidth="380">
 
+            <!-- Appearance: dark (default), light glass, high contrast. Applied live (JarvisTheme). -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderText}" />
+                <glass:GlassSegmented x:Name="AppearanceSwitch" Items="Dark|Light|High contrast" HorizontalAlignment="Stretch" SelectionChanged="AppearanceSwitch_SelectionChanged" />
+                <TextBlock x:Name="AppearanceNote" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed"
+                           Text="Windows high contrast is on, so Jarvis stays in high contrast." />
+            </StackPanel>
+
             <StackPanel Spacing="4">
-                <TextBlock Text="ACTIVE BACKEND" FontSize="11" Foreground="#64748B" />
-                <TextBlock x:Name="BackendText" Text="—" FontSize="14" Foreground="White" />
-                <TextBlock x:Name="ModelText" Text="—" FontSize="12" Foreground="#94A3B8" />
+                <TextBlock Text="Active backend" Style="{StaticResource SectionHeaderText}" />
+                <TextBlock x:Name="BackendText" Text="—" Style="{StaticResource BodyText}" />
+                <TextBlock x:Name="ModelText" Text="—" Style="{StaticResource SecondaryFootnoteText}" />
             </StackPanel>
 
             <StackPanel Spacing="8">
@@ -43,7 +51,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="MODELS" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" />
+                    <TextBlock Text="Models" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
                     <ProgressRing
                         x:Name="ModelBusyRing"
                         Grid.Column="1"
@@ -54,8 +62,7 @@
                 </Grid>
                 <TextBlock
                     Text="Main is what chat runs on; Fast is the smaller model the router falls back to. Models kept directly in models/ are recommended."
-                    FontSize="11"
-                    Foreground="#64748B"
+                    Style="{StaticResource SecondaryFootnoteText}"
                     TextWrapping="Wrap" />
 
                 <ListView
@@ -73,20 +80,19 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="{x:Bind Name}" Foreground="White" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
                                         <!-- Visibility set in code-behind: x:Bind cannot express a bool-to-Visibility hop without a converter. -->
                                         <TextBlock
                                             x:Name="RecommendedBadge"
                                             Text="Recommended"
-                                            Foreground="#06B6D4"
-                                            FontSize="10"
+                                            Style="{StaticResource CaptionEmphasisText}"
+                                            Foreground="{ThemeResource AccentTextBrush}"
                                             VerticalAlignment="Center"
                                             Visibility="Collapsed" />
                                     </StackPanel>
                                     <TextBlock
                                         x:Name="ModelSubtitle"
-                                        Foreground="#64748B"
-                                        FontSize="11"
+                                        Style="{StaticResource SecondaryFootnoteText}"
                                         TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <Button
@@ -94,7 +100,6 @@
                                     Grid.Column="1"
                                     Content="Main"
                                     Padding="10,2"
-                                    FontSize="11"
                                     Tag="{x:Bind}"
                                     Click="SelectMainModel_Click" />
                                 <Button
@@ -102,7 +107,6 @@
                                     Grid.Column="2"
                                     Content="Fast"
                                     Padding="10,2"
-                                    FontSize="11"
                                     Tag="{x:Bind}"
                                     Click="SelectFastModel_Click" />
                             </Grid>
@@ -112,14 +116,13 @@
 
                 <TextBlock
                     x:Name="ModelStatusText"
-                    FontSize="11"
-                    Foreground="#94A3B8"
+                    Style="{StaticResource SecondaryFootnoteText}"
                     TextWrapping="Wrap"
                     Visibility="Collapsed" />
             </StackPanel>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="PERSONA" FontSize="11" Foreground="#64748B" />
+                <TextBlock Text="Persona" Style="{StaticResource SectionHeaderText}" />
                 <ListView
                     x:Name="PersonaList"
                     SelectionMode="None"
@@ -133,15 +136,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
-                                    <TextBlock Text="{x:Bind Name}" Foreground="White" FontSize="13" />
-                                    <TextBlock Text="{x:Bind Description}" Foreground="#64748B" FontSize="11" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" />
+                                    <TextBlock Text="{x:Bind Description}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <TextBlock
                                     x:Name="ActiveBadge"
                                     Grid.Column="1"
                                     Text="Active"
-                                    Foreground="#06B6D4"
-                                    FontSize="10"
+                                    Style="{StaticResource CaptionEmphasisText}"
+                                    Foreground="{ThemeResource AccentTextBrush}"
                                     VerticalAlignment="Top"
                                     Visibility="Collapsed" />
                             </Grid>
@@ -149,7 +152,7 @@
                     </ListView.ItemTemplate>
                 </ListView>
 
-                <TextBlock Text="Addresses you as" FontSize="12" Foreground="#94A3B8" Margin="0,4,0,0" />
+                <TextBlock Text="Addresses you as" Style="{StaticResource SecondaryFootnoteText}" Margin="0,4,0,0" />
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -162,12 +165,12 @@
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock Text="Proactive actions" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock Text="Proactive actions" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
                 <glass:GlassToggle x:Name="ProactiveActionsToggle" VerticalAlignment="Center" Toggled="ProactiveActionsToggle_Toggled" />
             </StackPanel>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="SCHEDULED ROUTINES" FontSize="11" Foreground="#64748B" />
+                <TextBlock Text="Scheduled routines" Style="{StaticResource SectionHeaderText}" />
                 <ListView
                     x:Name="RoutinesList"
                     SelectionMode="None"
@@ -182,15 +185,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
-                                    <TextBlock Foreground="White" FontSize="13">
+                                    <TextBlock Style="{StaticResource BodyText}">
                                         <Run Text="{x:Bind Name}" />
-                                        <Run Text=" · " Foreground="#64748B" />
-                                        <Run Text="{x:Bind Time}" Foreground="#94A3B8" />
+                                        <Run Text=" · " Foreground="{ThemeResource LabelSecondaryBrush}" />
+                                        <Run Text="{x:Bind Time}" Foreground="{ThemeResource LabelSecondaryBrush}" />
                                     </TextBlock>
-                                    <TextBlock Text="{x:Bind Kind}" Foreground="#64748B" FontSize="11" />
+                                    <TextBlock Text="{x:Bind Kind}" Style="{StaticResource SecondaryFootnoteText}" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Test" FontSize="11" Padding="8,2" Tag="{x:Bind}" Click="RunRoutine_Click" />
-                                <Button Grid.Column="2" Content="Remove" FontSize="11" Padding="8,2" Margin="6,0,0,0" Tag="{x:Bind}" Click="RemoveRoutine_Click" />
+                                <Button Grid.Column="1" Content="Test" Padding="8,2" Tag="{x:Bind}" Click="RunRoutine_Click" />
+                                <Button Grid.Column="2" Content="Remove" Padding="8,2" Margin="8,0,0,0" Tag="{x:Bind}" Click="RemoveRoutine_Click" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
@@ -214,9 +217,12 @@
             </StackPanel>
 
             <StackPanel Spacing="4">
-                <TextBlock Text="GLASS" FontSize="11" Foreground="#64748B" />
-                <TextBlock Text="The liquid-glass panels refract what is actually on your desktop. To do that Jarvis excludes its own windows from screen capture — screen recorders, Zoom/Teams screen-share and Xbox Game Bar will not see it."
-                           FontSize="11" Foreground="#F59E0B" TextWrapping="Wrap" />
+                <TextBlock Text="Glass" Style="{StaticResource SectionHeaderText}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE7BA;" FontSize="12" Foreground="{ThemeResource StatusWarningBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                    <TextBlock Text="The liquid-glass panels refract what is actually on your desktop. To do that Jarvis excludes its own windows from screen capture — screen recorders, Zoom/Teams screen-share and Xbox Game Bar will not see it."
+                               Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusWarningBrush}" TextWrapping="Wrap" MaxWidth="360" />
+                </StackPanel>
             </StackPanel>
 
         </StackPanel>

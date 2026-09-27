@@ -23,11 +23,24 @@ public sealed class GlassSlab : Grid
         set => SetValue(SlabCornerRadiusProperty, value);
     }
 
+    public static readonly DependencyProperty MaterialProperty = DependencyProperty.Register(
+        nameof(Material), typeof(GlassMaterial), typeof(GlassSlab), new PropertyMetadata(GlassMaterial.Regular, OnMaterialChanged));
+
+    /// <summary>Which glass this is (design system: clear, regular, thick, accent). Sets the tint
+    /// colour and the tint floor for the current <see cref="JarvisPalette.Appearance"/>; see
+    /// <see cref="EffectiveTint"/>.</summary>
+    public GlassMaterial Material
+    {
+        get => (GlassMaterial)GetValue(MaterialProperty);
+        set => SetValue(MaterialProperty, value);
+    }
+
     public static readonly DependencyProperty TintColorProperty = DependencyProperty.Register(
-        nameof(TintColor), typeof(Color), typeof(GlassSlab), new PropertyMetadata(Color.FromArgb(255, 20, 23, 33), OnMaterialChanged));
+        nameof(TintColor), typeof(Color), typeof(GlassSlab), new PropertyMetadata(default(Color), OnMaterialChanged));
 
     /// <summary>Colour of the tint blended over the refracted backdrop (alpha ignored; see
-    /// <see cref="TintAmount"/>). The lab card's near-black blue-grey by default.</summary>
+    /// <see cref="TintAmount"/>). Unset (transparent), the palette's glass-tint for the current
+    /// appearance, or accent-fill for <see cref="GlassMaterial.Accent"/>.</summary>
     public Color TintColor
     {
         get => (Color)GetValue(TintColorProperty);
@@ -37,7 +50,8 @@ public sealed class GlassSlab : Grid
     public static readonly DependencyProperty TintAmountProperty = DependencyProperty.Register(
         nameof(TintAmount), typeof(double), typeof(GlassSlab), new PropertyMetadata(0.2, OnMaterialChanged));
 
-    /// <summary>0 = clear glass, 1 = opaque fill.</summary>
+    /// <summary>0 = clear glass, 1 = opaque fill. The dark-appearance amount; light and high
+    /// contrast raise it to their floor for the <see cref="Material"/> (see <see cref="EffectiveTint"/>).</summary>
     public double TintAmount
     {
         get => (double)GetValue(TintAmountProperty);
@@ -199,10 +213,64 @@ public sealed class GlassSlab : Grid
 
     public GlassSlab()
     {
-        Loaded += (_, _) => { Publish(); GlassScroll.Track(this, Publish); };
+        Loaded += (_, _) =>
+        {
+            JarvisPalette.Changed += OnAppearanceChanged;
+            ApplyOutline();
+            Publish();
+            GlassScroll.Track(this, Publish);
+        };
         LayoutUpdated += (_, _) => Publish();
-        Unloaded += (_, _) => { _scene?.Remove(this); _scene = null; };
+        Unloaded += (_, _) =>
+        {
+            JarvisPalette.Changed -= OnAppearanceChanged;
+            _scene?.Remove(this);
+            _scene = null;
+        };
     }
+
+    private void OnAppearanceChanged()
+    {
+        ApplyOutline();
+        Publish();
+    }
+
+    /// <summary>High contrast draws a 1px outline on every slab (tokens: outline). XAML paints
+    /// above the glass, so the Grid's own border lands on the rim.</summary>
+    private void ApplyOutline()
+    {
+        var colors = JarvisPalette.Current;
+        if (colors.DrawsOutline)
+        {
+            BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(colors.Outline);
+            BorderThickness = new Thickness(1);
+            CornerRadius = new CornerRadius(SlabCornerRadius);
+        }
+        else if (BorderBrush is not null)
+        {
+            BorderBrush = null;
+            BorderThickness = new Thickness(0);
+        }
+    }
+
+    /// <summary>The tint colour and amount actually published: <see cref="TintColor"/> (or the
+    /// palette's glass-tint) at <see cref="TintAmount"/>, raised to the appearance's floor for
+    /// regular and thick glass; accent glass tints toward accent-fill at glass-accent-tint.
+    /// Dark's floors equal the tuned dark values, so dark renders as before.</summary>
+    public (Color Color, float Amount) EffectiveTint()
+    {
+        var colors = JarvisPalette.Current;
+        var amount = (float)Math.Clamp(TintAmount, 0, 1);
+        return Material switch
+        {
+            GlassMaterial.Accent => (colors.AccentFill, Math.Max(amount, JarvisPalette.AccentTintAmount)),
+            GlassMaterial.Thick => (TintOrPalette(colors), Math.Max(amount, JarvisPalette.Appearance == JarvisAppearance.Dark ? 0f : colors.ThickTintFloor)),
+            GlassMaterial.Regular => (TintOrPalette(colors), Math.Max(amount, JarvisPalette.Appearance == JarvisAppearance.Dark ? 0f : colors.RegularTintFloor)),
+            _ => (TintOrPalette(colors), amount),
+        };
+    }
+
+    private Color TintOrPalette(JarvisColors colors) => TintColor.A == 0 ? colors.GlassTint : TintColor;
 
     private void Publish()
     {
@@ -234,7 +302,8 @@ public sealed class GlassSlab : Grid
 
         var center = new Vector2((float)(b.X + b.Width / 2), (float)(b.Y + b.Height / 2)) * scale;
         var half = new Vector2((float)b.Width / 2, (float)b.Height / 2) * scale;
-        var tint = TintColor;
+        var (tint, tintAmount) = EffectiveTint();
+        var shadow = JarvisPalette.Current.HasShadows ? (float)Math.Clamp(Shadow, 0, 1) : 0f;
         _scene.Publish(this, GlassShape.Create(
             center, half,
             cornerRadius: (float)SlabCornerRadius * scale,
@@ -245,9 +314,9 @@ public sealed class GlassSlab : Grid
             layer: Layer,
             clip: ClipFor(this, scale),
             tintColor: new Vector3(tint.R / 255f, tint.G / 255f, tint.B / 255f),
-            tintAmount: (float)Math.Clamp(TintAmount, 0, 1),
+            tintAmount: tintAmount,
             blurRadius: (float)Frost * scale,
-            shadowStrength: (float)Math.Clamp(Shadow, 0, 1),
+            shadowStrength: shadow,
             shadowRadius: (float)ShadowRadius * scale,
             shadowOffsetY: (float)ShadowOffsetY * scale,
             secondLight: 0.33f));

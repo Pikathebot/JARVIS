@@ -26,8 +26,10 @@ public sealed partial class GlassButton : UserControl
     public static class Material
     {
         public static Vector3 ClearTint = Vector3.One;
-        public static Vector3 AccentTint = new(0.039f, 0.518f, 1.0f); // system blue #0A84FF
-        public static float AccentTintAmount = 0.55f;
+        /// <summary>accent-fill for the current appearance (design system v2).</summary>
+        public static Vector3 AccentTint => JarvisPalette.ToVector3(JarvisPalette.Current.AccentFill);
+        /// <summary>glass-accent-tint: raised from 0.55 so the white label holds 4.5:1.</summary>
+        public static float AccentTintAmount = JarvisPalette.AccentTintAmount;
 
         // Rim: lens ramp over a band that is this fraction of the corner radius.
         public static float BezelFraction = 0.55f;
@@ -55,7 +57,9 @@ public sealed partial class GlassButton : UserControl
         public static float ShadowOffsetY = 2f;
 
         public static float LabelSize = 14f;
-        public static Vector4 LabelColor = Vector4.One;
+        /// <summary>label on clear glass; accent buttons use on-accent.</summary>
+        public static Vector4 LabelColor => JarvisPalette.ToVector4(JarvisPalette.Current.Label);
+        public static Vector4 AccentLabelColor => JarvisPalette.ToVector4(JarvisPalette.Current.OnAccent);
         /// <summary>DIPs kept clear between the label and each end of the pill; a longer label is
         /// trimmed to an ellipsis rather than run out over the rim.</summary>
         public static float LabelPadX = 16f;
@@ -274,6 +278,6 @@ public sealed partial class GlassButton : UserControl
         // (not bent by it) and scales with the lift like part of the slab.
         var labelMax = Math.Max(1f, ((float)bounds.Width - 2f * Material.LabelPadX) * scale * grow);
         _scene.PublishText(this,
-            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, Material.LabelColor, Layer: baseLayer, Clip: clip, MaxWidth: labelMax));
+            new GlassText(Text ?? "", center, Material.LabelSize * scale * grow, GlassText.SemiBold, IsAccent ? Material.AccentLabelColor : Material.LabelColor, Layer: baseLayer, Clip: clip, MaxWidth: labelMax));
     }
 }

@@ -50,7 +50,30 @@ public sealed partial class SettingsPane : UserControl
         // Not in XAML: a bare integer there is what let the sheet sit on the same
         // layer as the controls behind it, which it could neither cover nor frost.
         Sheet.Layer = GlassLayers.Sheet;
+        _syncingAppearance = true;
+        AppearanceSwitch.SelectedIndex = (int)Themes.JarvisTheme.Appearance;
+        _syncingAppearance = false;
         Loaded += SettingsPane_Loaded;
+    }
+
+    private bool _syncingAppearance;
+
+    /// <summary>Dark | Light | High contrast, in <see cref="JarvisAppearance"/> order. Windows'
+    /// own high-contrast mode wins (WinUI's controls follow it regardless), so the switch
+    /// snaps back and says why.</summary>
+    private void AppearanceSwitch_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncingAppearance) return;
+        var chosen = (JarvisAppearance)Math.Clamp(AppearanceSwitch.SelectedIndex, 0, 2);
+        if (Themes.JarvisTheme.SystemHighContrast() && chosen != JarvisAppearance.HighContrast)
+        {
+            AppearanceNote.Visibility = Visibility.Visible;
+            _syncingAppearance = true;
+            AppearanceSwitch.SelectedIndex = (int)JarvisAppearance.HighContrast;
+            _syncingAppearance = false;
+            return;
+        }
+        Themes.JarvisTheme.Set(chosen);
     }
 
     private async void SettingsPane_Loaded(object sender, RoutedEventArgs e)

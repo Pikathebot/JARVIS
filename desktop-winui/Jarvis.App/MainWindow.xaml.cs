@@ -422,13 +422,16 @@ public sealed partial class MainWindow : Window
             "degraded" => "Degraded",
             _ => "Offline",
         };
-        GovernorPillText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(GovernorViewModel.Status switch
+        var pillKind = GovernorViewModel.Status switch
         {
-            "ok" => Colors.MediumSeaGreen,
-            "throttled" => Colors.Orange,
-            "degraded" => Colors.Orange,
-            _ => Colors.OrangeRed,
-        });
+            "ok" => Themes.StatusKind.Success,
+            "throttled" or "degraded" => Themes.StatusKind.Warning,
+            _ => Themes.StatusKind.Error,
+        };
+        var pillBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(pillKind));
+        GovernorPillText.Foreground = pillBrush;
+        GovernorPillIcon.Foreground = pillBrush;
+        GovernorPillIcon.Glyph = Themes.StatusStyle.GlyphOf(pillKind);
 
         GovernorBackendRow.Text = $"Backend: {(string.IsNullOrEmpty(GovernorViewModel.ActiveBackend) ? "—" : GovernorViewModel.ActiveBackend)}";
         GovernorModelRow.Text = $"Model: {GovernorViewModel.ConfiguredModel}";
@@ -447,28 +450,26 @@ public sealed partial class MainWindow : Window
         ActivityStepsList.Items.Clear();
         foreach (var step in ChatViewModel.ActivitySteps)
         {
-            var dotColor = step.Status switch
-            {
-                "success" => Colors.MediumSeaGreen,
-                "error" => Colors.OrangeRed,
-                _ => Colors.Orange,
-            };
+            // Status as icon + word + colour, on a tertiary-fill row.
+            var kind = Themes.StatusStyle.FromStepStatus(step.Status);
+            var statusBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(kind));
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            row.Children.Add(new FontIcon
             {
-                Width = 7,
-                Height = 7,
-                Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(dotColor),
+                Style = Themes.JarvisTheme.Style("JarvisIcon"),
+                Glyph = Themes.StatusStyle.GlyphOf(kind, inProgress: kind == Themes.StatusKind.Warning),
+                FontSize = 12,
+                Foreground = statusBrush,
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            row.Children.Add(new TextBlock { Text = step.Tool, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.WhiteSmoke), FontSize = 12 });
-            row.Children.Add(new TextBlock { Text = step.Status, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Gray), FontSize = 10, VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(new TextBlock { Text = step.Tool, Style = Themes.JarvisTheme.Style("BodyText"), VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(new TextBlock { Text = step.Status, Style = Themes.JarvisTheme.Style("CaptionEmphasisText"), Foreground = statusBrush, VerticalAlignment = VerticalAlignment.Center });
 
             var card = new Border
             {
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(15, 255, 255, 255)),
-                CornerRadius = new CornerRadius(8),
+                Background = Themes.JarvisTheme.Brush("FillTertiary"),
+                CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(8, 6, 8, 6),
                 Child = row,
             };
@@ -550,16 +551,14 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(new TextBlock
             {
                 Text = $"{chunk.FileName ?? chunk.FilePath} L{chunk.StartLine}-L{chunk.EndLine}",
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.LightGray),
-                FontSize = 11,
+                Style = Themes.JarvisTheme.Style("BodyText"),
             });
             if (!string.IsNullOrEmpty(chunk.SymbolName))
             {
                 panel.Children.Add(new TextBlock
                 {
                     Text = chunk.SymbolName,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Gray),
-                    FontSize = 10,
+                    Style = Themes.JarvisTheme.Style("DataText"),
                 });
             }
             RetrievedChunksList.Items.Add(panel);
@@ -570,8 +569,8 @@ public sealed partial class MainWindow : Window
             RetrievedChunksList.Items.Add(new TextBlock
             {
                 Text = $"{retrieval.ChunksDropped.Count} dropped (budget)",
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.OrangeRed),
-                FontSize = 10,
+                Style = Themes.JarvisTheme.Style("FootnoteText"),
+                Foreground = Themes.JarvisTheme.Brush("StatusWarning"),
             });
         }
     }
@@ -654,7 +653,7 @@ public sealed partial class MainWindow : Window
         if (freeform) SetWorkspaceDropdownOpen(false);
         var place = freeform ? "Freeform" : ProjectsViewModel.ActiveProject?.Name ?? "Default Workspace";
         SessionLabel.Text = ChatViewModel.IsEphemeral ? $"{place} · Ephemeral (not saved)" : place;
-        RecentSessionsHeader.Text = freeform ? "Freeform Sessions" : "Recent Sessions";
+        RecentSessionsHeader.Text = freeform ? "Freeform sessions" : "Recent sessions";
         RightPanelViewModel.ProjectId = ChatViewModel.TurnProjectId;
         UpdateSessionHighlight();
     }
@@ -780,9 +779,6 @@ public sealed partial class MainWindow : Window
     public static string SessionRowLabel(string sessionId, string? lastMessage) =>
         SessionsViewModel.DisplayLabel(new Session { SessionId = sessionId, LastMessage = lastMessage });
 
-    private static readonly Windows.UI.Color SessionRestTint = Windows.UI.Color.FromArgb(255, 20, 23, 33);
-    private static readonly Windows.UI.Color SessionActiveTint = Windows.UI.Color.FromArgb(255, 8, 145, 178);
-
     private void SessionRow_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is Jarvis_Glass.GlassSlab { Tag: Session session } row) ApplySessionHighlight(row, session);
@@ -804,9 +800,24 @@ public sealed partial class MainWindow : Window
 
     private void ApplySessionHighlight(Jarvis_Glass.GlassSlab row, Session session)
     {
+        // Active: accent glass with on-accent text, like a selected iOS row. Rest: clear glass
+        // over the sidebar, text back to the style's label colour.
         var active = session.SessionId == ChatViewModel.ActiveSessionId;
-        row.TintColor = active ? SessionActiveTint : SessionRestTint;
-        row.TintAmount = active ? 0.6 : 0.14;
+        row.Material = active ? Jarvis_Glass.GlassMaterial.Accent : Jarvis_Glass.GlassMaterial.Clear;
+        row.TintAmount = 0.14;
+        foreach (var child in row.Children)
+        {
+            if (child is TextBlock label)
+            {
+                if (active) label.Foreground = Themes.JarvisTheme.Brush("OnAccent");
+                else label.ClearValue(TextBlock.ForegroundProperty);
+            }
+            else if (child is Button { Content: FontIcon icon })
+            {
+                if (active) icon.Foreground = Themes.JarvisTheme.Brush("OnAccent");
+                else icon.Foreground = Themes.JarvisTheme.Brush("LabelSecondary");
+            }
+        }
     }
 
     private async void DeleteSession_Click(object sender, RoutedEventArgs e)
@@ -1010,8 +1021,8 @@ public sealed partial class MainWindow : Window
         var isImage = ImageAttachmentService.IsImagePath(path);
         var chip = new Border
         {
-            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(30, 6, 182, 212)),
-            CornerRadius = new CornerRadius(12),
+            Background = Themes.JarvisTheme.Brush("FillSecondary"),
+            CornerRadius = new CornerRadius(isImage ? 14 : 999),
             Padding = new Thickness(isImage ? 4 : 10, 4, 6, 4),
         };
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -1023,7 +1034,7 @@ public sealed partial class MainWindow : Window
                 var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path)) { DecodePixelHeight = 40 };
                 row.Children.Add(new Border
                 {
-                    CornerRadius = new CornerRadius(8),
+                    CornerRadius = new CornerRadius(10),
                     Width = 56,
                     Height = 40,
                     Child = new Image { Source = bitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill },
@@ -1034,8 +1045,15 @@ public sealed partial class MainWindow : Window
                 // unreadable file: fall through to the name-only chip
             }
         }
-        row.Children.Add(new TextBlock { Text = name, FontSize = 11, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.White), VerticalAlignment = VerticalAlignment.Center });
-        var removeButton = new Button { Content = "✕", FontSize = 9, Padding = new Thickness(4), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
+        row.Children.Add(new TextBlock { Text = name, Style = Themes.JarvisTheme.Style("FootnoteText"), VerticalAlignment = VerticalAlignment.Center });
+        var removeButton = new Button
+        {
+            Content = new FontIcon { Style = Themes.JarvisTheme.Style("JarvisIcon"), Glyph = "", FontSize = 12, Foreground = Themes.JarvisTheme.Brush("LabelSecondary") },
+            Padding = new Thickness(4),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+        };
+        ToolTipService.SetToolTip(removeButton, "Remove");
         removeButton.Click += (_, _) =>
         {
             _pendingAttachmentPaths.Remove(path);
@@ -1079,15 +1097,15 @@ public sealed partial class MainWindow : Window
             }
 
             if (seeingModel is not null)
-                text = $"🖼 {seeingModel} will see the image directly.";
+                text = $"{seeingModel} will see the image directly.";
             else if (catalog.Captioner?.Available == true)
-                text = "🖼 The current model cannot see images; the local captioner will describe them for it.";
+                text = "The current model cannot see images; the local captioner will describe them for it.";
             else
-                text = "⚠ The current model cannot see images and no captioner is installed — they will be attached as files only.";
+                text = "The current model cannot see images and no captioner is installed — they will be attached as files only.";
         }
         catch
         {
-            text = "🖼 Image attached.";
+            text = "Image attached.";
         }
         if (_pendingAttachmentPaths.Any(ImageAttachmentService.IsImagePath))
             VisionHint.Text = text;

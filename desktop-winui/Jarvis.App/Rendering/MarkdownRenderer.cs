@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Extensions.Tables;
@@ -120,8 +120,8 @@ public static class MarkdownRenderer
         {
             Text = thinking.Trim(),
             TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromArgb(255, 148, 163, 184)),
-            FontSize = 13,
+            Style = Themes.JarvisTheme.Style("BodyText"),
+            Foreground = Themes.JarvisTheme.Brush("LabelSecondary"),
         };
         return expander;
     }
@@ -143,13 +143,13 @@ public static class MarkdownRenderer
             case QuoteBlock quote:
                 return RenderQuote(quote);
             case ThematicBreakBlock:
-                return new Border { Height = 1, Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)), Margin = new Thickness(0, 8, 0, 8) };
+                return new Border { Height = 1, Background = Themes.JarvisTheme.Brush("Separator"), Margin = new Thickness(0, 8, 0, 8) };
             case Table table:
                 return RenderTable(table);
             default:
                 if (block is LeafBlock leaf && leaf.Inline is not null)
                 {
-                    return TextBlockFromInlines(leaf.Inline, 14);
+                    return TextBlockFromInlines(leaf.Inline, "MessageText");
                 }
                 return null;
         }
@@ -157,31 +157,29 @@ public static class MarkdownRenderer
 
     private static TextBlock RenderHeading(HeadingBlock heading)
     {
-        var tb = heading.Inline is not null ? TextBlockFromInlines(heading.Inline, HeadingFontSize(heading.Level)) : new TextBlock();
-        tb.FontWeight = FontWeights.Bold;
+        var tb = heading.Inline is not null ? TextBlockFromInlines(heading.Inline, HeadingStyle(heading.Level)) : new TextBlock();
         tb.Margin = new Thickness(0, heading.Level <= 2 ? 8 : 4, 0, 4);
         return tb;
     }
 
-    private static double HeadingFontSize(int level) => level switch
+    /// <summary>Design system: # title-1, ## title-2, ### title-3, #### and deeper headline.</summary>
+    private static string HeadingStyle(int level) => level switch
     {
-        1 => 22,
-        2 => 19,
-        3 => 17,
-        4 => 15,
-        _ => 14,
+        1 => "Title1Text",
+        2 => "Title2Text",
+        3 => "Title3Text",
+        _ => "HeadlineText",
     };
 
     private static TextBlock? RenderParagraphBlock(ParagraphBlock paragraph) =>
-        paragraph.Inline is null ? null : TextBlockFromInlines(paragraph.Inline, 14);
+        paragraph.Inline is null ? null : TextBlockFromInlines(paragraph.Inline, "MessageText");
 
-    private static TextBlock TextBlockFromInlines(ContainerInline inlines, double fontSize)
+    private static TextBlock TextBlockFromInlines(ContainerInline inlines, string style)
     {
         var tb = new TextBlock
         {
+            Style = Themes.JarvisTheme.Style(style),
             TextWrapping = TextWrapping.Wrap,
-            FontSize = fontSize,
-            Foreground = new SolidColorBrush(Color.FromArgb(255, 243, 247, 252)),
             IsTextSelectionEnabled = true,
         };
         AppendInlines(tb.Inlines, inlines);
@@ -215,8 +213,9 @@ public static class MarkdownRenderer
                     target.Add(new Run
                     {
                         Text = code.Content,
-                        FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"),
-                        Foreground = new SolidColorBrush(Color.FromArgb(255, 103, 232, 249)),
+                        FontFamily = (FontFamily)Application.Current.Resources["MonoFontFamily"],
+                        FontSize = 13,
+                        Foreground = Themes.JarvisTheme.Brush("AccentText"),
                     });
                     break;
                 case LinkInline link:
@@ -251,10 +250,10 @@ public static class MarkdownRenderer
 
         var container = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(200, 5, 7, 11)),
+            Background = Themes.JarvisTheme.Brush("SurfaceCode"),
             CornerRadius = new CornerRadius(10),
             BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
+            BorderBrush = Themes.JarvisTheme.Brush("Separator"),
             Margin = new Thickness(0, 4, 0, 4),
         };
 
@@ -268,12 +267,12 @@ public static class MarkdownRenderer
         header.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(lang) ? "text" : lang,
-            Foreground = new SolidColorBrush(Color.FromArgb(255, 100, 116, 139)),
-            FontSize = 11,
+            Style = Themes.JarvisTheme.Style("CaptionText"),
+            Foreground = Themes.JarvisTheme.Brush("LabelSecondary"),
             VerticalAlignment = VerticalAlignment.Center,
         });
 
-        var copyButton = new Button { Content = "Copy", FontSize = 11, Padding = new Thickness(8, 2, 8, 2) };
+        var copyButton = new Button { Content = "Copy", Padding = new Thickness(8, 2, 8, 2) };
         Grid.SetColumn(copyButton, 1);
         copyButton.Click += (_, _) =>
         {
@@ -291,8 +290,7 @@ public static class MarkdownRenderer
 
         var codeText = new TextBlock
         {
-            FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"),
-            FontSize = 12.5,
+            Style = Themes.JarvisTheme.Style("CodeBlockText"),
             TextWrapping = TextWrapping.NoWrap,
             Padding = new Thickness(12, 4, 12, 12),
             IsTextSelectionEnabled = true,
@@ -333,8 +331,8 @@ public static class MarkdownRenderer
             var bullet = new TextBlock
             {
                 Text = list.IsOrdered ? $"{index}." : "•",
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 6, 182, 212)),
-                FontSize = 14,
+                Style = Themes.JarvisTheme.Style("MessageText"),
+                Foreground = Themes.JarvisTheme.Brush("LabelSecondary"),
                 MinWidth = 18,
             };
             row.Children.Add(bullet);
@@ -365,8 +363,9 @@ public static class MarkdownRenderer
 
         return new Border
         {
+            // A neutral bar: accent is reserved for selection and live state.
             BorderThickness = new Thickness(3, 0, 0, 0),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(255, 6, 182, 212)),
+            BorderBrush = Themes.JarvisTheme.Brush("Separator"),
             Padding = new Thickness(12, 2, 0, 2),
             Child = inner,
         };
@@ -407,13 +406,13 @@ public static class MarkdownRenderer
                 var border = new Border
                 {
                     BorderThickness = new Thickness(0, 0, 1, 1),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                    BorderBrush = Themes.JarvisTheme.Brush("Separator"),
                     Padding = new Thickness(8, 4, 8, 4),
                     Child = cellPanel,
                 };
                 if (row.IsHeader)
                 {
-                    border.Background = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
+                    border.Background = Themes.JarvisTheme.Brush("FillTertiary");
                 }
 
                 Grid.SetRow(border, rowIndex);

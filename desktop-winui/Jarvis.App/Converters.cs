@@ -29,22 +29,14 @@ public sealed class BoolToPanelWidthConverter : IValueConverter
 /// <summary>Activity trace dot color: green=success, red=error, amber=running/other.</summary>
 public sealed class ActivityStatusToBrushConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, string language)
-    {
-        var color = (value as string) switch
-        {
-            "success" => Color.FromArgb(255, 16, 185, 129),
-            "error" => Color.FromArgb(255, 244, 63, 94),
-            _ => Color.FromArgb(255, 251, 191, 36),
-        };
-        return new SolidColorBrush(color);
-    }
+    public object Convert(object value, Type targetType, object parameter, string language) =>
+        new SolidColorBrush(Themes.StatusStyle.ColorOf(Themes.StatusStyle.FromStepStatus(value as string)));
 
     public object ConvertBack(object value, Type targetType, object parameter, string language) =>
         throw new NotSupportedException();
 }
 
-/// <summary>Severity accent colors, ported from AwarenessTray.tsx's per-severity border/dot styling.</summary>
+/// <summary>Awareness severity colour (design system: status tokens).</summary>
 public sealed class SeverityToBrushConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language) =>
@@ -53,23 +45,32 @@ public sealed class SeverityToBrushConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, string language) =>
         throw new NotSupportedException();
 
-    public static Color SeverityColor(ObservationSeverity severity) => severity switch
+    public static Themes.StatusKind KindOf(ObservationSeverity severity) => severity switch
     {
-        ObservationSeverity.Critical => Color.FromArgb(255, 244, 63, 94),
-        ObservationSeverity.Warning => Color.FromArgb(255, 251, 191, 36),
-        ObservationSeverity.Notice => Color.FromArgb(255, 6, 182, 212),
-        _ => Color.FromArgb(255, 148, 163, 184),
+        ObservationSeverity.Critical => Themes.StatusKind.Error,
+        ObservationSeverity.Warning => Themes.StatusKind.Warning,
+        ObservationSeverity.Notice => Themes.StatusKind.Info,
+        _ => Themes.StatusKind.Neutral,
     };
+
+    public static Color SeverityColor(ObservationSeverity severity) => Themes.StatusStyle.ColorOf(KindOf(severity));
 }
 
-/// <summary>Severity background tint (low-alpha version of the same accent color).</summary>
+/// <summary>Severity background tint: the severity colour at 14%.</summary>
 public sealed class SeverityToBackgroundConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, string language)
-    {
-        var color = SeverityToBrushConverter.SeverityColor(value as ObservationSeverity? ?? ObservationSeverity.Info);
-        return new SolidColorBrush(Color.FromArgb(28, color.R, color.G, color.B));
-    }
+    public object Convert(object value, Type targetType, object parameter, string language) =>
+        Themes.JarvisTheme.Tinted(SeverityToBrushConverter.SeverityColor(value as ObservationSeverity? ?? ObservationSeverity.Info), 0.14);
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>Severity icon (Segoe Fluent): status is an icon and a word as well as a colour.</summary>
+public sealed class SeverityToGlyphConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) =>
+        Themes.StatusStyle.GlyphOf(SeverityToBrushConverter.KindOf(value as ObservationSeverity? ?? ObservationSeverity.Info));
 
     public object ConvertBack(object value, Type targetType, object parameter, string language) =>
         throw new NotSupportedException();

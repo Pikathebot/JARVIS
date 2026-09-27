@@ -8,9 +8,21 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <!-- Other merged dictionaries here -->
+                <!-- Colours (from Jarvis.Glass's JarvisPalette) and then Themes/Typography.xaml are
+                     added in code by Themes/JarvisTheme.Install. Typography's styles use the colour
+                     brushes, so it cannot be merged here: parsing it before the brushes exist
+                     throws inside InitializeComponent and the app dies with no window. -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!-- WinUI's own controls (accent buttons, ProgressRing, selection, focus) take the
+                 Jarvis blue instead of the user's Windows accent. iOS systemBlue and its steps. -->
+            <Color x:Key="SystemAccentColor">#0A84FF</Color>
+            <Color x:Key="SystemAccentColorLight1">#409CFF</Color>
+            <Color x:Key="SystemAccentColorLight2">#6CB6FF</Color>
+            <Color x:Key="SystemAccentColorLight3">#99CCFF</Color>
+            <Color x:Key="SystemAccentColorDark1">#0071E3</Color>
+            <Color x:Key="SystemAccentColorDark2">#0062CC</Color>
+            <Color x:Key="SystemAccentColorDark3">#0040DD</Color>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

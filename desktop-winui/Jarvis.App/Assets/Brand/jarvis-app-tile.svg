@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Jarvis app tile</title>
+  <rect width="1024" height="1024" rx="229" fill="#1c1c1e"/>
+  <rect x="1.5" y="1.5" width="1021" height="1021" rx="227.5" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+  <g transform="translate(512 512) scale(12.5) translate(-37.5 -34)">
+  <defs><clipPath id="orb"><circle cx="25" cy="39" r="15"/></clipPath></defs>
+  <circle cx="25" cy="39" r="15" fill="#0a84ff"/>
+  <rect x="21" y="11" width="33" height="33" rx="10" fill="#ffffff" fill-opacity="0.12"/>
+  <g clip-path="url(#orb)"><rect x="21" y="11" width="33" height="33" rx="10" fill="#6cb6ff"/></g>
+  <rect x="21" y="11" width="33" height="33" rx="10" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+  <path d="M26.5 20.5 a6 6 0 0 1 6 -4.5" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="2" stroke-linecap="round"/>  </g>
+</svg>

@@ -16,10 +16,10 @@
             x:Name="SystemPill"
             Visibility="Collapsed"
             HorizontalAlignment="Center"
-            Background="#1A94A3B8"
-            CornerRadius="12"
+            Background="{ThemeResource FillTertiaryBrush}"
+            CornerRadius="{StaticResource PillCornerRadius}"
             Padding="12,4">
-            <TextBlock x:Name="SystemText" Foreground="#94A3B8" FontSize="12" />
+            <TextBlock x:Name="SystemText" Style="{StaticResource SecondaryFootnoteText}" />
         </Border>
 
         <!--
@@ -29,9 +29,8 @@
         -->
         <StackPanel x:Name="UserRow" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
             <glass:GlassSlab
-                SlabCornerRadius="16"
-                TintColor="#0891B2"
-                TintAmount="0.42"
+                Material="Accent"
+                SlabCornerRadius="{StaticResource RadiusPanel}"
                 Frost="8"
                 BezelWidth="6"
                 Refraction="4"
@@ -39,28 +38,27 @@
                 Shadow="0.22"
                 ShadowRadius="14"
                 ShadowOffsetY="4"
-                Padding="14,10"
+                Padding="12,8"
                 MaxWidth="640">
                 <glass:GlassSlab.ContextFlyout>
                     <MenuFlyout>
                         <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
                     </MenuFlyout>
                 </glass:GlassSlab.ContextFlyout>
-                <TextBlock x:Name="UserText" Foreground="White" FontSize="14" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                <TextBlock x:Name="UserText" Style="{StaticResource MessageText}" Foreground="{ThemeResource OnAccentBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
             </glass:GlassSlab>
-            <Border Width="28" Height="28" CornerRadius="14" Background="#334155" VerticalAlignment="Top">
-                <TextBlock Text="U" Foreground="White" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Border Width="28" Height="28" CornerRadius="14" Background="{ThemeResource SurfaceAvatarBrush}" VerticalAlignment="Top">
+                <TextBlock Text="U" Style="{StaticResource FootnoteText}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
         </StackPanel>
 
         <!-- Assistant message: left-aligned glass bubble -->
         <StackPanel x:Name="AssistantRow" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Left" Spacing="8">
-            <Border Width="28" Height="28" CornerRadius="14" Background="#0891B2" VerticalAlignment="Top">
-                <TextBlock Text="J" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
+            <!-- Jarvis's avatar is the mark. -->
+            <Image Source="{ThemeResource MarkSource}" Width="28" Height="28" VerticalAlignment="Top" />
             <StackPanel MaxWidth="720" Spacing="6">
                 <glass:GlassSlab
-                    SlabCornerRadius="16"
+                    SlabCornerRadius="{StaticResource RadiusPanel}"
                     TintAmount="0.3"
                     Frost="6"
                     BezelWidth="6"
@@ -69,7 +67,7 @@
                     Shadow="0.22"
                     ShadowRadius="14"
                     ShadowOffsetY="4"
-                    Padding="14,10">
+                    Padding="12,8">
                     <glass:GlassSlab.ContextFlyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
@@ -83,23 +81,26 @@
                         <ContentPresenter x:Name="ContentHost" />
 
                         <!-- Streaming caret -->
-                        <TextBlock x:Name="StreamingCaret" Text="▍" Foreground="#06B6D4" Visibility="Collapsed" />
+                        <TextBlock x:Name="StreamingCaret" Text="▍" Foreground="{ThemeResource AccentBrush}" Visibility="Collapsed" />
 
                         <!-- Pending confirmation banner -->
                         <Border
                             x:Name="ConfirmationBanner"
                             Visibility="Collapsed"
-                            Background="#1AFBBF24"
-                            BorderBrush="#FBBF24"
-                            BorderThickness="1"
-                            CornerRadius="10"
+                            CornerRadius="{StaticResource RowCornerRadius}"
                             Padding="12">
+                            <Border.Background>
+                                <SolidColorBrush Color="{ThemeResource StatusWarningColor}" Opacity="0.14" />
+                            </Border.Background>
                             <StackPanel Spacing="6">
-                                <TextBlock x:Name="ConfirmationTitle" Foreground="#FBBF24" FontWeight="SemiBold" FontSize="13" TextWrapping="Wrap" />
-                                <TextBlock x:Name="ConfirmationReason" Foreground="#CBD5E1" FontSize="12" TextWrapping="Wrap" />
-                                <TextBlock x:Name="ConfirmationArgs" Foreground="#94A3B8" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="11" TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE7BA;" Foreground="{ThemeResource StatusWarningBrush}" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="ConfirmationTitle" Style="{StaticResource HeadlineText}" Foreground="{ThemeResource StatusWarningBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock x:Name="ConfirmationReason" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="ConfirmationArgs" Style="{StaticResource CodeInlineText}" Foreground="{ThemeResource AccentTextBrush}" TextWrapping="Wrap" />
                                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                                    <Button x:Name="ApproveButton" Content="Approve Execution" Background="#0891B2" Foreground="White" Click="ApproveButton_Click" />
+                                    <Button x:Name="ApproveButton" Content="Approve" Style="{StaticResource AccentButtonStyle}" Click="ApproveButton_Click" />
                                     <Button x:Name="DenyButton" Content="Deny" Click="DenyButton_Click" />
                                 </StackPanel>
                             </StackPanel>
@@ -108,7 +109,7 @@
                 </glass:GlassSlab>
 
                 <!-- Metadata footer -->
-                <TextBlock x:Name="MetadataFooter" Foreground="#64748B" FontSize="10" Visibility="Collapsed" />
+                <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Margin="4,0,0,0" Visibility="Collapsed" />
             </StackPanel>
         </StackPanel>
     </Grid>

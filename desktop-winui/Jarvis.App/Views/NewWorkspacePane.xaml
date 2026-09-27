@@ -12,11 +12,11 @@
         Same shape as SettingsPane: an in-window glass sheet over a scrim rather than a
         ContentDialog, which is a popup painted above the window where the glass can't reach.
     -->
-    <Grid Background="#66000000" Tapped="Scrim_Tapped">
-        <glass:GlassSlab x:Name="Sheet" SlabCornerRadius="20" TintAmount="0.62" Frost="36"
+    <Grid Background="{ThemeResource ScrimBrush}" Tapped="Scrim_Tapped">
+        <glass:GlassSlab x:Name="Sheet" Material="Thick" SlabCornerRadius="{StaticResource RadiusSheet}" TintAmount="0.62" Frost="36"
                          Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
                          Background="Transparent" Tapped="Sheet_Tapped">
-            <Grid Padding="20,16,20,16">
+            <Grid Padding="24,20,24,24">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -24,33 +24,33 @@
                 </Grid.RowDefinitions>
 
                 <Grid Margin="0,0,0,12">
-                    <TextBlock Text="New workspace" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    <glass:GlassButton Text="✕" Width="34" Height="34" MinWidth="34" MinHeight="34" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
+                    <TextBlock Text="New workspace" Style="{StaticResource Title2Text}" VerticalAlignment="Center" />
+                    <glass:GlassButton Text="✕" Width="36" Height="36" MinWidth="36" MinHeight="36" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
                 </Grid>
 
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
                     <StackPanel Spacing="14" MinWidth="380">
 
                         <StackPanel Spacing="4">
-                            <TextBlock Text="NAME" FontSize="11" Foreground="#64748B" />
+                            <TextBlock Text="Name" Style="{StaticResource SecondaryFootnoteText}" />
                             <TextBox x:Name="NameBox" PlaceholderText="e.g. Thesis, Home automation, jarvis-backend" TextChanged="NameBox_TextChanged" KeyDown="NameBox_KeyDown" />
                         </StackPanel>
 
                         <StackPanel Spacing="4">
-                            <TextBlock Text="DESCRIPTION" FontSize="11" Foreground="#64748B" />
+                            <TextBlock Text="Description" Style="{StaticResource SecondaryFootnoteText}" />
                             <TextBox x:Name="DescriptionBox" PlaceholderText="What this workspace is for (optional)" />
                         </StackPanel>
 
                         <StackPanel Spacing="4">
-                            <TextBlock Text="INSTRUCTIONS" FontSize="11" Foreground="#64748B" />
+                            <TextBlock Text="Instructions" Style="{StaticResource SecondaryFootnoteText}" />
                             <TextBox x:Name="InstructionsBox" PlaceholderText="Standing instructions for Jarvis in this workspace (optional)"
                                      AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" ScrollViewer.VerticalScrollBarVisibility="Auto" />
                         </StackPanel>
 
                         <StackPanel Spacing="6">
-                            <TextBlock Text="LOCAL FOLDERS" FontSize="11" Foreground="#64748B" />
+                            <TextBlock Text="Local folders" Style="{StaticResource SecondaryFootnoteText}" />
                             <TextBlock Text="Folders on this PC to index into the workspace's knowledge, alongside anything you attach."
-                                       FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap" />
+                                       Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
                             <ItemsControl x:Name="FoldersList" ItemsSource="{x:Bind Folders}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="x:String">
@@ -59,8 +59,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{x:Bind}" Foreground="White" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                            <Button Grid.Column="1" Content="Remove" FontSize="11" Padding="8,2" Margin="6,0,0,0" Tag="{x:Bind}" Click="RemoveFolder_Click" />
+                                            <TextBlock Text="{x:Bind}" Style="{StaticResource BodyText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <Button Grid.Column="1" Content="Remove" Padding="8,2" Margin="8,0,0,0" Tag="{x:Bind}" Click="RemoveFolder_Click" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -68,7 +68,7 @@
                             <Button Content="Add folder…" HorizontalAlignment="Left" Click="AddFolder_Click" />
                         </StackPanel>
 
-                        <TextBlock x:Name="ErrorText" Foreground="#F87171" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
+                        <TextBlock x:Name="ErrorText" Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusErrorBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
                 </ScrollViewer>
 

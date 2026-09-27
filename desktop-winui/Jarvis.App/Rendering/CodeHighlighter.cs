@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
+using Jarvis_Glass;
 using Windows.UI;
 
 namespace Jarvis_App.Rendering;
@@ -16,15 +17,15 @@ namespace Jarvis_App.Rendering;
 /// </summary>
 public static class CodeHighlighter
 {
-    // Token colors ported from the --tok-* custom properties in the retired Next.js client's src/app/globals.css.
-    private static readonly Color CommentColor = Color.FromArgb(255, 100, 116, 139); // slate-500
-    private static readonly Color StringColor = Color.FromArgb(255, 134, 239, 172); // green-300
-    private static readonly Color NumberColor = Color.FromArgb(255, 253, 186, 116); // orange-300
-    private static readonly Color KeywordColor = Color.FromArgb(255, 192, 132, 252); // purple-400
-    private static readonly Color FunctionColor = Color.FromArgb(255, 103, 232, 249); // cyan-300
-    private static readonly Color PunctuationColor = Color.FromArgb(255, 148, 163, 184); // slate-400
-    private static readonly Color PlainColor = Color.FromArgb(255, 226, 232, 240); // slate-200
-
+    // Token colours: the design system's syntax tokens for the current appearance (read per
+    // highlight, so a rebuilt message picks up an appearance change).
+    private static Color CommentColor => JarvisPalette.Current.SyntaxComment;
+    private static Color StringColor => JarvisPalette.Current.SyntaxString;
+    private static Color NumberColor => JarvisPalette.Current.SyntaxNumber;
+    private static Color KeywordColor => JarvisPalette.Current.SyntaxKeyword;
+    private static Color FunctionColor => JarvisPalette.Current.SyntaxType;
+    private static Color PunctuationColor => JarvisPalette.Current.LabelSecondary;
+    private static Color PlainColor => JarvisPalette.Current.Label;
     // Declared before KeywordsByLanguage: static field initializers run in textual declaration
     // order, so referencing these from the dictionary literal before their own initializers ran
     // would silently populate every entry with null.

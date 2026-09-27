@@ -9,18 +9,22 @@
     <Expander x:Name="Root" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Padding="0">
         <Expander.Header>
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <FontIcon Glyph="&#xE90F;" FontSize="12" Foreground="#94A3B8" />
-                <TextBlock x:Name="ToolName" FontSize="12" Foreground="#E2E8F0" />
-                <Border x:Name="StatusBadge" CornerRadius="8" Padding="6,1">
-                    <TextBlock x:Name="StatusText" FontSize="10" />
+                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE90F;" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                <TextBlock x:Name="ToolName" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                <!-- Status badge: icon, word and colour (the fill is the colour at 14%); set in code. -->
+                <Border x:Name="StatusBadge" CornerRadius="{StaticResource PillCornerRadius}" Padding="6,2,8,2" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <FontIcon x:Name="StatusIcon" Style="{StaticResource JarvisIcon}" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock x:Name="StatusText" Style="{StaticResource CaptionEmphasisText}" VerticalAlignment="Center" />
+                    </StackPanel>
                 </Border>
             </StackPanel>
         </Expander.Header>
         <StackPanel Spacing="6" Padding="4">
-            <TextBlock Text="Arguments" FontSize="10" Foreground="#64748B" />
-            <TextBlock x:Name="ArgsText" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap" />
-            <TextBlock x:Name="ResultLabel" Text="Result" FontSize="10" Foreground="#64748B" />
-            <TextBlock x:Name="ResultText" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap" />
+            <TextBlock Text="Arguments" Style="{StaticResource SecondaryFootnoteText}" />
+            <TextBlock x:Name="ArgsText" Style="{StaticResource DataText}" TextWrapping="Wrap" />
+            <TextBlock x:Name="ResultLabel" Text="Result" Style="{StaticResource SecondaryFootnoteText}" />
+            <TextBlock x:Name="ResultText" Style="{StaticResource DataText}" TextWrapping="Wrap" />
         </StackPanel>
     </Expander>
 </UserControl>

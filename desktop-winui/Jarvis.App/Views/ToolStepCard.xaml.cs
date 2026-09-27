@@ -1,8 +1,8 @@
 using System.Text.Json;
 using Jarvis.Core.Models;
+using Jarvis_App.Themes;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace Jarvis_App.Views;
 
@@ -14,16 +14,19 @@ public sealed partial class ToolStepCard : UserControl
         InitializeComponent();
         ToolName.Text = step.Tool;
 
-        var (label, color) = step.Status switch
+        var (label, kind) = step.Status switch
         {
-            ToolStatus.Running => ("Running", Color.FromArgb(255, 251, 191, 36)),
-            ToolStatus.Success => ("Completed", Color.FromArgb(255, 16, 185, 129)),
-            ToolStatus.Error => ("Failed", Color.FromArgb(255, 244, 63, 94)),
-            _ => ("Unknown", Color.FromArgb(255, 148, 163, 184)),
+            ToolStatus.Running => ("Running", StatusKind.Warning),
+            ToolStatus.Success => ("Completed", StatusKind.Success),
+            ToolStatus.Error => ("Failed", StatusKind.Error),
+            _ => ("Unknown", StatusKind.Neutral),
         };
+        var color = StatusStyle.ColorOf(kind);
         StatusText.Text = label;
         StatusText.Foreground = new SolidColorBrush(color);
-        StatusBadge.Background = new SolidColorBrush(Color.FromArgb(30, color.R, color.G, color.B));
+        StatusIcon.Glyph = StatusStyle.GlyphOf(kind, inProgress: step.Status == ToolStatus.Running);
+        StatusIcon.Foreground = new SolidColorBrush(color);
+        StatusBadge.Background = JarvisTheme.Tinted(color, 0.14);
 
         try
         {

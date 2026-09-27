@@ -27,8 +27,8 @@ public sealed partial class GlassButton : UserControl
     public static class Material
     {
         public static Vector3 ClearTint = Vector3.One;
-        public static Vector3 AccentTint = new(0.039f, 0.518f, 1.0f); // system blue #0A84FF
-        public static float AccentTintAmount = 0.55f;
+        public static Vector3 AccentTint => Jarvis_Glass.JarvisPalette.ToVector3(Jarvis_Glass.JarvisPalette.Current.AccentFill);
+        public static float AccentTintAmount = Jarvis_Glass.JarvisPalette.AccentTintAmount;
 
         // Rim: lens ramp over a band that is this fraction of the corner radius.
         public static float BezelFraction = 0.55f;
