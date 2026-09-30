@@ -60,6 +60,65 @@ def test_argument_aware_command_risk():
     assert evaluate_command_argument_risk("curl http://example.com") == RiskTier.CONFIRMATION_REQUIRED
 
 
+def test_safe_command_runs_without_asking_through_the_gate(tmp_path):
+    """The tier decided for the command is the one that applies: `dir` used to ask anyway."""
+    decision = evaluate_tool_permission("execute_command", {"command": "git status"}, workspace_path=tmp_path)
+    assert decision.allowed is True
+    decision = evaluate_tool_permission("execute_command", {"command": "npm install"}, workspace_path=tmp_path)
+    assert decision.allowed is False
+
+
+@pytest.mark.parametrize("command", [
+    "echo hi; Remove-Item -Path x",          # chained
+    "dir && del x",                          # chained
+    "dir || shutdown",                       # chained
+    "type notes.md | Out-File copy.md",      # piped
+    'echo "" > notes.md',                    # redirect overwrites a file
+    "echo $(Stop-Process -Name code)",       # substitution
+    "echo $env:OPENROUTER_API_KEY",          # variable
+    "echo `whoami`",                         # backtick
+    "echo hi\nRemove-Item x",                # newline
+    "dirty.exe",                             # a prefix is a whole word, not the start of a name
+    "echoserver --listen",
+    "git branch -D main",                    # safe verb, destructive argument
+    "git branch --delete main",
+    "git diff --output=notes.md",
+])
+def test_composed_or_disguised_safe_commands_ask(command, tmp_path):
+    assert evaluate_command_argument_risk(command, workspace_root=tmp_path) != RiskTier.LOW_RISK
+
+
+def test_safe_command_paths_must_stay_in_the_workspace(tmp_path):
+    (tmp_path / "notes.md").write_text("x")
+    assert evaluate_command_argument_risk("cat notes.md", workspace_root=tmp_path) == RiskTier.LOW_RISK
+    assert evaluate_command_argument_risk("dir /s", workspace_root=tmp_path) == RiskTier.LOW_RISK
+    assert evaluate_command_argument_risk("git log -n 5 --oneline", workspace_root=tmp_path) == RiskTier.LOW_RISK
+    outside = tmp_path.parent / "secret.txt"
+    assert evaluate_command_argument_risk(f"cat {outside}", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
+    assert evaluate_command_argument_risk("type ..\\secret.txt", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
+    assert evaluate_command_argument_risk("cat ~/.ssh/id_rsa", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
+    # Text commands don't take paths: echo of a path string is harmless.
+    assert evaluate_command_argument_risk(r"echo C:\Windows", workspace_root=tmp_path) == RiskTier.LOW_RISK
+
+
+@pytest.mark.parametrize("command", [
+    "Remove-Item -Recurse -Force build",
+    "remove-item C:\\x -r",
+    "Format-Volume -DriveLetter D",
+    "Clear-Disk -Number 1",
+    "Stop-Computer",
+    "Restart-Computer -Force",
+    "rd /s /q build",
+    "reg delete HKCU\\Software\\X",
+])
+def test_powershell_and_cmd_destroyers_are_high_risk(command):
+    assert evaluate_command_argument_risk(command) == RiskTier.HIGH_RISK
+
+
+def test_format_is_only_dangerous_as_the_disk_command(tmp_path):
+    assert evaluate_command_argument_risk("git log --format=%h", workspace_root=tmp_path) != RiskTier.HIGH_RISK
+
+
 def test_argument_aware_file_path_risk():
     assert evaluate_file_path_risk("docs/PLAN.md") == RiskTier.LOW_RISK
     assert evaluate_file_path_risk(r"C:\Windows\System32\drivers\etc\hosts") == RiskTier.HIGH_RISK

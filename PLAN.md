@@ -232,21 +232,190 @@ Per-tool notes:
   (find/replace like patch_file) instead of resending the whole content. (4) `read_artifact`
   scoped to the current workspace.
 
-**Resume here (next session):** the git family (`git_status`/`git_diff`/`git_log`/`git_commit`/
-`git_checkout`) was presented, the user hasn't answered yet. Points raised: (1) split
-`git_checkout` into `git_switch` (branch) and `git_restore` (file; the card says it discards
-uncommitted changes, backup to `.jarvis/backups/` first); (2) no way to create a branch
-(`git_switch create=true`); (3) large diffs arrive cut in the middle -- show `--stat` first when
-big; (4) no push/pull -- deliberate? (suggested: push left out or card-only; pull risky with
-conflicts). After git: `web_search`, `fetch_url`, then the OS tools (`launch_app` has the
-Temp-escape bug noted above), `get_system_status`, `remember`/`forget`, then points 3 and 5
-(keyword offering, missing tools).
+- Git family (`git_status`/`git_diff`/`git_log`/`git_commit`/`git_checkout`, agreed
+  2026-09-30): (1) split `git_checkout` into `git_switch` (branch) and `git_restore` (file; the
+  card says it discards uncommitted changes, backup to `.jarvis/backups/` first); (2) create a
+  branch with `git_switch create=true`; (3) large diffs: show `--stat` first, then the diff of
+  one file on request, instead of cutting in the middle; (4) **add `git_push` and `git_pull`**
+  (missing by accident, not by design) -- both ask; pull as `--ff-only` so a conflict never
+  starts mid-chat (it reports "can't fast-forward" instead).
+
+- `web_search` (agreed 2026-09-30): (1) stop keyword-gating it --
+  offer `web_search` + `fetch_url` on every turn (LOW_RISK, small schema, and a fixed tool set
+  is better for the byte-stable prefix than tools appearing mid-session), with a protocol rule:
+  search when the answer depends on facts that may have changed since training (current
+  holders of roles, prices, versions, news, anything "latest/today"), and say so when answering
+  from memory; check with a small set of should-search / shouldn't-search prompts that it
+  doesn't over-search (the fast model too). (2) Agreed: if the snippet doesn't state the fact, `fetch_url` the best
+  result before answering. (3) Agreed: `news=true` (DDG news: date + source), date shown on
+  every result. (4) Agreed: answers that used the web end with the links used (tool
+  description + protocol rules). (5) No confirmation card; show the query on the
+  collapsed tool-step row ("Searched: ...") -- today it is only in the expanded arguments -- and
+  a rule that queries are short search terms, never pasted document or chat text.
+
+- `fetch_url` (2026-09-30; the user delegated the call -- "choose which best fits", all five
+  taken): (1) **security:** fetched text is marked as untrusted page data (tool description +
+  protocol rules), and `fetch_url` **asks** when the URL didn't come from the user's message, a
+  search result, or the link list of a page already fetched this session (a model-built URL
+  is the exfiltration path: `?q=<document text>`). (2) **SSRF:** check every redirect hop and
+  the resolved IP, not just the first hostname (a public URL redirecting to `localhost:8000`
+  gets through today). (3) Read further: an `offset` to continue past the cut, and the result
+  states the page's total length. (4) PDFs: extract text (or say "PDF, N pages" if no
+  extractor) -- ties in with grep_in_files (6); JS-only pages: say the text couldn't be read
+  instead of returning menu junk. (5) Links as a numbered list at the end (cap ~30), not
+  inline -- saves the char budget and feeds the "links of fetched pages" list in (1).
+
+- `launch_app` (agreed 2026-09-30): (1) **the user's bug** (log 2026-09-29 10:55: the model
+  called `launch_app("qwen studio")`; the shortcut is `Qwen.lnk`, and `find_start_menu_shortcut`
+  only matches the whole phrase as equal/prefix/substring, so nothing matched): match word by
+  word, and when there's no clear winner return the closest installed apps ("No 'qwen studio'.
+  Closest: Qwen, Unsloth Studio, Android Studio") so the model picks or asks. (2) Several
+  matches and none exact ("studio") -> ask which one, instead of silently taking the shortest
+  name. (3) Store/AppX apps: resolve from the Start menu's own app list (`Get-StartApps`
+  equivalent, launch via `shell:AppsFolder\<AppID>`), not only the `.lnk` folders. (4) The
+  Temp-escape bug below (raw strings).
+
+- **The user's "forgotten 500 rule" -- diagnosed 2026-09-30 (a `forget` bug, not a context one):**
+  memory `bbb9c9b9` ("prompts under 500 words", global preference) was saved 09-26 and replaced
+  correctly. On 09-29 10:56, in the Freeform "open qwen studio" chat, the user wrote "i gave the
+  wrong name bro its actually called qwen"; the model read that as a memory correction and ran
+  forget(bbb9c9b9) -> remember -> forget -> remember -> forget in one turn, ending with the rule
+  deleted (log 103214-103271; no forget cue matched -- the model did it unprompted). Same chat,
+  turn 2 ("open qwen"): the model said "I attempted to open Qwen" **without calling any tool**
+  (`launch_app("qwen")` would have matched `Qwen.lnk`). Memory restored by hand 2026-09-30 as
+  `7586e944` (same text, global preference). Fixes (agreed 2026-09-30): (a) `forget` refuses unless the user's message asks to
+  forget/correct something (the `_FORGET_CUE_RE` cue, widened) -- or asks; (b) forgotten
+  memories go to a restorable bin (Settings), not a hard delete; (c) loop guard: a turn that
+  forgets and re-saves the same fact stops after the first pair; (d) claimed-but-not-done
+  actions ("I attempted to open X" with no tool call) -- protocol rule, and consider a check.
+
+- `focus_app` (agreed 2026-09-30): (1) it reports success without checking -- Windows'
+  foreground lock usually stops a background process (the backend) from raising a window (it
+  flashes in the taskbar; unverified on device): verify with `GetForegroundWindow` after the
+  call and say so honestly, and have the WinUI client (foreground while the user types) call
+  `AllowSetForegroundWindow` for the backend. (2) Match order: process name, then exact title,
+  then title substring; several candidates -> list and ask (as launch_app). (3) **`launch_app`
+  focuses an already-running app instead of starting a second copy**, so "open X" is one call;
+  `focus_app` stays for "switch to X". (4) Word-by-word matching with closest candidates, as
+  launch_app.
+
+- Audio (`set_volume`/`mute_toggle`/`media_key`, 2026-09-30): (1) relative change (`change=+10`)
+  besides an absolute level, result always "Volume 40% -> 50%" (read the current level first);
+  steps by wording (agreed over a random 5-15): "slightly"/"a tiny bit" 5, "a bit"/"louder"/
+  "quieter" 10, "a lot"/"way louder" 20, a number the user gives exactly (in the tool
+  description so the model maps it). (2) Agreed: `mute_toggle` -> `set_mute(on/off)`,
+  reports the state. (3) Agreed: media via Windows' media session API (GSMTC): real play vs
+  pause, "what's playing" (app + title/artist), honest "nothing is playing".
+
+- Clipboard (`get_`/`set_clipboard`, agreed 2026-09-30; both CONFIRMATION_REQUIRED since the
+  original Phase 3 commit 7094884, 2026-08-23, "to protect private or sensitive data" -- never
+  revisited): (1) `set_clipboard` LOW_RISK; `get_clipboard` runs when the user's message
+  mentions the clipboard / "what I copied", asks when the model reaches for it unprompted.
+  Side effect: every "open"/"copy"/"play" turn offers them today, and as guarded tools they
+  force `_prefer_capable_slot` to main (log: "Guarded tools offered (get_clipboard, ...
+  set_clipboard); routing to main") -- lowering them lets such turns stay on fast.
+  (2) Copied files -> their paths; an image -> "image, WxH; paste it with Ctrl+V" (composer
+  paste already attaches images). (3) Long content: length stated, start + "(N more chars)".
+
+- `list_processes`/`kill_process` (agreed 2026-09-30): (1) **bug:** CPU% is always 0 --
+  psutil's first `cpu_percent` reading per process is 0.0; prime, wait ~0.5 s, read again;
+  sort by CPU when the question is about CPU. (2) Group like Task Manager's Apps view: one row
+  per app ("chrome.exe x32, 2.1 GB, 4% CPU"), VRAM per app if the governor's source gives it
+  cheaply. (3) `proc.terminate()` is TerminateProcess on Windows -- a hard kill, the
+  "graceful" docstring is wrong: "close X" sends WM_CLOSE to its windows (the app can ask to
+  save), force-kill only when the user says force / it's frozen, with the card saying unsaved
+  work is lost. (4) Protect all of Jarvis's processes, not just the backend + parent:
+  Jarvis.App, llama-server (chat) and the 8002/8003 sidecars, the uvicorn reloader.
+
+- `send_toast` (agreed 2026-09-30): (1) replace with `remind_me(when, text)` -- stored on the
+  routines scheduler (survives restarts), fires through `AwarenessMonitor.emit` (the client
+  shows and speaks it) plus a Windows toast when Jarvis isn't the foreground window; list and
+  cancel from chat. Covers part of the queued "routines from chat" missing tool. (2) Toasts do
+  show on device (the user has seen them), but under the unregistered app_id "Jarvis
+  Assistant": send under the app's AUMID so a click opens Jarvis.
+
+- `get_system_status` (agreed 2026-09-30): (1) **bug, all tools:** `tool_schema.py:43` takes
+  the docstring's first *line*, and this one wraps -- the model sees "...RAM, CPU, free disk,"
+  and never "call this whenever..." / "the only hardware numbers you may quote". Take the first
+  paragraph (up to a blank line / `Args:`), and audit every tool's description for the same
+  cut. (2) Disk: every fixed drive with its letter (today `psutil.disk_usage(".")` = the
+  backend's drive, D:, unlabelled). (3) Offer it on every turn (as web_search) -- "why is it
+  laggy / fans loud / overheating" match no trigger today.
+
+- `remember`/`forget` (agreed 2026-09-30, plus (a)-(d) below): (1) scope rule: anything said
+  in a workspace about that workspace's work is saved to the workspace; only facts about the
+  user as a person go global; the reply says where it was saved when it isn't obvious. The
+  500-word rule (`7586e944`) was moved to the Prompt Enhancer workspace by hand
+  (`project_preference`), as the user asked. (2) Remember/forget show as a visible chat line
+  ("Remembered: ..." / "Forgot: ..." with Undo from the restorable bin), not just a collapsed
+  tool row.
+
+- Keyword tool offering (agreed 2026-09-30): measured all 31 schemas at ~15.4k chars / ~3.9k
+  tokens (`remember` 1156 chars, `create_artifact` 1050 the largest). Replace
+  `get_relevant_tools` with a **fixed set per space**, chosen at session start and never
+  changed (byte-stable prefix from turn 1): Freeform = web, system status, apps/windows, audio,
+  clipboard, processes, reminders, memory (~2k tokens); Workspace = that + files, git,
+  artifacts, `execute_command` (~4-5k with the new tools). Routing: the **fast slot gets no
+  tools** (chat and quick answers); anything that acts goes to main; `_prefer_capable_slot`'s
+  "guarded tool offered" rule goes. Alternatives weighed: a small router call picking tool
+  groups (extra latency, prefix shifts again) and a `find_tools` meta-tool (loads schemas
+  mid-session, same prefix problem) -- both worse. Possible later add-on: per-workspace
+  toggles for tool groups (a writing workspace without git/execute saves tokens for RAG).
+  Mind the budget with §4.8a: 14-16k document + ~5k tools + history.
+
+- Missing tools (agreed 2026-09-30): (1) **open a URL in the browser** -- `launch_app` accepts
+  http(s) URLs and opens the default browser ("open X" stays one tool). Runs without asking for
+  a URL the user typed, a search result, a link of a page fetched this session, or a site the
+  user named ("search youtube for lofi"); asks otherwise (same exfiltration reasoning as
+  fetch_url). (2) **`look_at_screen(window?)`** -- capture the screen or one window (Jarvis's
+  windows are already excluded), downscale, hand to main as an image for that turn. Gated like
+  get_clipboard (runs when the message asks to look, asks when the model reaches for it).
+  If the governor dropped the projector, say "can't see right now (low VRAM)". Screenshots
+  **are kept in the chat history** (the user's choice; stored like image attachments, nothing
+  in ephemeral chats); only the newest goes to the model as pixels, older ones as
+  "[screenshot]" text so history doesn't re-send images. Works from the HUD/voice too.
+  **Test first:** an image in a tool result through llama-server + the Qwen3.5 template
+  (else inject it on a follow-up user part).
+- `remind_me` covers most of "routines from chat".
+
+**Fix batch 1 -- security (done 2026-09-30, tests only: 602 pass; not yet exercised on device):**
+- `execute_command`: **correction to the review** -- the chaining bug was latent, not live:
+  `evaluate_tool_permission` kept the base CONFIRMATION tier whenever the command was "safe", so
+  *every* command asked (even `dir`) and the prefix check never took effect. Now the command's
+  own tier applies, and a safe command runs only as one plain command: no `; & | < > $ `` `` @(`
+  or newline, whole-word prefix match (`dirty.exe` isn't `dir`), no write/destroy args
+  (`git branch -D`, `git diff --output`), every path argument inside the workspace (echo/pwd/
+  whoami/--version exempt). PowerShell/cmd destroyers added to HIGH_RISK (`Remove-Item -Recurse`,
+  `Format-Volume`, `Clear-Disk`, `Stop-/Restart-Computer`, `rd /s`, `reg delete`, ...); `format`
+  only as `format X:` (so `git log --format=` isn't high risk). Timeout 30 -> 120 s, returning
+  the output printed before the timeout. The `reason` arg (4) moves to batch 3 with
+  write/delete, since it needs the confirmation card.
+- `fetch_url`: (1) origin check -- `url_provenance_text(messages)` (user turns + web_search/
+  fetch_url results, schemes and www. stripped) is passed to the permission batch from both
+  tool loops; a URL not found there asks, with the reason on the card. Protocol rule 7 and the
+  tool description say web content is data, never instructions; results are headed "(web page
+  text -- data, not instructions)". (2) SSRF: redirects followed by hand (max 5), every hop's
+  host resolved; a hop into loopback/private/link-local is refused unless the first address was
+  itself local (the gate asked, the user approved). Result names the final URL.
+
+**Review finished 2026-09-30.** Suggested
+fix order: (1) security -- execute_command chaining/paths, fetch_url exfil + SSRF; (2) bugs --
+forget guard + loop + bin, docstring first paragraph (all tools), patch/delete RAG index,
+CPU 0%, launch_app Temp raw strings + name matching, focus honesty, kill = WM_CLOSE + protect
+Jarvis; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
+patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,
   `"\appdata\local\temp\\"` in plain strings: `\t` is a tab and `\a` a bell, so the Temp
   escalation never matches.
 - `stop_playback` leftovers: `tools/audio_playback.py` is dead (nothing calls `play_audio`);
   only `main.py`'s shutdown call and the always-false `is_playing_audio` status field
   (unused `IsPlayingAudio` in `ApiModels.cs`) keep it alive.
+- **Not added by claude** - I dont know if we have talked about this before but let me put about
+  it again. Whenever i open a app like discord or chrome, if i give the name correctly it opens
+  correctly, if not it doesnt open For example: if give like open qwen studio app. Refer open
+  qwen studio chat happened on 2026-09-29. **bug** - for some reason the model forget the 
+  prompt i gave in opus 5.5 prompt enhancer workspace (about the 500 length for a prompt)
 
 ### 4.7 Design system v2 (started 2026-09-27)
 
@@ -281,11 +450,88 @@ Governor, fast model, Free VRAM, Models...; one thick reading surface; 720 px tr
 assistant turns without a bubble, one-line tool-step rows; composer as one capsule (attach,
 field, mic, round send/stop); inspector (old right panel) closed until an artifact/context
 arrives; Ephemeral as a toolbar eye. Popover must be inline glass, not a Flyout.
+Built 2026-09-27 (build clean; runs; the sidebar, toolbar, composer and inspector seen in two
+snapshots). Unverified on device: the status popover (meters, Governor, Free VRAM), session
+hover "..." and search, hiding the sidebar, the mic button, the ephemeral eye, tool-step rows,
+inspector auto-open, window drag and caption buttons. The transcript's text fades under the
+popover (glass can't frost XAML). Known: a SystemBackdrop ArgumentException is logged (caught)
+when the appearance changes.
+
+**Model choice (2026-09-28, the user: "works good" on device):** the status popover's "Answer with" switch --
+Auto | Main | Fast -- sent as the turn's `model` (`ChatViewModel.ModelChoice`), saved in
+LocalSettings. Auto is today's routing; Main/Fast pin that slot (the backend's explicit model
+skips `_prefer_capable_slot`/`_prefer_loaded_slot`; images still go to main). Asked for because
+the fast model never ran: nothing in the app requested it. The HUD/voice path still sends no
+model (Auto). Not specifically checked: Fast turns with a guarded tool. Uncommitted, together
+with the AppLayout work.
+
+**d. Traffic-light window buttons (asked by the user 2026-09-30, after the tool fixes):**
+replace the system caption buttons (top right, `CaptionButtonsWidth` 138 in
+`MainWindow.xaml.cs`) with macOS-style round buttons -- red close, yellow minimize, green
+maximize -- from the user's reference image. Needs: hide the system buttons
+(`OverlappedPresenter.SetBorderAndTitleBar(true, false)`), our own buttons outside the drag
+region (`SetRegionRects`), and keep Windows 11 Snap Layouts on hover over green (answer
+`WM_NCHITTEST` with `HTMAXBUTTON` for its rect) or it's lost. Colours as palette tokens with
+dark/light/HC variants. Decided by the user: **top right** where the system buttons are now,
+order yellow, green, red (close stays in the corner); **glyphs only on hover** (plain dots
+otherwise, as macOS); **green = maximize** (Snap Layouts kept); **main window only** (the HUD
+stays borderless). Size: match macOS proportions scaled to our caption row -- check with a
+snapshot.
 
 **b. Still open:** adaptive glass (renderer: per-slab luminance, flip small chrome between
 dark/light, raise tint on reading areas -- thresholds in the artifact); app tile PNGs from
 `Assets/Brand/jarvis-app-tile.svg` (manifest assets are still the template cross); awareness
 toasts as glass (they are XAML borders, and a sibling slab would share the messages layer).
+
+### 4.8 After the tool review
+
+**a. Hallucinated names in RAG answers (raised by the user 2026-09-30).** The user's reference
+document is ~11,000 words (~14-16k tokens) and growing -- it fits the 32k context today, not
+forever. The model gets names wrong even when answering from retrieved chunks, and correcting it
+in chat doesn't stick.
+- **Step 1 -- diagnostic first (current step):** log the exact retrieved chunks for a failing
+  query and check whether the correct name is in them. Build a small test set of name-lookup
+  queries (question + expected name) to run against it.
+  - Name **not** in the chunks -> retrieval problem: chunk size/overlap, embedding model, top-k;
+    consider hybrid BM25 + embedding search (names are a classic miss for pure embeddings).
+  - Name **in** the chunks -> generation problem, go to step 2.
+- **Step 2 -- generation-side fixes, in order:** quote the supporting sentence first, then
+  answer; a code check that the answer literally appears in the retrieved chunks (reject/retry
+  if not); temperature 0-0.2 and thinking off for lookups; "not found in the provided text" as
+  a valid answer; fewer, cleaner chunks (3-5).
+- **Step 3 -- quant test:** Q4_K_M vs the current `UD-IQ3_XXS` with identical chunks, prompt and
+  temperature 0; measure real VRAM with nvidia-smi.
+- **Process (the user's terms):** design the diagnostic (logging + test set) first; no fix spec
+  until the user has run it and reported results; ask about anything ambiguous, don't assume.
+
+**b. Model download from HuggingFace + hardware suggestions.** Download GGUFs from inside the
+app; suggest models from the detected RAM / VRAM / CPU.
+
+**c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** (raised by the user
+2026-09-28): https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF
+-- a Qwen3.5-9B multi-fine-tune merge, "Heretic" (refusals removed), same architecture, so it
+runs on our llama-server as is.
+- **Its files don't fit the budget as shipped:** every quant keeps the output tensor at 16-bit
+  (~2 GB on Qwen3.5's vocab). Smallest IQ2_M 4713 MiB, IQ3_M 5355 MiB, Q4_K_S 6248 MiB, vs our
+  `UD-IQ3_XXS` 3830 MiB (whole main stack ~5.0-5.2 GB). IQ3_M would put us at ~6.6 GB.
+- **Plan:** download the regular (non-MTP) Q8_0 (9996 MiB), build an imatrix from it with
+  `tools/llama-cpp/llama-imatrix.exe`, requantize to IQ3_XXS with a normal-size output tensor
+  (`llama-quantize.exe --imatrix ...`), target ~3.8 GB. Then A/B against the current main
+  in both orders (thermal drift): PPL on repo prose, `scripts/bench_tool_chain.py` (current
+  5/5), decode speed. Replace only if tool chains hold.
+- Skip the MTP files (MTP tensors add ~100-130 MiB; llama.cpp build support unverified) and the
+  "plusIQ" variants (default xhigh reasoning, in-chat `{REASON:...}` switches that persist and a
+  changed template -- risk to the byte-stable prompt prefix; Q6/Q8 only). A "plusIQ-TOOLS"
+  variant exists, also Q6/Q8 only -- worth a look if it appears in small quants.
+- Its ARC/HellaSwag-style benchmarks say nothing about tool calling; the merge + abliteration
+  may hurt it. Uncensored is fine for us: risky tools are gated by `permissions.py`, not by
+  model refusals.
+- Vision: try our existing `mmproj-Q8_0.gguf` (the fine-tune likely left the vision tower
+  alone -- unverified); their mmproj is F16 876 MiB, else quantize it with
+  `scripts/quantize_mmproj.py`.
+
+**d. Developer settings: Liquid Glass sliders** -- GlassLab's material sliders in the app's
+Settings for live tuning.
 
 ### 4.5 Waiting on the device
 

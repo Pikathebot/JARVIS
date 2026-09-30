@@ -103,7 +103,8 @@ MAJOR_PROCESS_NAMES: set[str] = {
 
 
 
-# Fast compiled regex patterns for argument-aware dynamic risk analysis
+# Read-only commands that run without asking -- but only as one plain command (see
+# ``evaluate_command_argument_risk``). Matched on whole leading words, so "dir" is not "dirty.exe".
 SAFE_COMMAND_PREFIXES = (
     "git status",
     "git log",
@@ -125,8 +126,26 @@ SAFE_COMMAND_PREFIXES = (
     "pytest --version",
 )
 
+# Safe commands whose arguments are text, not paths, so they need no workspace check.
+_SAFE_WITHOUT_PATHS = {"echo", "pwd", "whoami", "python --version", "pytest --version"}
+
+# Anything that makes one command several, redirects output into a file, or splices in another
+# command's output or a variable: `echo hi; Remove-Item ...`, `dir && del x`, `echo "" > a.md`,
+# `echo $(Stop-Computer)`, `echo $env:SECRET`. A safe command containing any of these is no
+# longer the command that was vetted.
+_SHELL_COMPOSITION = re.compile(r"[;&|<>`$\r\n]|@\(")
+
+# Arguments of a safe command that would make it write or destroy: `git diff --output=f`,
+# `git branch -D main` / `-m` / `-c` / `--delete` / `--move` / `--copy` / `-f`.
+_UNSAFE_SAFE_COMMAND_ARGS = re.compile(
+    r"(?:^|\s)(?:--output\b|-[a-z]*[dDmMcCf][a-z]*\b|--(?:delete|move|copy|force|set-upstream-to|unset-upstream|edit-description)\b)"
+)
+
 DANGEROUS_COMMAND_PATTERNS = re.compile(
-    r"\b(rm\s+-rf|del\s+/[sSfFqQ]|format|diskpart|shutdown|mkfs|rmdir\s+/s)\b",
+    r"\b(?:rm\s+-rf|del\s+/[sfq]|erase\s+/[sfq]|rd\s+/s|rmdir\s+/s|format(?:\.com)?\s+[a-z]:|"
+    r"diskpart|shutdown|mkfs|bcdedit|vssadmin\s+delete|cipher\s+/w|reg\s+delete|"
+    r"remove-item\b[^\n]*-r(?:ecurse)?\b|format-volume|clear-disk|initialize-disk|remove-partition|"
+    r"stop-computer|restart-computer)",
     re.IGNORECASE
 )
 
@@ -171,23 +190,59 @@ def generate_action_id(tool_name: str, arguments: dict[str, Any]) -> str:
     return f"act_{digest}"
 
 
-def evaluate_command_argument_risk(command: str) -> RiskTier:
-    """
-    Argument-aware optimization for command execution:
-    Safe read-only commands downgrade to LOW_RISK for zero friction;
-    Destructive commands escalate to HIGH_RISK.
-    """
-    cmd_clean = str(command).strip().strip("'\"")
+_COMMAND_TOKEN = re.compile(r'"[^"]*"|\'[^\']*\'|\S+')
 
-    # Destructive pattern check
+
+def _is_option(token: str) -> bool:
+    """`-la`, `--stat`, and cmd-style switches like `/s` or `/c:x` -- not paths."""
+    return token.startswith("-") or bool(re.match(r"^/[a-z?](?::|$)", token, re.IGNORECASE))
+
+
+def _stays_in_workspace(token: str, workspace_root: Path) -> bool:
+    """A path argument of a safe command must resolve inside the workspace: `cat C:\\x\\secret.txt`
+    would otherwise read around read_file's own gate."""
+    value = token.strip("'\"")
+    if not value:
+        return True
+    if value.startswith("~") or value.startswith("\\\\"):
+        return False  # home directory / UNC share
+    try:
+        p = Path(value)
+        resolved = p.resolve() if p.is_absolute() else (workspace_root / p).resolve()
+    except Exception:
+        return False
+    return resolved == workspace_root or workspace_root in resolved.parents
+
+
+def evaluate_command_argument_risk(command: str, workspace_root: Optional[Path | str] = None) -> RiskTier:
+    """
+    Argument-aware tier for execute_command. Destructive commands are HIGH_RISK. A known
+    read-only command runs without asking only when it is exactly one plain command -- no
+    chaining, pipes, redirection, substitution or variables -- none of its arguments turn it into
+    a write, and every path it names is inside the workspace. Everything else asks.
+    """
+    cmd_clean = str(command or "").strip()
+
     if DANGEROUS_COMMAND_PATTERNS.search(cmd_clean):
         return RiskTier.HIGH_RISK
+    if not cmd_clean or _SHELL_COMPOSITION.search(cmd_clean):
+        return RiskTier.CONFIRMATION_REQUIRED
 
-    cmd_lower = cmd_clean.lower().replace("\\", "/")
-    # Known safe read-only prefix check
+    tokens = _COMMAND_TOKEN.findall(cmd_clean)
+    lowered = [t.lower() for t in tokens]
     for prefix in SAFE_COMMAND_PREFIXES:
-        if cmd_lower.startswith(prefix):
+        words = prefix.split()
+        if lowered[:len(words)] != words:
+            continue
+        rest = tokens[len(words):]
+        if _UNSAFE_SAFE_COMMAND_ARGS.search(" " + " ".join(rest)):
+            return RiskTier.CONFIRMATION_REQUIRED
+        if prefix in _SAFE_WITHOUT_PATHS:
             return RiskTier.LOW_RISK
+        root = Path(workspace_root or WORKSPACE_ROOT).resolve()
+        if all(_is_option(t) or _stays_in_workspace(t, root) for t in rest):
+            return RiskTier.LOW_RISK
+        return RiskTier.CONFIRMATION_REQUIRED
 
     return RiskTier.CONFIRMATION_REQUIRED
 
@@ -276,6 +331,46 @@ def evaluate_url_risk(url: str) -> RiskTier:
         return RiskTier.LOW_RISK
     except Exception:
         return RiskTier.CONFIRMATION_REQUIRED
+
+
+# Where a URL the model fetches may come from without asking: the user's own messages and what
+# web_search / fetch_url returned this session. A URL the model composed itself can carry chat or
+# file content out in its path or query (`https://x.example/?q=<document text>`) -- the way a
+# prompt injection on a fetched page would exfiltrate data -- so that one asks first.
+URL_SOURCE_TOOLS = ("web_search", "fetch_url")
+
+
+def _url_key(url: str) -> str:
+    """A URL as it would be written in prose: no scheme, no www., no fragment or trailing slash."""
+    key = str(url or "").strip().lower()
+    key = re.sub(r"^[a-z][a-z0-9+.\-]*://", "", key)
+    key = key.split("#", 1)[0].rstrip("/")
+    return key[4:] if key.startswith("www.") else key
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):  # multimodal user turn: keep the text parts
+        return " ".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
+    return ""
+
+
+def url_provenance_text(messages: list[dict[str, Any]]) -> str:
+    """The text a fetched URL must appear in to run without asking (see URL_SOURCE_TOOLS)."""
+    parts = []
+    for m in messages or []:
+        role = m.get("role")
+        if role == "user" or (role == "tool" and m.get("name") in URL_SOURCE_TOOLS):
+            parts.append(_message_text(m))
+    text = "\n".join(parts).lower()
+    return re.sub(r"[a-z][a-z0-9+.\-]*://(?:www\.)?", "", text)
+
+
+def url_came_from_conversation(url: str, provenance_text: str) -> bool:
+    key = _url_key(url)
+    return bool(key) and key in provenance_text
 
 
 def evaluate_launch_app_risk(name_or_path: str) -> tuple[RiskTier, Optional[str]]:
@@ -444,11 +539,14 @@ def evaluate_tool_permission(
     arguments: dict[str, Any],
     approved_action_ids: Optional[list[str]] = None,
     chat_mode: ChatMode = ChatMode.WORKSPACE,
-    workspace_path: Optional[str | Path] = None
+    workspace_path: Optional[str | Path] = None,
+    url_provenance: Optional[str] = None,
 ) -> PermissionDecision:
     """
     Evaluate permission for a single tool call.
     Default policy: If tool is not in BASE_TOOL_RISK_MAP, default to CONFIRMATION_REQUIRED.
+    ``url_provenance`` (from ``url_provenance_text``) enables the fetch_url origin check; None
+    skips it.
     """
     approved_ids = set(approved_action_ids or [])
     action_id = generate_action_id(tool_name, arguments)
@@ -461,9 +559,10 @@ def evaluate_tool_permission(
     # 2. Argument-aware dynamic rule optimizations
     if tool_name == "execute_command":
         cmd = arguments.get("command") or arguments.get("cmd") or arguments.get("command_line") or ""
-        cmd_tier = evaluate_command_argument_risk(str(cmd))
-        if base_tier == RiskTier.LOW_RISK or cmd_tier != RiskTier.LOW_RISK:
-            effective_tier = cmd_tier
+        # The command decides the tier outright: a vetted plain read-only command runs, the rest
+        # ask. (This used to keep the base tier whenever the command was safe, so every command
+        # asked -- and the prefix check it guarded would have let `dir && del x` through.)
+        effective_tier = evaluate_command_argument_risk(str(cmd), workspace_root=workspace_path)
     elif tool_name == "delete_file":
         effective_tier = RiskTier.HIGH_RISK
     elif tool_name in ("write_file", "patch_file"):
@@ -481,6 +580,12 @@ def evaluate_tool_permission(
         url_tier = evaluate_url_risk(str(url))
         if url_tier != RiskTier.LOW_RISK:
             effective_tier = url_tier
+        elif url_provenance is not None and not url_came_from_conversation(str(url), url_provenance):
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            custom_reason = (
+                "This address didn't come from you, a search result or a page already opened in "
+                "this chat, so it could carry data out of the conversation."
+            )
     elif tool_name == "launch_app":
         target = arguments.get("name_or_path") or arguments.get("name") or arguments.get("app") or ""
         la_tier, la_reason = evaluate_launch_app_risk(str(target))
@@ -529,7 +634,8 @@ def evaluate_tool_calls_batch(
     tool_calls: list[dict[str, Any]],
     approved_action_ids: Optional[list[str]] = None,
     chat_mode: ChatMode = ChatMode.WORKSPACE,
-    workspace_path: Optional[str | Path] = None
+    workspace_path: Optional[str | Path] = None,
+    url_provenance: Optional[str] = None,
 ) -> BatchPermissionResult:
     """
     Batch evaluate multiple tool calls in a single pass to prevent fragmented confirmation prompts.
@@ -545,7 +651,8 @@ def evaluate_tool_calls_batch(
             fn_args,
             approved_action_ids,
             chat_mode=chat_mode,
-            workspace_path=workspace_path
+            workspace_path=workspace_path,
+            url_provenance=url_provenance,
         )
 
         if decision.allowed:

@@ -7,6 +7,18 @@ from app.config import settings
 
 logger = logging.getLogger("jarvis.agent.tools.sample_tools")
 
+# Under the pipeline's 180 s cap for execute_command, so the tool times out first and can still
+# return what the command printed.
+COMMAND_TIMEOUT_SECONDS = 120
+
+
+def _as_text(stream) -> str:
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    return str(stream)
+
 
 def _windows_shell() -> str:
     """pwsh (PowerShell 7) if it is on PATH, else the built-in Windows PowerShell 5.1."""
@@ -47,15 +59,21 @@ def execute_command(command: str, workspace_path: Optional[str] = None) -> str:
             shell=use_shell,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
             cwd=str(ws_root)
         )
         output = result.stdout.strip()
         if result.stderr:
             output += ("\n" if output else "") + f"[Stderr]: {result.stderr.strip()}"
         return output or f"[Process exited with code {result.returncode}]"
-    except subprocess.TimeoutExpired:
-        return "Error: Command execution timed out (30s limit)."
+    except subprocess.TimeoutExpired as te:
+        # A build or test run that overruns has usually printed the useful part already.
+        partial = _as_text(te.stdout).strip()
+        partial_err = _as_text(te.stderr).strip()
+        if partial_err:
+            partial += ("\n" if partial else "") + f"[Stderr]: {partial_err}"
+        note = f"Error: Command timed out after {COMMAND_TIMEOUT_SECONDS}s and was stopped."
+        return f"{note} Output before it stopped:\n{partial}" if partial else note
     except Exception as e:
         logger.error("Error executing command '%s': %s", cmd_clean, e)
         return f"Error executing command '{cmd_clean}': {str(e)}"
