@@ -1545,15 +1545,26 @@ class AgentOrchestrator:
         # 3. RAG Retrieval in WORKSPACE mode
         retrieved_chunks = []
         active_rag_project_id = resolved_project_id or project_id
+        # Every workspace turn's retrieval is traced (app/rag/trace.py) -- except off the record.
+        rag_trace_record: Optional[dict[str, Any]] = None
         if effective_mode_str == "WORKSPACE" and active_rag_project_id:
+            if not self.is_ephemeral:
+                rag_trace_record = {"session_id": active_session_id}
             try:
                 retrieved_chunks = self.retriever.retrieve(
                     project_id=active_rag_project_id,
                     query=user_message,
-                    top_k=settings.context_tier3_max_chunks
+                    top_k=settings.context_tier3_max_chunks,
+                    trace=rag_trace_record,
                 )
             except Exception as rag_err:
                 logger.warning("RAG retrieval failed during stream setup: %s", rag_err)
+            from app.rag.retriever import should_retrieve
+            if not retrieved_chunks and should_retrieve(user_message):
+                # A question that found nothing: the 9B otherwise answers from general
+                # knowledge as if it were the project's ("the World Tree is Yggdrasil").
+                from app.memory.context_manager import NO_PASSAGES_NOTE
+                turn_directive = "\n\n".join(d for d in (turn_directive, NO_PASSAGES_NOTE) if d)
 
         # 4. Strict Tier-Based Token Budgeting
         vision = self._slot_has_vision("fast" if is_fast else "main", decision.provider)
@@ -1604,6 +1615,8 @@ class AgentOrchestrator:
 
         target_provider = self.provider
         saved_in_turn = finished = False
+        answer: Optional[str] = None
+        tools_used: list[Any] = []
         async for ev in self._run_provider_stream_loop(
             provider=target_provider,
             session_id=active_session_id,
@@ -1626,7 +1639,17 @@ class AgentOrchestrator:
                 saved_in_turn = True
             elif ev.get("event") == "done":
                 finished = True
+                answer = (ev.get("data") or {}).get("response")
+                tools_used = (ev.get("data") or {}).get("tools_used") or []
             yield ev
+
+        if rag_trace_record is not None:
+            from app.rag import trace as rag_trace
+            rag_trace.write(rag_trace.finish(
+                rag_trace_record, context_pkg.retrieved_chunks_used, context_pkg.retrieved_chunks_dropped,
+                answer=answer if finished else "(no answer: the turn stopped for a confirmation or an error)",
+                tools_used=tools_used,
+            ))
 
         if cue == "save" and finished and not saved_in_turn:
             self._start_memory_capture(target_provider, decision.model, user_message, tool_context)

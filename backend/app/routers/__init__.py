@@ -7,6 +7,7 @@ from app.routers.awareness import router as awareness_router
 from app.routers.routines import router as routines_router
 from app.routers.models import router as models_router
 from app.routers.confirmations import router as confirmations_router
+from app.routers.rag_debug import router as rag_debug_router
 
 __all__ = [
     "projects_router",
@@ -18,4 +19,5 @@ __all__ = [
     "routines_router",
     "models_router",
     "confirmations_router",
+    "rag_debug_router",
 ]

@@ -128,3 +128,43 @@ def test_flat_scores_mean_no_target_and_nothing_is_injected():
 def test_no_content_terms_means_no_retrieval():
     assert should_retrieve("why?") is False
     assert should_retrieve("what is it?") is False
+
+
+# --- keyword standouts (PLAN 4.8a, 2026-10-01: "World Tree" lost under the floor) ----------------
+
+def _kdoc(chunk_id: str, semantic: float, bm25: float) -> dict:
+    return {**_doc(chunk_id, semantic), "keyword_score": bm25}
+
+
+def test_a_clear_keyword_standout_survives_the_floor():
+    # The measured case: both "World Tree" passages under 0.62, keyword-ranked 19 vs 7.
+    rr = RerankerService(device="cpu", min_relevance=0.62, relevance_gap=0.15, min_peak=0.04)
+    docs = [_kdoc("tree1", 0.5993, -19.32), _kdoc("tree2", 0.5842, -18.97), _kdoc("c", 0.5726, -2.19),
+            _kdoc("d", 0.5644, -6.94), _kdoc("e", 0.5534, -1.53), _kdoc("f", 0.5301, -6.06), _kdoc("g", 0.5272, -3.30)]
+    trace: dict = {}
+    kept = rr.rerank("what is the World Tree a reference to?", docs, top_k=5, trace=trace)
+    assert [d["chunk_id"] for d in kept] == ["tree1", "tree2"]
+    assert trace["keyword_standouts"] == ["tree1", "tree2"]
+
+
+def test_common_words_alone_make_no_standout():
+    rr = RerankerService(device="cpu", min_relevance=0.62, relevance_gap=0.15, min_peak=0.04)
+    alike = [_kdoc(str(i), 0.60 - 0.01 * i, -3.0 - 0.1 * i) for i in range(8)]
+    assert RerankerService.keyword_standouts(alike) == set()
+    assert rr.rerank("what is the weather", alike, top_k=5) == []
+
+
+def test_a_standout_also_survives_flat_relevance_and_top_k():
+    rr = RerankerService(device="cpu", min_relevance=0.62, relevance_gap=0.15, min_peak=0.04)
+    flat = [_kdoc(str(i), 0.648 - 0.005 * i, -2.0) for i in range(7)] + [_kdoc("named", 0.61, -15.0)]
+    assert [d["chunk_id"] for d in rr.rerank("who is Oyaji", flat, top_k=5)] == ["named"]
+    peaked = [_kdoc(str(i), 0.90 - 0.01 * i, -2.0) for i in range(6)] + [_kdoc("named", 0.63, -15.0)]
+    kept = [d["chunk_id"] for d in rr.rerank("who is Oyaji", peaked, top_k=3)]
+    assert kept == ["0", "1", "named"]
+
+
+def test_fusion_keeps_the_keyword_score_of_a_chunk_both_searches_found():
+    from app.rag.retriever import reciprocal_rank_fusion
+    fused = reciprocal_rank_fusion([[{"chunk_id": "a", "similarity_score": 0.6}],
+                                    [{"chunk_id": "a", "keyword_score": -19.3}]])
+    assert fused[0]["similarity_score"] == 0.6 and fused[0]["keyword_score"] == -19.3

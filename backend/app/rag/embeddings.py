@@ -149,10 +149,39 @@ class RerankerService:
 
     Without a semantic score (hashed vectors) it falls back to lexical overlap, and there a
     chunk that shares no real term with the query is dropped rather than padded in by rank.
+
+    Keyword standouts pass all three cuts (2026-10-01, PLAN 4.8a): "what is the World Tree a
+    reference to?" against a design document scored its two "World Tree" passages 0.599 and
+    0.584 -- under the floor, which was measured on code, where unrelated chunks reach 0.65 --
+    while the keyword search ranked exactly those two first at BM25 19 against 7 for the
+    next. Nothing reached the model and it answered "Yggdrasil" from general knowledge. A
+    chunk the keyword search clearly singles out is kept whatever its cosine.
     """
 
     SYMBOL_BONUS = 0.05
     MAX_BONUS = 0.15
+    # Keyword standouts: within STANDOUT_SHARE of the best BM25 score, and the best at least
+    # STANDOUT_LEAD times the strongest hit outside that group; at most MAX_STANDOUTS chunks.
+    STANDOUT_SHARE = 0.6
+    STANDOUT_LEAD = 1.5
+    MAX_STANDOUTS = 3
+
+    @classmethod
+    def keyword_standouts(cls, docs: list[dict[str, Any]]) -> set[str]:
+        """Chunk ids the keyword search ranks clearly above every other hit. A query with only
+        common words (BM25 alike everywhere) has none."""
+        hits = sorted(((abs(float(d["keyword_score"])), str(d.get("chunk_id") or d.get("id")))
+                       for d in docs if d.get("keyword_score") is not None), reverse=True)
+        if not hits or hits[0][0] <= 0:
+            return set()
+        top = hits[0][0]
+        group = [h for h in hits if h[0] >= cls.STANDOUT_SHARE * top]
+        rest = hits[len(group):]
+        if len(group) > cls.MAX_STANDOUTS:
+            return set()
+        if rest and top < cls.STANDOUT_LEAD * rest[0][0]:
+            return set()
+        return {cid for _, cid in group}
 
     def __init__(
         self,
@@ -199,7 +228,8 @@ class RerankerService:
         self,
         query: str,
         docs: list[dict[str, Any]],
-        top_k: int = 5
+        top_k: int = 5,
+        trace: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """
         Score candidates, apply the floor and the gap, return at most top_k by relevance.
@@ -227,8 +257,16 @@ class RerankerService:
             scored.append(d)
 
         scored.sort(key=lambda x: x["score"], reverse=True)
+        standouts = self.keyword_standouts(scored)
+        if trace is not None:
+            from app.rag.trace import brief
+            trace["reranked"] = [brief(d) for d in scored]
+            trace["keyword_standouts"] = sorted(standouts)
         if not scored:
             return []
+
+        def is_standout(d: dict[str, Any]) -> bool:
+            return str(d.get("chunk_id") or d.get("id")) in standouts
 
         if scored[0].get("semantic_score") is not None:
             best = scored[0]["score"]
@@ -237,13 +275,27 @@ class RerankerService:
                     "Flat relevance (%.3f..%.3f over top 6) for %r: nothing in the workspace is about this.",
                     best, scored[5]["score"], query,
                 )
-                return []
+                if trace is not None:
+                    trace["stopped"] = (f"flat relevance: best {best:.3f}, sixth {scored[5]['score']:.3f} "
+                                        f"(needs a gap of {self.min_peak})")
+                return [d for d in scored if is_standout(d)][:top_k]
             floor = max(self.min_relevance, best - self.relevance_gap)
-            kept = [d for d in scored if d["score"] >= floor]
+            kept = [d for d in scored if d["score"] >= floor or is_standout(d)]
+            if trace is not None:
+                trace["floor"] = round(floor, 4)
             if len(kept) < len(scored):
                 logger.debug(
                     "Relevance floor %.2f (best %.2f) dropped %d of %d candidates for %r",
                     floor, best, len(scored) - len(kept), len(scored), query,
                 )
             scored = kept
-        return scored[:top_k]
+        final = scored[:top_k]
+        # A standout past top_k replaces the weakest non-standout.
+        for d in scored[top_k:]:
+            if is_standout(d):
+                weakest = next((x for x in reversed(final) if not is_standout(x)), None)
+                if weakest is None:
+                    break
+                final.remove(weakest)
+                final.append(d)
+        return final

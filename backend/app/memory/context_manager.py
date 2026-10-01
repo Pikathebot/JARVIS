@@ -58,6 +58,26 @@ def _replay_units(stored: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return units
 
 
+# Rides with the retrieved passages (PLAN 4.8a step 2, 2026-10-01): with no passage about it,
+# the 9B answered "what is the World Tree a reference to?" with "Yggdrasil"; with passages, it
+# still added links the document never made, and "the weather in Region 1" was refused as a
+# real-world forecast.
+WORKSPACE_PASSAGES_RULE = (
+    "(Passages from this workspace's files, found for the message above. For a question about "
+    "the project, answer from these: first quote the line that supports the answer, then "
+    "answer, adding nothing they don't say. If they don't contain it, say the files don't say "
+    "-- never fill in from general knowledge. Places, characters and terms named here mean this "
+    "project's, not real-world ones.)"
+)
+
+# A workspace question that found no passage at all (the orchestrator's turn directive).
+NO_PASSAGES_NOTE = (
+    "Nothing in this workspace's files matched this message. If it is about the project, say "
+    "you couldn't find it in the files -- don't answer from general knowledge as if it were the "
+    "project's."
+)
+
+
 class ContextPackage(BaseModel):
     """
     Structured context package output by ContextManager.
@@ -478,7 +498,7 @@ class ContextManager:
             trailing_parts.append(turn_context_text)
         if tier3_formatted_blocks:
             trailing_parts.append(
-                "--- Relevant Workspace Context & Code ---\n" +
+                "--- Relevant Workspace Context & Code ---\n" + WORKSPACE_PASSAGES_RULE + "\n\n" +
                 "\n\n".join(tier3_formatted_blocks)
             )
         # Qwen3.5's template rejects a system message anywhere but first ("System message must

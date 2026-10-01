@@ -165,6 +165,25 @@ class KeywordSearchService:
 
         return matched_chunks
 
+    def chunks_containing(self, project_id: str, needle: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Every indexed chunk whose text contains ``needle`` (case-insensitive substring, not an
+        FTS match) -- the RAG trace's "was this name ever indexed, and where" check."""
+        if not needle or not needle.strip():
+            return []
+        sql = text("""
+            SELECT chunk_id, file_path, content, metadata_json FROM document_chunks_fts
+            WHERE project_id = :project_id AND content LIKE :pattern LIMIT :limit
+        """)
+        with self._get_session() as session:
+            rows = session.execute(
+                sql, {"project_id": project_id, "pattern": f"%{needle.strip()}%", "limit": limit}
+            ).fetchall()
+        found = []
+        for row in rows:
+            meta = json.loads(row[3]) if row[3] else {}
+            found.append({**meta, "chunk_id": row[0], "file_path": row[1], "content": row[2]})
+        return found
+
     def delete_chunks(self, project_id: str, chunk_ids: list[str]) -> None:
         """Remove specific chunks from the FTS index (a file being un-indexed)."""
         if not chunk_ids:

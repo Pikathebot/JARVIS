@@ -565,6 +565,38 @@ in chat doesn't stick.
   - Name **not** in the chunks -> retrieval problem: chunk size/overlap, embedding model, top-k;
     consider hybrid BM25 + embedding search (names are a classic miss for pure embeddings).
   - Name **in** the chunks -> generation problem, go to step 2.
+  - **Built 2026-10-01 (696 tests pass; not yet run on the real index):** every WORKSPACE turn
+    (not off-the-record) appends a trace to `backend/data/rag_trace.jsonl` (`app/rag/trace.py`):
+    semantic and keyword top 20, reranked scores, the floor / "flat relevance" stop, final,
+    the full text sent to the model, the answer and `names_not_in_passages` (capitalised words
+    in the answer no passage contains). `POST /api/rag/trace {project_id, query, expect}` runs
+    the same retrieval without the model and names the stage where `expect` was lost.
+    `scripts/rag_name_check.py --project "Game development" --tests data/rag_name_tests.json
+    [--ask]` runs a test set through it (`--ask` also asks the model, off the record). The test
+    set (15 questions drafted from `game_design_document.md`, 976 words -- the user: part of the
+    real document, and it hallucinates on this already) is waiting for the user's check.
+    Noticed while reading: the hybrid keyword (FTS5) search already exists, so "add BM25" is
+    done; the reranker returns *nothing* when the top six score alike ("flat relevance") -- a
+    suspect for name questions; the document calls the Entity both "his" and "her".
+  - **First run (user, 2026-10-01, `backend/data/rag_checks/20261001-112309.json`):** 13/15
+    answers right, retrieval delivered 14/15. Q10 "World Tree a reference to?" -> both searches
+    ranked the right two passages first (BM25 19 vs 7 next) but their cosines (0.599/0.584) sat
+    under the 0.62 floor (measured on code) -> nothing sent -> "Yggdrasil". Q11 "weather in
+    Region 1" -> passage delivered, model refused it as a real forecast. Right answers still
+    embellished (Q14 invented a link; Q5 "your world beings"). Also: RRF dropped the keyword
+    score of a chunk both searches found.
+  - **Fixes chosen by the user (1 + 3), built 2026-10-01, 701 tests pass, unverified on
+    device:** (1) keyword standouts (`RerankerService.keyword_standouts`: within 60% of the best
+    BM25, best >= 1.5x the next hit, at most 3) pass the floor, the flat-relevance stop and
+    top_k; RRF keeps both searches' fields. The 0.62 floor itself stays (lowering it lets
+    unrelated code into the Jarvis workspace). (3) the passages block opens with
+    `WORKSPACE_PASSAGES_RULE` (quote the supporting line first, add nothing, "the files don't
+    say", named things are the project's); a workspace question that found nothing gets
+    `NO_PASSAGES_NOTE` as a turn directive. **Re-run on device 2026-10-01
+    (`20261001-113048.json`): 15/15**, Q10 answers "AOT Tree reference", answers now open with a
+    quote (some quotes still lightly paraphrased; Q3 added "in the cave"). Next: the user's real
+    failing questions in chat (they are traced); whole-document mode (2) kept for the full
+    ~11k-word document.
 - **Step 2 -- generation-side fixes, in order:** quote the supporting sentence first, then
   answer; a code check that the answer literally appears in the retrieved chunks (reject/retry
   if not); temperature 0-0.2 and thinking off for lookups; "not found in the provided text" as

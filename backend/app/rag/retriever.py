@@ -76,6 +76,11 @@ def reciprocal_rank_fusion(
 
             if doc_id not in doc_map:
                 doc_map[doc_id] = dict(doc)
+            else:
+                # Found by both searches: keep each one's fields (the keyword score was lost
+                # here, so the reranker never saw how strongly a keyword hit matched).
+                for key, value in doc.items():
+                    doc_map[doc_id].setdefault(key, value)
 
             # Accumulate RRF score
             rrf_delta = 1.0 / (k + rank)
@@ -144,6 +149,7 @@ class HybridRetriever:
         keyword_limit: int = 20,
         filters: Optional[dict[str, Any]] = None,
         gate: bool = True,
+        trace: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """
         Execute full hybrid retrieval pipeline:
@@ -152,17 +158,26 @@ class HybridRetriever:
         3. Lexical exact keyword/symbol search (top 20 from SQLite FTS5).
         4. Reciprocal Rank Fusion (merge to top 40 candidates).
         5. CPU Reranking (top 5 final chunks with Section 8 metadata).
+
+        ``trace``, when given, is filled with every stage's candidates (``app.rag.trace``).
         """
+        from app.rag import trace as rag_trace
+        if trace is not None:
+            trace.update(query=query, project_id=project_id, top_k=top_k)
         if not query or not query.strip():
             return []
         if gate and not should_retrieve(query):
             logger.debug("Skipping retrieval for %r: not a question about the workspace.", query)
+            if trace is not None:
+                trace["stopped"] = "should_retrieve: not a question about the workspace"
             return []
 
         # An index built in another embedding space is noise against this query; rebuild it
         # in the background (once) and serve nothing rather than junk until it is ready.
         if not self.vector_store.generation_matches(project_id):
             self._reindex_in_background(project_id)
+            if trace is not None:
+                trace["stopped"] = "index from another embedding model; rebuilding"
             return []
 
         # 1. Semantic search
@@ -196,8 +211,13 @@ class HybridRetriever:
             k=60
         )
 
+        if trace is not None:
+            trace["semantic"] = [rag_trace.brief(c) for c in semantic_results]
+            trace["keyword"] = [rag_trace.brief(c) for c in keyword_results]
         if not fused_candidates:
             logger.debug("No hybrid search candidates found for query: %s", query)
+            if trace is not None:
+                trace["stopped"] = "no candidates from either search"
             return []
 
         # Take up to 40 candidates for CPU reranking
@@ -221,8 +241,11 @@ class HybridRetriever:
         final_chunks = self.reranker.rerank(
             query=query,
             docs=rerank_candidates,
-            top_k=top_k
+            top_k=top_k,
+            trace=trace,
         )
+        if trace is not None:
+            trace["final"] = [rag_trace.brief(c) for c in final_chunks]
 
         logger.info(
             "Hybrid retrieval complete for project %s: %d semantic, %d keyword -> %d RRF -> %d final reranked chunks",
