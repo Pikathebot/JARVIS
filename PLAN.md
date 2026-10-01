@@ -419,7 +419,19 @@ reloader, llama-servers; launch_app Temp check fixed; `match_start_menu` (exact 
 prefix/contains -> closest list, ambiguity asks); `focus_app` ranks process > exact title >
 substring, asks across apps, checks `GetForegroundWindow` and says when Windows refused. Left
 for later: the client calling `AllowSetForegroundWindow` (WinUI), Store/AppX apps, launch_app
-focusing a running app; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+focusing a running app; **(3) built 2026-10-01, 648 tests pass, unverified on device:** fixed
+tool set per space (`tools_for_space`; keyword picking, `_offered_tools` and
+`_prefer_capable_slot` gone); the fast model gets no tools and an action-looking message
+(`looks_like_action`) never runs on it; file tools work outside the workspace once the gate
+asked (`paths.py`, `allow_outside` injected only for gate-checked calls; the gate now sees
+`list_directory`'s `directory_path`, which it missed); `write_file` replacing a file asks,
+backups to `.jarvis/backups/` (newest 10 per file) on overwrite and patch; `delete_file` ->
+Recycle Bin, folders too (card counts files); `reason` arg on write/patch/delete/execute shown
+on the card, not part of the approval id; `set_clipboard` LOW_RISK, `get_clipboard` runs when
+the message mentions the clipboard. Cost to watch on device: the first turn of a workspace chat
+now prefills ~4k tokens of tool schemas even for "hi" (cached after). Not done from the per-tool
+notes: list_directory sizes/caps, find_files/grep clutter rules, binary sniffing, PDF text,
+fetch_url offset/links -- smaller behaviour items, still open in the notes above; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
 approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
 patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 from app.agent.orchestrator import build_turn_context, current_time_line
 from app.agent.permissions import RiskTier, evaluate_tool_permission
-from app.agent.tools.registry import TOOL_FUNCTIONS, TOOL_SCHEMAS, get_relevant_tools, get_system_status
+from app.agent.tools.registry import TOOL_FUNCTIONS, TOOL_SCHEMAS, get_system_status, tools_for_space
 from app.awareness.observations import SystemSnapshot
 
 
@@ -23,17 +23,9 @@ def test_turn_context_carries_the_clock_not_the_hardware():
     assert current_time_line(now) == current_time_line(now.replace(second=3))
 
 
-def test_machine_questions_offer_the_status_tool_and_others_do_not():
-    for q in (
-        "how much vram is free and how hot is the gpu",
-        "what's my system usage",
-        "how's my pc",
-        "check the temps",
-        "which model is loaded",
-    ):
-        assert get_system_status in get_relevant_tools(q), q
-    for q in ("hi", "write a program", "open the program", "delete probe.txt"):
-        assert get_system_status not in get_relevant_tools(q), q
+def test_the_status_tool_is_offered_in_every_space():
+    for mode in ("FREEFORM", "WORKSPACE", "SYSTEM"):
+        assert get_system_status in tools_for_space(mode), mode
 
 
 def test_status_tool_is_registered_low_risk_and_argless():

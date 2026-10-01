@@ -65,8 +65,10 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "set_volume": RiskTier.LOW_RISK,
     "mute_toggle": RiskTier.LOW_RISK,
     "media_key": RiskTier.LOW_RISK,
+    # Reading runs when the user's message points at the clipboard (see _CLIPBOARD_CUE_RE);
+    # writing it is no riskier than the user pressing Ctrl+C (tool review, 2026-09-30).
     "get_clipboard": RiskTier.CONFIRMATION_REQUIRED,
-    "set_clipboard": RiskTier.CONFIRMATION_REQUIRED,
+    "set_clipboard": RiskTier.LOW_RISK,
     "list_processes": RiskTier.LOW_RISK,
     # Killing a program loses its unsaved work, so it always asks; the reason says which kind.
     "kill_process": RiskTier.CONFIRMATION_REQUIRED,
@@ -167,6 +169,10 @@ def normalize_arguments(args: dict[str, Any]) -> dict[str, Any]:
     """
     normalized = {}
     for k, v in sorted(args.items()):
+        if k == "reason":
+            # Display-only (shown on the card). The approved turn re-issues the call, and a
+            # reworded reason must still match the approval.
+            continue
         canonical_key = "file_path" if k in ("path", "filePath", "filename", "file") else (
             "command" if k in ("cmd", "command_line", "cli") else (
                 "directory_path" if k in ("dir", "dir_path", "directory") else k
@@ -368,6 +374,11 @@ def url_provenance_text(messages: list[dict[str, Any]]) -> str:
     return re.sub(r"[a-z][a-z0-9+.\-]*://(?:www\.)?", "", text)
 
 
+# "what's on my clipboard", "summarize what I copied", "paste it here" -- the user pointing at the
+# clipboard. Without that, a model reaching for it unprompted asks first.
+_CLIPBOARD_CUE_RE = re.compile(r"\b(?:clipboard|copied|paste[ds]?|pasting)\b", re.IGNORECASE)
+
+
 def url_came_from_conversation(url: str, provenance_text: str) -> bool:
     key = _url_key(url)
     return bool(key) and key in provenance_text
@@ -535,6 +546,28 @@ class BatchPermissionResult:
     pending_confirmations: list[PermissionDecision] = field(default_factory=list)
 
 
+REASON_TOOLS = frozenset({"write_file", "patch_file", "delete_file", "execute_command"})
+
+
+def _resolve_for_card(path: Any, workspace_path: Optional[str | Path]) -> Optional[Path]:
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    try:
+        root = Path(workspace_path or WORKSPACE_ROOT).resolve()
+        p = Path(raw)
+        return p.resolve() if p.is_absolute() else (root / p).resolve()
+    except Exception:
+        return None
+
+
+def _outside_note(target: Optional[Path], workspace_path: Optional[str | Path]) -> str:
+    if target is None:
+        return ""
+    root = Path(workspace_path or WORKSPACE_ROOT).resolve()
+    return "" if (target == root or root in target.parents) else f" It is outside this workspace: {target}."
+
+
 def evaluate_tool_permission(
     tool_name: str,
     arguments: dict[str, Any],
@@ -542,12 +575,14 @@ def evaluate_tool_permission(
     chat_mode: ChatMode = ChatMode.WORKSPACE,
     workspace_path: Optional[str | Path] = None,
     url_provenance: Optional[str] = None,
+    user_message: Optional[str] = None,
 ) -> PermissionDecision:
     """
     Evaluate permission for a single tool call.
     Default policy: If tool is not in BASE_TOOL_RISK_MAP, default to CONFIRMATION_REQUIRED.
     ``url_provenance`` (from ``url_provenance_text``) enables the fetch_url origin check; None
-    skips it.
+    skips it. ``user_message`` is what the user typed this turn: reading the clipboard runs
+    without asking only when it mentions the clipboard.
     """
     approved_ids = set(approved_action_ids or [])
     action_id = generate_action_id(tool_name, arguments)
@@ -564,18 +599,44 @@ def evaluate_tool_permission(
         # ask. (This used to keep the base tier whenever the command was safe, so every command
         # asked -- and the prefix check it guarded would have let `dir && del x` through.)
         effective_tier = evaluate_command_argument_risk(str(cmd), workspace_root=workspace_path)
+    elif tool_name == "get_clipboard":
+        if user_message is not None and _CLIPBOARD_CUE_RE.search(user_message):
+            effective_tier = RiskTier.LOW_RISK
+        else:
+            custom_reason = ("You didn't mention the clipboard, and it can hold passwords or "
+                             "other private text.")
     elif tool_name == "delete_file":
         effective_tier = RiskTier.HIGH_RISK
+        target = _resolve_for_card(arguments.get("file_path") or arguments.get("path") or "", workspace_path)
+        if target is not None and target.is_dir():
+            count = sum(1 for f in target.rglob("*") if f.is_file())
+            custom_reason = f"Moves the folder '{target.name}' and the {count} file(s) in it to the Recycle Bin."
+        else:
+            custom_reason = "Moves it to the Recycle Bin (restorable from there)."
+        custom_reason += _outside_note(target, workspace_path)
     elif tool_name in ("write_file", "patch_file"):
         path = arguments.get("file_path") or arguments.get("path") or ""
         path_tier = evaluate_file_path_risk(str(path), is_write_or_delete=True, chat_mode=chat_mode, workspace_root=workspace_path)
         if path_tier != RiskTier.LOW_RISK or base_tier == RiskTier.LOW_RISK:
             effective_tier = path_tier
+        target = _resolve_for_card(path, workspace_path)
+        overwrite = str(arguments.get("overwrite", True)).strip().lower() not in ("false", "0", "no")
+        if (tool_name == "write_file" and overwrite and target is not None and target.is_file()
+                and effective_tier == RiskTier.LOW_RISK):
+            # Creating a file runs; replacing one asks (the old version is backed up first).
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            custom_reason = f"Replaces the existing '{target.name}' (the old version is backed up first)."
+        elif effective_tier != RiskTier.LOW_RISK:
+            custom_reason = ("Writes outside this workspace" if _outside_note(target, workspace_path)
+                             else "Changes a protected location") + (f": {target}" if target else "") + "."
     elif tool_name in ("read_file", "list_directory", "find_files", "grep_in_files"):
-        path = arguments.get("file_path") or arguments.get("path") or arguments.get("root_dir") or ""
+        path = (arguments.get("file_path") or arguments.get("directory_path") or arguments.get("path")
+                or arguments.get("root_dir") or "")
         path_tier = evaluate_file_path_risk(str(path), is_write_or_delete=False, chat_mode=chat_mode, workspace_root=workspace_path)
         if path_tier != RiskTier.LOW_RISK:
             effective_tier = path_tier
+            target = _resolve_for_card(path, workspace_path)
+            custom_reason = f"Reads outside this workspace: {target}." if target else None
     elif tool_name == "fetch_url":
         url = arguments.get("url") or arguments.get("target_url") or arguments.get("link") or ""
         url_tier = evaluate_url_risk(str(url))
@@ -602,6 +663,11 @@ def evaluate_tool_permission(
             custom_reason = f"{custom_reason} Force-ends it at once: anything unsaved is lost.".strip()
         else:
             custom_reason = f"{custom_reason} Asks it to close, as clicking X does; it may ask to save.".strip()
+
+    # The model's own "why" (write/patch/delete/execute_command), shown on the card.
+    model_reason = str(arguments.get("reason") or "").strip()
+    if model_reason and tool_name in REASON_TOOLS:
+        custom_reason = f"{custom_reason or ''} Jarvis: {model_reason[:200]}".strip()
 
     # 3. Check if user already provided explicit approval token (strictly per action_id)
     if action_id in approved_ids:
@@ -641,6 +707,7 @@ def evaluate_tool_calls_batch(
     chat_mode: ChatMode = ChatMode.WORKSPACE,
     workspace_path: Optional[str | Path] = None,
     url_provenance: Optional[str] = None,
+    user_message: Optional[str] = None,
 ) -> BatchPermissionResult:
     """
     Batch evaluate multiple tool calls in a single pass to prevent fragmented confirmation prompts.
@@ -658,6 +725,7 @@ def evaluate_tool_calls_batch(
             chat_mode=chat_mode,
             workspace_path=workspace_path,
             url_provenance=url_provenance,
+            user_message=user_message,
         )
 
         if decision.allowed:

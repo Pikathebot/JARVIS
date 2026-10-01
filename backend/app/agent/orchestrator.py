@@ -13,7 +13,7 @@ from sqlmodel import select
 from app.config import settings, MAX_TOOL_CALLS_PER_TURN
 from app.persona import persona_manager
 from app.agent.tools.file_search import IGNORED_DIRS
-from app.agent.tools.registry import AVAILABLE_TOOLS, FREEFORM_MODE, execute_tool, get_tool_schema, get_relevant_tools
+from app.agent.tools.registry import AVAILABLE_TOOLS, FREEFORM_MODE, execute_tool, get_tool_schema, tools_for_space
 from app.agent.permissions import (
     BASE_TOOL_RISK_MAP,
     evaluate_tool_calls_batch,
@@ -239,6 +239,29 @@ def claims_unrun_action(content: str) -> bool:
     return bool(_UNRUN_ACTION_CLAIM_RE.search(content or ""))
 
 
+# A request to *do* something on the machine or in the workspace. Only routing uses it -- such a
+# turn never runs on the fast model, which is offered no tools -- so a false positive costs a
+# little speed, never a wrong answer.
+_ACTION_REQUEST_RE = re.compile(
+    r"\b(?:open|launch|start|close|quit|exit|kill|end|mute|unmute|volume|louder|quieter|play|"
+    r"pause|resume|skip|stop|copy|paste|clipboard|delete|remove|rename|move|create|make|write|"
+    r"save|edit|patch|fix|run|execute|install|commit|push|pull|branch|search|google|look up|"
+    r"fetch|download|find|read|list|show|check|remember|forget|remind|switch to|focus|bring up|"
+    r"screenshot|turn (?:up|down|on|off)|set|change|update|git|file|folder|process|app)\b",
+    re.IGNORECASE,
+)
+
+_FAST_NO_TOOLS_NOTE = (
+    "You have no tools in this turn (the fast model is answering). If the user asked you to do "
+    "something on the computer, say plainly that you can't do it on the fast model and that "
+    "Main can -- never say you did it."
+)
+
+
+def looks_like_action(user_message: str) -> bool:
+    return bool(_ACTION_REQUEST_RE.search(user_message or ""))
+
+
 def _with_system_prompt(system_prompt: str, conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     One system message, then the conversation. ContextManager.build_context already puts its
@@ -419,8 +442,6 @@ class AgentOrchestrator:
         self.provider = provider or get_model_provider()
 
         self.router = router or ModelRouter(default_mode=settings.default_routing_mode)
-        # Tools offered so far per (session, chat mode), in first-seen order -- see _offered_tools.
-        self._session_tools: dict[tuple[str, str], dict[str, Any]] = {}
         self.memory_store = memory_store or MemoryStore(db_path=settings.memory_db_path)
         self.compactor = compactor or ContextCompactor(
             max_context_tokens=settings.memory_max_context_tokens,
@@ -713,29 +734,8 @@ class AgentOrchestrator:
             head = head[:160] + "..."
         logger.info("Model '%s' replied: tool_calls=%s content=%r", model, called, head)
 
-    def _prefer_capable_slot(
-        self, decision: Any, is_fast: bool, tools: Optional[list[Any]], requested_model: Optional[str]
-    ):
-        """
-        A turn that puts a guarded tool on the table (delete_file, execute_command, launch_app,
-        clipboard) goes to main. The router only sees the prose, so "delete probe.txt" read as a
-        short chat turn and landed on the 4B slot, which then *said* it had deleted the file
-        without calling anything. An explicit model choice is respected.
-        """
-        if not is_fast or requested_model or (decision.provider and decision.provider != "llama_cpp"):
-            return decision, is_fast
-        guarded = sorted(
-            n for n in self._tool_names(tools) if BASE_TOOL_RISK_MAP.get(n, RiskTier.LOW_RISK) != RiskTier.LOW_RISK
-        )
-        if not guarded:
-            return decision, is_fast
-        logger.info("Guarded tools offered (%s); routing to main instead of fast.", ", ".join(guarded))
-        decision.model = "main"
-        decision.reason = (decision.reason or "") + f" Rerouted to main: guarded tools offered ({', '.join(guarded)})."
-        return decision, False
-
     def _prefer_loaded_slot(
-        self, decision: Any, is_fast: bool, requested_model: Optional[str]
+        self, decision: Any, is_fast: bool, requested_model: Optional[str], user_message: str = ""
     ) -> tuple[Any, bool, Optional[bool]]:
         """
         A "fast" verdict must never cost a model swap. Switching main<->fast reloads ~5 GB of
@@ -743,7 +743,9 @@ class AgentOrchestrator:
         automatic fast verdict is served by whatever is already loaded: if that is main, the
         turn runs on main with thinking switched off *for this request* (measured on the 9B:
         19.3 s with thinking vs 0.4 s without, same answer), which is what "fast" was for. The
-        4B is used when it is the one loaded, or when the user asked for it by name.
+        fast model is used when it is the one loaded, or when the user asked for it by name --
+        except for a request to act: the fast model is offered no tools, so that turn goes to
+        main (thinking off) even if it means loading main.
 
         Returns (decision, is_fast, thinking) where thinking is the per-request override
         (None = as launched).
@@ -755,30 +757,19 @@ class AgentOrchestrator:
             loaded = get_runtime_process_manager().current_model_kind
         except Exception as exc:
             logger.debug("Loaded-slot routing skipped: %s", exc)
+            loaded = "unknown"
+        acting = looks_like_action(user_message)
+        if loaded in ("fast", "unknown") and not acting:
             return decision, is_fast, None
         if loaded == "fast":
-            return decision, is_fast, None
-        logger.info("Fast verdict while '%s' is loaded; answering on main with thinking off instead of swapping.", loaded or "nothing")
+            logger.info("Fast verdict for a request to act; answering on main (no tools on the fast model).")
+            reason = " Served on main with thinking off: a request to act, and the fast model has no tools."
+        else:
+            logger.info("Fast verdict while '%s' is loaded; answering on main with thinking off instead of swapping.", loaded or "nothing")
+            reason = " Served on main with thinking off (no model swap for a quick turn)."
         decision.model = "main"
-        decision.reason = (decision.reason or "") + " Served on main with thinking off (no model swap for a quick turn)."
+        decision.reason = (decision.reason or "") + reason
         return decision, False, False
-
-    def _offered_tools(self, session_id: str, chat_mode: str, tools: list[Any]) -> list[Any]:
-        """
-        The tool set offered to the model for this turn: every tool this session has offered
-        so far in this chat mode, in first-seen order, plus this turn's. The chat template
-        renders the tool schemas inside the head system message, and llama-server reuses the
-        KV cache only for a byte-identical prefix -- a tool list that changes with each
-        message's keywords re-prefills the whole conversation. Growing monotonically keeps the
-        prefix stable except on the turn that first adds a tool.
-        """
-        key = (session_id, (chat_mode or "").upper())
-        seen = self._session_tools.setdefault(key, {})
-        for t in tools or []:
-            name = self._tool_names([t])[0]
-            if name not in seen:
-                seen[name] = t
-        return list(seen.values())
 
     async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
         """
@@ -894,9 +885,7 @@ class AgentOrchestrator:
         turn_directive = MEMORY_FORGET_NUDGE if cue == "forget" else ""
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
-        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
-        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
-        combined_tools = self._offered_tools(active_session_id, effective_mode_str, combined_tools)
+        combined_tools = tools_for_space(effective_mode_str) + list(mcp_tools or [])
 
         # 2. Routing Decision (Amendment 2)
         decision = self.router.evaluate(
@@ -906,8 +895,13 @@ class AgentOrchestrator:
         )
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
-        decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
-        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model)
+        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model, user_message)
+        if is_fast:
+            # The fast model gets no tools: it chats and answers quick questions. A turn that
+            # runs on main always gets the space's full set, so main's prompt prefix never changes.
+            combined_tools = []
+            if looks_like_action(user_message):
+                turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
@@ -1067,7 +1061,9 @@ class AgentOrchestrator:
         """
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
-        tool_ctx = tool_context or {"workspace_path": str(ws_root), "session_id": session_id}
+        tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
+        # Every call this loop runs has passed the permission gate first.
+        tool_ctx["permission_checked"] = True
         call_history = CallHistory(window=3)
         total_turn_tool_calls = 0
         tool_turn_counts: dict[str, int] = {}
@@ -1323,6 +1319,7 @@ class AgentOrchestrator:
                 approved_action_ids=approved_action_ids,
                 workspace_path=str(ws_root),
                 url_provenance=url_provenance_text(messages),
+                user_message=(tool_context or {}).get("user_message"),
             )
 
             if not batch_permission.all_allowed:
@@ -1487,9 +1484,7 @@ class AgentOrchestrator:
         turn_directive = MEMORY_FORGET_NUDGE if cue == "forget" else ""
 
         mcp_tools = self.mcp_manager.get_tool_definitions()
-        relevant_base_tools = get_relevant_tools(user_message, chat_mode=effective_mode_str, matched_skills=matched_skills)
-        combined_tools = (relevant_base_tools + mcp_tools) if relevant_base_tools else []
-        combined_tools = self._offered_tools(active_session_id, effective_mode_str, combined_tools)
+        combined_tools = tools_for_space(effective_mode_str) + list(mcp_tools or [])
 
         # 2. Model routing decision (Amendment 2)
         decision = self.router.evaluate(
@@ -1499,8 +1494,13 @@ class AgentOrchestrator:
         )
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
-        decision, is_fast = self._prefer_capable_slot(decision, is_fast, combined_tools, requested_model)
-        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model)
+        decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model, user_message)
+        if is_fast:
+            # The fast model gets no tools: it chats and answers quick questions. A turn that
+            # runs on main always gets the space's full set, so main's prompt prefix never changes.
+            combined_tools = []
+            if looks_like_action(user_message):
+                turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
@@ -1627,7 +1627,9 @@ class AgentOrchestrator:
         thinking: Optional[bool] = None,
     ):
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
-        tool_ctx = tool_context or {"workspace_path": str(ws_root), "session_id": session_id}
+        tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
+        # Every call this loop runs has passed the permission gate first.
+        tool_ctx["permission_checked"] = True
         call_history = CallHistory(window=3)
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
@@ -1766,6 +1768,7 @@ class AgentOrchestrator:
                 chat_mode=chat_mode,
                 workspace_path=str(ws_root),
                 url_provenance=url_provenance_text(messages),
+                user_message=(tool_context or {}).get("user_message"),
             )
 
             if not batch_result.all_allowed:

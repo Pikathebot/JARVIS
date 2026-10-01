@@ -75,15 +75,17 @@ def test_media_controls_low_risk():
         assert decision.risk_tier == RiskTier.LOW_RISK, f"{tool} should be LOW_RISK"
 
 
-def test_clipboard_confirmation_required():
-    """Both get_clipboard and set_clipboard must require confirmation for privacy safety."""
-    dec_get = evaluate_tool_permission("get_clipboard", {})
-    assert dec_get.allowed is False
-    assert dec_get.risk_tier == RiskTier.CONFIRMATION_REQUIRED
+def test_clipboard_reads_run_when_asked_and_writes_always_run():
+    """Reading asks unless the user pointed at the clipboard; writing is like pressing Ctrl+C."""
+    for message in ("what's on my clipboard?", "summarize what I copied", "fix the code I pasted"):
+        assert evaluate_tool_permission("get_clipboard", {}, user_message=message).allowed, message
+    unprompted = evaluate_tool_permission("get_clipboard", {}, user_message="open discord")
+    assert unprompted.allowed is False and "private" in unprompted.reason
+    # Outside a chat turn (no message known) it asks.
+    assert evaluate_tool_permission("get_clipboard", {}).allowed is False
 
     dec_set = evaluate_tool_permission("set_clipboard", {"text": "hello"})
-    assert dec_set.allowed is False
-    assert dec_set.risk_tier == RiskTier.CONFIRMATION_REQUIRED
+    assert dec_set.allowed is True and dec_set.risk_tier == RiskTier.LOW_RISK
 
 
 def test_list_processes_low_risk():

@@ -2,15 +2,17 @@ import os
 from pathlib import Path
 from typing import Optional
 from app.config import settings
+from app.agent.tools.paths import resolve_tool_path
 
 def read_file(
     file_path: str,
     start_line: Optional[int] = None,
     end_line: Optional[int] = None,
     workspace_path: Optional[str] = None,
+    allow_outside: bool = False,
 ) -> str:
     """
-    Read and return the text contents of a LOCAL file on disk inside the project workspace.
+    Read and return the text contents of a LOCAL file on disk (in the workspace; a path outside it asks the user first).
     Do NOT use this tool for web URLs (http/https); use fetch_url instead.
     For a long file, read it in parts with start_line/end_line -- a very long result is cut down
     to its beginning and end, so the middle of a big file is only reachable by line range.
@@ -28,19 +30,9 @@ def read_file(
     if raw_path.startswith("http://") or raw_path.startswith("https://"):
         return f"Error: '{file_path}' is a web URL, not a local file on disk. Please invoke the 'fetch_url(url=\"{file_path}\")' tool to read this web page."
 
-    ws_root = Path(workspace_path or settings.workspace_path).resolve()
-
-    # Resolve target path relative to workspace root if not absolute
-    p = Path(raw_path)
-    if p.is_absolute():
-        resolved_path = p.resolve()
-    else:
-        resolved_path = (ws_root / p).resolve()
-
-    # Anti-traversal security check: ensure path is inside active workspace boundary
-    if resolved_path != ws_root and ws_root not in resolved_path.parents:
-        return f"Error: Access denied. Path '{file_path}' resolves outside the active project workspace boundary ('{ws_root}')."
-
+    resolved_path, ws_root, err = resolve_tool_path(raw_path, workspace_path, allow_outside)
+    if err:
+        return err
     path = resolved_path
 
     # Fallback resolution inside workspace if not found directly

@@ -23,7 +23,7 @@ WinUI port and the model changes, and wrong about models, clients and paths in p
 Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
 so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 642 pass (2026-10-01)
+.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 648 pass (2026-10-01)
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -70,13 +70,14 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
 
 `POST /chat/stream` (`main.py`) -> `AgentOrchestrator.run_stream` (`agent/orchestrator.py`):
 1. Session + project resolved; skills matched (`skills/loader.py`, keyword triggers).
-2. **Tools chosen before routing**: `get_relevant_tools()` in `agent/tools/registry.py` is a
-   keyword heuristic over the message; `_offered_tools` then unions it with every tool this
-   session has already been offered (keeps the prompt prefix byte-stable).
-3. `ModelRouter.evaluate` (regex heuristics) gives a verdict, then three overrides in order:
-   `_prefer_seeing_slot` (images -> a slot with vision), `_prefer_capable_slot` (any non-LOW_RISK
-   tool offered -> main), `_prefer_loaded_slot` (a "fast" verdict never swaps models: it runs on
-   whatever is loaded, with thinking off per request).
+2. **A fixed tool set per space**: `tools_for_space()` in `agent/tools/registry.py` -- Freeform
+   = every tool not in `WORKSPACE_BOUND_TOOLS`, Workspace/System = all; same list and order
+   every turn (keeps the prompt prefix byte-stable). No keyword picking since 2026-10-01.
+3. `ModelRouter.evaluate` (regex heuristics) gives a verdict, then two overrides:
+   `_prefer_seeing_slot` (images -> a slot with vision), `_prefer_loaded_slot` (a "fast" verdict
+   never swaps models: it runs on whatever is loaded, thinking off per request -- except that a
+   message `looks_like_action` never runs on the fast model). A turn that really runs on the
+   fast model gets **no tools** (plus a note to say so if asked to act).
 4. RAG (WORKSPACE mode only, gated by `should_retrieve` and a relevance floor), then
    `ContextManager.build_context` assembles messages.
 5. Provider loop (`_run_provider_stream_loop`, `llamacpp_provider.py`): stream, split `<think>`
@@ -116,9 +117,12 @@ path runs instead.
   noted: the function in `TOOL_FUNCTIONS` and `AVAILABLE_TOOLS`; a Pydantic `*Args` class in
   `TOOL_SCHEMAS` (**this is the schema the model sees** -- a tool without one is offered with no
   parameters at all; `execute_tool` then filters the call's args by the function signature and
-  injects `workspace_path`/`project_id`/`session_id`); a tier in `BASE_TOOL_RISK_MAP`
-  (`agent/permissions.py`; unlisted = CONFIRMATION_REQUIRED); and a trigger in
-  `get_relevant_tools`, or it is never offered. The docstring's **first paragraph** (up to a blank
+  injects `workspace_path`/`project_id`/`session_id`, plus `user_message` and `allow_outside`,
+  which a model can never supply); a tier in `BASE_TOOL_RISK_MAP`
+  (`agent/permissions.py`; unlisted = CONFIRMATION_REQUIRED); and, if it works on project
+  files, its name in `WORKSPACE_BOUND_TOOLS` (else Freeform offers it too). File tools resolve
+  paths through `agent/tools/paths.py` (outside the workspace only when the gate checked the
+  call) and back up before changing a file (`file_safety.py`). The docstring's **first paragraph** (up to a blank
   line or `Args:`, joined onto one line -- `tool_description` in `tool_schema.py`) becomes the
   tool description, so any "only when asked" caution must be in it. Don't say there whether the
   tool asks for confirmation: the permission gate decides that per call. Tools are sync

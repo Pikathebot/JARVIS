@@ -2,33 +2,21 @@ import os
 from pathlib import Path
 from typing import Optional
 from app.config import settings
+from app.agent.tools.paths import resolve_tool_path
 
-def list_directory(directory_path: str = ".", workspace_path: Optional[str] = None) -> str:
+def list_directory(directory_path: str = ".", workspace_path: Optional[str] = None, allow_outside: bool = False) -> str:
     """
-    List files and folders in a directory inside the project workspace.
+    List files and folders in a directory (in the workspace; a folder outside it asks the user first).
     Always use this tool when the user asks to list, view, or explore directory contents.
 
     Args:
         directory_path: Relative directory path within the project (e.g. '.', 'docs', 'backend'). Defaults to '.'.
         workspace_path: Optional active project workspace root boundary.
     """
-    raw_path = str(directory_path or ".").strip()
-    ws_root = Path(workspace_path or settings.workspace_path).resolve()
-
-    if not raw_path or raw_path == ".":
-        resolved_path = ws_root
-    else:
-        p = Path(raw_path)
-        if p.is_absolute():
-            resolved_path = p.resolve()
-        else:
-            resolved_path = (ws_root / p).resolve()
-
-    # Anti-traversal security check: ensure path is inside active workspace boundary
-    if resolved_path != ws_root and ws_root not in resolved_path.parents:
-        return f"Error: Access denied. Directory '{directory_path}' resolves outside the active project workspace boundary ('{ws_root}')."
-
-    path = resolved_path
+    raw_path = str(directory_path or ".").strip() or "."
+    path, ws_root, err = resolve_tool_path(raw_path, workspace_path, allow_outside, what="Directory")
+    if err:
+        return err
 
     if not path.exists():
         return f"Error: Directory not found at '{directory_path}' within workspace '{ws_root}'."

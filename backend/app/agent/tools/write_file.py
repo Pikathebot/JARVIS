@@ -1,8 +1,8 @@
-import os
 import logging
-from pathlib import Path
 from typing import Optional
-from app.config import settings
+
+from app.agent.tools.file_safety import backup_file, shown
+from app.agent.tools.paths import is_inside, resolve_tool_path
 
 logger = logging.getLogger("jarvis.agent.tools.write_file")
 
@@ -12,11 +12,12 @@ def write_file(
     content: str,
     overwrite: bool = True,
     workspace_path: Optional[str] = None,
-    project_id: Optional[str] = None
+    project_id: Optional[str] = None,
+    allow_outside: bool = False,
 ) -> str:
     """
-    Create or overwrite a file on disk with the provided text content inside the project workspace.
-    Automatically creates any missing parent directories. Always use this tool when the user asks to create, write, or generate a new file or script.
+    Create a file, or replace an existing one, with the given text (in the workspace; replacing a file or writing outside the workspace asks the user first, and the old version is backed up). Fill `reason` with why, in a few words.
+    Automatically creates any missing parent directories.
 
     Args:
         file_path: Relative path of the file to create (e.g. 'scripts/run.py', 'docs/notes.md').
@@ -29,20 +30,9 @@ def write_file(
     if not clean_path_str:
         return "Error: File path cannot be empty."
 
-    ws_root = Path(workspace_path or settings.workspace_path).resolve()
-
-    # Resolve target path relative to workspace root if not absolute
-    p = Path(clean_path_str)
-    if p.is_absolute():
-        resolved_path = p.resolve()
-    else:
-        resolved_path = (ws_root / p).resolve()
-
-    # Anti-traversal security check: ensure path is inside active workspace boundary
-    if resolved_path != ws_root and ws_root not in resolved_path.parents:
-        return f"Error: Access denied. Target path '{file_path}' resolves outside the active project workspace boundary ('{ws_root}')."
-
-    path = resolved_path
+    path, ws_root, err = resolve_tool_path(clean_path_str, workspace_path, allow_outside, what="Target path")
+    if err:
+        return err
 
     if path.exists() and path.is_dir():
         return f"Error: Cannot write to '{file_path}' because it is a directory."
@@ -51,22 +41,24 @@ def write_file(
         return f"Error: File '{file_path}' already exists and overwrite is set to False."
 
     try:
-        # Automatically ensure parent directory exists inside workspace
-        if path.parent and not path.parent.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
+        backup = backup_file(path, ws_root) if path.exists() else None
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         content_str = str(content or "")
         path.write_text(content_str, encoding="utf-8")
-        
+
         line_count = len(content_str.splitlines()) if content_str else 0
         char_count = len(content_str)
-        
         logger.info("Successfully wrote %d chars (%d lines) to '%s'", char_count, line_count, path)
 
-        from app.agent.tools.workspace_index import reindex
-        reindex(path, project_id)
+        if is_inside(path, ws_root):
+            from app.agent.tools.workspace_index import reindex
+            reindex(path, project_id)
 
-        return f"Successfully wrote {char_count} characters ({line_count} lines) to '{file_path}'."
+        result = f"Successfully wrote {char_count} characters ({line_count} lines) to '{file_path}'."
+        if backup:
+            result += f" The previous version is saved as '{shown(backup, ws_root)}'."
+        return result
     except Exception as e:
         logger.error("Failed to write file '%s': %s", file_path, e)
         return f"Error writing file '{file_path}': {str(e)}"

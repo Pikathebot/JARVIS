@@ -7,7 +7,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.agent.tools import memory as memory_tool
 from app.agent.tools.memory import forget, remember, short_id
-from app.agent.tools.registry import get_relevant_tools, TOOL_SCHEMAS
+from app.agent.tools.registry import tools_for_space, TOOL_SCHEMAS
 from app.agent.permissions import BASE_TOOL_RISK_MAP, RiskTier
 from app.database.models import Memory
 from app.memory.ephemeral import build_profile_context, build_project_memory_context
@@ -130,9 +130,9 @@ def test_project_memories_ride_on_a_workspace_turn(factory, tmp_path):
 
 
 def test_memory_tools_are_offered_every_turn_and_run_unconfirmed():
-    for message, mode in (("hi", "WORKSPACE"), ("what's the weather like", "FREEFORM"), ("read main.py", "WORKSPACE")):
-        names = {t.__name__ for t in get_relevant_tools(message, chat_mode=mode)}
-        assert {"remember", "forget"} <= names, (message, names)
+    for mode in ("WORKSPACE", "FREEFORM", "SYSTEM"):
+        names = {t.__name__ for t in tools_for_space(mode)}
+        assert {"remember", "forget"} <= names, (mode, names)
     assert BASE_TOOL_RISK_MAP["remember"] == RiskTier.LOW_RISK
     assert BASE_TOOL_RISK_MAP["forget"] == RiskTier.LOW_RISK
     schema = TOOL_SCHEMAS["remember"].model_json_schema()

@@ -12,6 +12,7 @@ from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
 from app.agent.orchestrator import (
     AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_UNRUN_CLAIM, _with_system_prompt, claims_unrun_action,
+    looks_like_action,
 )
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
@@ -69,25 +70,30 @@ def test_with_system_prompt_sends_the_prompt_once():
     assert [m["role"] for m in _with_system_prompt("p", convo[1:])] == ["system", "user"]
 
 
-def test_guarded_tools_route_to_main_unless_model_was_chosen():
+def test_requests_to_act_never_run_on_the_toolless_fast_model(monkeypatch):
+    """The "delete probe.txt" regression, after tools stopped being keyword-picked (2026-10-01):
+    the fast model has no tools, so a request to act goes to main even when fast is loaded."""
+    import app.agent.runtime_process_manager as rpm
     orch = _orchestrator()
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("fast"))
 
     def fast() -> RoutingDecision:
         return RoutingDecision(mode="normal", provider="llama_cpp", model="fast", reason="short turn")
 
-    decision, is_fast = orch._prefer_capable_slot(fast(), True, [read_file, delete_file], None)
-    assert (decision.model, is_fast) == ("main", False)
-    assert "delete_file" in decision.reason
+    decision, is_fast, thinking = orch._prefer_loaded_slot(fast(), True, None, "delete probe.txt")
+    assert (decision.model, is_fast, thinking) == ("main", False, False)
+    assert "no tools" in decision.reason
+    # Chat stays on the loaded fast model; an explicit choice of fast is respected.
+    assert orch._prefer_loaded_slot(fast(), True, None, "what's a haiku?")[1] is True
+    assert orch._prefer_loaded_slot(fast(), True, "fast", "delete probe.txt")[1] is True
 
-    decision, is_fast = orch._prefer_capable_slot(fast(), True, [read_file, web_search], None)
-    assert (decision.model, is_fast) == ("fast", True)
 
-    decision, is_fast = orch._prefer_capable_slot(fast(), True, [delete_file], "fast")
-    assert (decision.model, is_fast) == ("fast", True)
-
-    cloud = RoutingDecision(mode="heavy", provider="openrouter", model="x", reason="")
-    decision, _ = orch._prefer_capable_slot(cloud, True, [delete_file], None)
-    assert decision.model == "x"
+@pytest.mark.parametrize("text, acting", [
+    ("open discord", True), ("mute", True), ("delete probe.txt", True), ("what did I change in git", True),
+    ("hi", False), ("what's a haiku?", False), ("thanks, that helps", False),
+])
+def test_looks_like_action(text, acting):
+    assert looks_like_action(text) is acting
 
 
 @pytest.mark.asyncio
@@ -259,16 +265,11 @@ def test_fast_verdict_stays_on_loaded_main_with_thinking_off(monkeypatch):
     assert orch._prefer_loaded_slot(cloud, True, None) == (cloud, True, None)
 
 
-def test_offered_tools_grow_monotonically_per_session_and_mode():
-    orch = _orchestrator()
-    names = lambda ts: orch._tool_names(ts)
+def test_the_offered_tool_set_is_fixed_per_space():
+    from app.agent.tools.registry import tools_for_space
+    names = lambda mode: [t.__name__ for t in tools_for_space(mode)]
+    # Byte-stable prompt prefix: identical list, same order, every turn.
+    assert names("WORKSPACE") == names("WORKSPACE") == names("SYSTEM")
+    assert "read_file" in names("WORKSPACE") and "read_file" not in names("FREEFORM")
+    assert "launch_app" in names("FREEFORM") and "web_search" in names("FREEFORM")
 
-    assert names(orch._offered_tools("s1", "WORKSPACE", [read_file])) == ["read_file"]
-    # A later turn that matched different tools still gets the earlier ones, in first-seen order.
-    assert names(orch._offered_tools("s1", "WORKSPACE", [web_search])) == ["read_file", "web_search"]
-    # Same tool again is not duplicated; a turn with no matches keeps offering the session's set.
-    assert names(orch._offered_tools("s1", "WORKSPACE", [web_search, read_file])) == ["read_file", "web_search"]
-    assert names(orch._offered_tools("s1", "WORKSPACE", [])) == ["read_file", "web_search"]
-    # Other sessions and other chat modes are independent.
-    assert names(orch._offered_tools("s2", "WORKSPACE", [delete_file])) == ["delete_file"]
-    assert names(orch._offered_tools("s1", "SYSTEM", [delete_file])) == ["delete_file"]

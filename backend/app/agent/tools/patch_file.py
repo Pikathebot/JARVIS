@@ -3,6 +3,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 from app.config import settings
+from app.agent.tools.file_safety import backup_file, shown
+from app.agent.tools.paths import is_inside, resolve_tool_path
 
 logger = logging.getLogger("jarvis.agent.tools.patch_file")
 
@@ -12,11 +14,11 @@ def patch_file(
     search_block: str,
     replacement_block: str,
     workspace_path: Optional[str] = None,
-    project_id: Optional[str] = None
+    project_id: Optional[str] = None,
+    allow_outside: bool = False
 ) -> str:
     """
-    Perform a precise in-place modification to an existing file on disk inside the project workspace
-    by replacing a specific search block with new content.
+    Replace one exact block of text in an existing file with new text (in the workspace, backed up first; a file outside the workspace asks the user first). Fill `reason` with why, in a few words.
     Always use this tool when editing or updating existing code, fixing functions, or changing configuration lines without rewriting entire files.
 
     Args:
@@ -29,19 +31,9 @@ def patch_file(
     if not clean_path_str:
         return "Error: File path cannot be empty."
 
-    ws_root = Path(workspace_path or settings.workspace_path).resolve()
-
-    p = Path(clean_path_str)
-    if p.is_absolute():
-        resolved_path = p.resolve()
-    else:
-        resolved_path = (ws_root / p).resolve()
-
-    # Anti-traversal security check: ensure path is inside active workspace boundary
-    if resolved_path != ws_root and ws_root not in resolved_path.parents:
-        return f"Error: Access denied. Target path '{file_path}' resolves outside the active project workspace boundary ('{ws_root}')."
-
-    path = resolved_path
+    path, ws_root, err = resolve_tool_path(clean_path_str, workspace_path, allow_outside, what="Target path")
+    if err:
+        return err
 
     # Fallback resolution inside workspace if not found directly
     if not path.exists():
@@ -107,9 +99,11 @@ def patch_file(
         if "\r\n" in current_content:
             new_content = new_content.replace("\n", "\r\n")
 
+        backup = backup_file(path, ws_root)
         path.write_text(new_content, encoding="utf-8")
-        from app.agent.tools.workspace_index import reindex
-        reindex(path, project_id)
+        if is_inside(path, ws_root):
+            from app.agent.tools.workspace_index import reindex
+            reindex(path, project_id)
 
         old_lines = len(normalized_search.splitlines())
         new_lines = len(normalized_replace.splitlines())
@@ -117,7 +111,10 @@ def patch_file(
         sign = f"+{delta}" if delta >= 0 else str(delta)
 
         logger.info("Successfully patched '%s' (%s lines)", path, sign)
-        return f"Successfully patched '{file_path}' (replaced {old_lines} line(s) with {new_lines} line(s), delta: {sign} lines)."
+        result = f"Successfully patched '{file_path}' (replaced {old_lines} line(s) with {new_lines} line(s), delta: {sign} lines)."
+        if backup:
+            result += f" The previous version is saved as '{shown(backup, ws_root)}'."
+        return result
     except Exception as e:
         logger.error("Failed to patch file '%s': %s", file_path, e)
         return f"Error patching file '{file_path}': {str(e)}"

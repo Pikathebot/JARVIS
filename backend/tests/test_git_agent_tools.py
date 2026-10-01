@@ -14,7 +14,7 @@ from app.agent.permissions import RiskTier, build_confirmation_prompt, evaluate_
 from app.agent.tool_schema import convert_tool_to_openai_schema
 from app.agent.tools.git import git_checkout, git_commit, git_diff, git_log, git_status
 from app.agent.tools.read_file import read_file
-from app.agent.tools.registry import AVAILABLE_TOOLS, TOOL_FUNCTIONS, execute_tool, get_relevant_tools
+from app.agent.tools.registry import AVAILABLE_TOOLS, TOOL_FUNCTIONS, execute_tool, tools_for_space
 
 GIT_TOOLS = ("git_status", "git_diff", "git_log", "git_commit", "git_checkout")
 
@@ -67,21 +67,9 @@ def test_confirmation_prompt_names_the_commit_message():
     assert "git commit: fix typo" in prompt["spoken"]
 
 
-@pytest.mark.parametrize("query", [
-    "what did I change today?", "commit this as fix typo", "show me the git log",
-    "which branch am I on", "any uncommitted work?",
-])
-def test_git_questions_offer_git_tools(query):
-    names = {t.__name__ for t in get_relevant_tools(query)}
-    assert set(GIT_TOOLS) <= names
-
-
-@pytest.mark.parametrize("query", [
-    "write a report", "the colors are different", "log in to discord", "a commitment to quality",
-])
-def test_lookalike_words_do_not_offer_git_tools(query):
-    names = {t.__name__ for t in get_relevant_tools(query)}
-    assert not names & set(GIT_TOOLS)
+def test_git_tools_are_offered_in_workspaces_not_freeform():
+    assert set(GIT_TOOLS) <= {t.__name__ for t in tools_for_space("WORKSPACE")}
+    assert not set(GIT_TOOLS) & {t.__name__ for t in tools_for_space("FREEFORM")}
 
 
 # --- behaviour against a real repository ----------------------------------------------------

@@ -1,6 +1,5 @@
 import inspect
 import logging
-import re
 from typing import Callable, Any, Literal, Optional
 from pydantic import BaseModel, Field
 
@@ -115,10 +114,12 @@ class ListDirectoryArgs(BaseModel):
 
 class ExecuteCommandArgs(BaseModel):
     command: str = Field(..., description="Shell command string to execute")
+    reason: str = Field(default="", description="Why, in a few words -- shown to the user on the approval card")
 
 
 class DeleteFileArgs(BaseModel):
-    file_path: str = Field(..., description="Path of file to delete")
+    file_path: str = Field(..., description="Path of the file or folder to delete")
+    reason: str = Field(default="", description="Why, in a few words -- shown to the user on the approval card")
 
 
 class WebSearchArgs(BaseModel):
@@ -135,12 +136,14 @@ class WriteFileArgs(BaseModel):
     file_path: str = Field(..., description="Target file path")
     content: str = Field(..., description="Content to write")
     overwrite: bool = Field(default=True, description="Overwrite if exists")
+    reason: str = Field(default="", description="Why, in a few words -- shown to the user on the approval card")
 
 
 class PatchFileArgs(BaseModel):
     file_path: str = Field(..., description="Target file path")
     search_block: str = Field(..., description="Exact code block to replace")
     replacement_block: str = Field(..., description="New code block")
+    reason: str = Field(default="", description="Why, in a few words -- shown to the user on the approval card")
 
 
 class FindFilesArgs(BaseModel):
@@ -309,6 +312,9 @@ def get_tool_schema(tool_name: str) -> Optional[type[BaseModel]]:
     return TOOL_SCHEMAS.get(tool_name)
 
 
+RUNTIME_ONLY_PARAMS = frozenset({"user_message", "allow_outside"})
+
+
 def execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
@@ -334,8 +340,8 @@ def execute_tool(
         # Filter arguments based on function signature
         sig = inspect.signature(func)
         valid_params = set(sig.parameters.keys())
-        # user_message is runtime context, never a model argument (see the injection below).
-        filtered_args = {k: v for k, v in arguments.items() if k in valid_params and k != "user_message"}
+        # Runtime context, never model arguments (see the injection below).
+        filtered_args = {k: v for k, v in arguments.items() if k in valid_params and k not in RUNTIME_ONLY_PARAMS}
 
         # Context injection for workspace-aware and session-aware tools
         if context:
@@ -348,6 +354,10 @@ def execute_tool(
             if "user_message" in valid_params and "user_message" in context:
                 # Always the turn's real message: a model-supplied value must not stand in for it.
                 filtered_args["user_message"] = context["user_message"]
+            if "allow_outside" in valid_params and context.get("permission_checked"):
+                # The tool loops set this after the permission gate passed the call -- which asks
+                # the user for any path outside the workspace -- so the tool may follow it there.
+                filtered_args["allow_outside"] = True
             if "context" in valid_params and "context" not in filtered_args:
                 filtered_args["context"] = context
 
@@ -362,20 +372,6 @@ def execute_tool(
         return f"Error executing tool '{tool_name}': {str(e)}"
 
 
-_SYSTEM_STATUS_RE = re.compile(
-    r"\b(?:system (?:usage|status|state|load|resources?)|resource usage|usage|performance|"
-    r"vram|gpu|graphics card|cpu|ram|memory|temperature|temps?|how hot|disk space|storage|"
-    r"battery|loaded model|which model|throttl\w*|hardware|"
-    r"how(?:'s| is) (?:the |my )?(?:machine|system|pc|laptop|computer))\b"
-)
-
-
-_GIT_RE = re.compile(
-    r"\b(?:git|commits?|committed|uncommitted|branch(?:es)?|checkout|diff|staged|unstaged|repo|"
-    r"repository|commit history|what (?:did i|have i|i) changed?|changes since)\b"
-)
-
-
 # A Freeform conversation has no project and no working directory, so nothing that reads,
 # writes or runs inside a workspace is offered there -- and execute_tool refuses it even if the
 # model calls one anyway (a model can name a tool it was never offered).
@@ -387,118 +383,16 @@ WORKSPACE_BOUND_TOOLS = frozenset({
 })
 
 
-def get_relevant_tools(
-    query: str,
-    chat_mode: str = "WORKSPACE",
-    matched_skills: Optional[list] = None
-) -> list[Callable[..., Any]]:
+def tools_for_space(chat_mode: str = "WORKSPACE") -> list[Callable[..., Any]]:
     """
-    Intelligently filters tool schemas to reduce prompt prefill token bloat.
-    Returns the minimal subset of relevant tools based on query intent.
+    The tools offered on every turn in a space -- the same list, in the same order, from the
+    first turn on. The chat template renders the schemas into the head of the prompt, and
+    llama-server reuses its KV cache only for a byte-identical prefix, so a set that grew with
+    each message's keywords re-prefilled the conversation whenever it changed (and a keyword
+    miss left the model with no way to act: "delete secret.txt" offered nothing, and it said
+    "deleted" anyway). Freeform gets everything that isn't bound to a workspace (~2k tokens);
+    a workspace gets all of them (~4k). Agreed in the tool review, 2026-09-30.
     """
-    tools = _select_tools(query, chat_mode, matched_skills)
     if (chat_mode or "").upper() == FREEFORM_MODE:
-        tools = [t for t in tools if t.__name__ not in WORKSPACE_BOUND_TOOLS]
-    # Memory is offered on every turn: what is worth keeping is the model's call, and it can come
-    # up in any message ("I'm on the night shift this week", "let's go with SQLite"), not only
-    # after a trigger word. Always the same two, so the offered set -- and the prompt prefix --
-    # stays stable.
-    tools = list(tools) + [t for t in MEMORY_TOOLS if t not in tools]
-    return tools
-
-
-MEMORY_TOOLS = (remember, forget)
-
-
-def _select_tools(
-    query: str,
-    chat_mode: str = "WORKSPACE",
-    matched_skills: Optional[list] = None
-) -> list[Callable[..., Any]]:
-    if matched_skills and len(matched_skills) > 0:
-        return AVAILABLE_TOOLS
-
-    q = (query or "").lower().strip()
-
-    # Conversational / chitchat / direct conceptual queries need NO tools
-    chitchat_triggers = {
-        "hi", "hello", "hey", "sup", "greetings", "good morning", "good evening",
-        "who are you", "what are you", "how are you", "help", "thanks", "thank you"
-    }
-    if q in chitchat_triggers or len(q) < 4:
-        if not any(w in q for w in ("file", "find", "search", "open", "run", "read", "write", "artifact")):
-            return []
-
-    tools = set()
-
-    # 1. Web search triggers
-    if any(w in q for w in ("search", "google", "look up", "online", "internet", "website", "url", "http://", "https://", "latest news", "weather", "who won", "what is the price", "documentation")):
-        tools.add(web_search)
-        tools.add(fetch_url)
-
-    # 2. File & Code triggers
-    file_triggers = (
-        "file", "read", "write", "patch", "edit", "modify", "create", "delete",
-        "directory", "folder", "dir", "code", "grep", "find", "script", "content",
-        ".py", ".js", ".ts", ".html", ".css", ".json", ".md", ".txt", ".sh", ".bat", ".ps1"
-    )
-    if any(w in q for w in file_triggers):
-        tools.add(read_file)
-        tools.add(write_file)
-        tools.add(patch_file)
-        tools.add(find_files)
-        tools.add(grep_in_files)
-        tools.add(list_directory)
-        # The permission gate makes this a confirmation, not the selection. Leaving it out
-        # meant "delete secret.txt" reached the model with no way to delete anything -- and
-        # it answered "deleted" anyway.
-        tools.add(delete_file)
-
-    # 3. Artifact triggers
-    artifact_triggers = (
-        "artifact", "deliverable", "document", "report", "save code", "create artifact",
-        "generate artifact", "update artifact", "read artifact", "markdown document"
-    )
-    if any(w in q for w in artifact_triggers):
-        tools.add(create_artifact)
-        tools.add(update_artifact)
-        tools.add(read_artifact)
-
-    # 4. System / App / OS triggers
-    os_triggers = (
-        "open", "launch", "app", "window", "volume", "sound", "mute", "unmute",
-        "music", "play", "pause", "clipboard", "copy", "paste", "process",
-        "task", "kill", "terminate", "notification", "toast", "powershell",
-        "command", "terminal", "run"
-    )
-    if any(w in q for w in os_triggers):
-        tools.add(launch_app)
-        tools.add(focus_app)
-        tools.add(set_volume)
-        tools.add(mute_toggle)
-        tools.add(media_key)
-        tools.add(get_clipboard)
-        tools.add(set_clipboard)
-        tools.add(list_processes)
-        tools.add(kill_process)
-        tools.add(send_toast)
-        tools.add(execute_command)
-
-    # 5. Git -- "what did I change", "commit this", "which branch". Word boundaries: "branch" is
-    # safe, but a bare "log" would match "login"/"catalog", so history needs "git log"/"history".
-    if _GIT_RE.search(q):
-        tools.update((git_status, git_diff, git_log, git_commit, git_checkout))
-
-    # 6. Machine state -- the prompt no longer carries a hardware line, so a deliberate question
-    # about the machine has to be able to measure it. Word boundaries: "ram" is in "program".
-    if _SYSTEM_STATUS_RE.search(q):
-        tools.add(get_system_status)
-
-    if tools:
-        return list(tools)
-
-    action_words = ("do", "check", "fix", "inspect", "show", "list", "diagnose", "review", "test", "build", "generate", "update")
-    if chat_mode == "SYSTEM" or any(w in q for w in action_words):
-        return AVAILABLE_TOOLS
-
-    return []
+        return [t for t in AVAILABLE_TOOLS if t.__name__ not in WORKSPACE_BOUND_TOOLS]
+    return list(AVAILABLE_TOOLS)

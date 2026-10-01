@@ -18,7 +18,7 @@ import pytest
 from sqlmodel import func, select
 
 from fake_providers import use_model_client
-from app.agent.tools.registry import execute_tool, get_relevant_tools
+from app.agent.tools.registry import execute_tool, tools_for_space
 from app.database import SessionLocal
 from app.database.models import Attachment, CompactionEvent, Memory, Message, Project, ToolCallAudit
 from app.database.models import Session as DBSession
@@ -245,9 +245,8 @@ async def test_freeform_turn_has_no_project_rag_or_workspace_tools():
                 db.commit()
 
 
-def test_freeform_offers_no_workspace_tools_even_for_matched_skills():
-    tools = get_relevant_tools("do something", chat_mode="FREEFORM", matched_skills=["any"])
-    names = {t.__name__ for t in tools}
+def test_freeform_offers_no_workspace_tools():
+    names = {t.__name__ for t in tools_for_space("FREEFORM")}
     assert "read_file" not in names and "git_status" not in names
     assert "web_search" in names  # non-workspace tools are still there
 
