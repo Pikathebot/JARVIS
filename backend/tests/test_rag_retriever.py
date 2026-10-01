@@ -224,3 +224,54 @@ def test_hybrid_retriever_end_to_end(rag_hybrid_env):
 
     assert len(results_py) >= 1
     assert "compute_trajectory" in results_py[0]["content"]
+
+
+# --- the index follows edits and deletes (tool review 2026-09-30: stale chunks kept serving) ---
+
+def _fts_rows(session_factory, project_id):
+    with session_factory() as s:
+        return s.execute(text("SELECT file_path, content FROM document_chunks_fts WHERE project_id = :p"),
+                         {"p": project_id}).all()
+
+
+def test_reindex_edit_delete_and_rescan_leave_no_stale_chunks(rag_hybrid_env):
+    session_factory, tmp_path = rag_hybrid_env
+    pid = "proj_stale"
+    with session_factory() as session:
+        session.add(Project(id=pid, name="Stale", workspace_path=str(tmp_path)))
+        session.commit()
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    a, b = files_dir / "a.py", files_dir / "b.py"
+    a.write_text("def old_name_alpha():\n    return 1\n", encoding="utf-8")
+    b.write_text("def beta():\n    return 2\n", encoding="utf-8")
+
+    emb = EmbeddingService(device="cpu", embedding_dim=64)
+    vectors = VectorStoreService(workspace_root=tmp_path, embedding_service=emb)
+    keywords = KeywordSearchService(session_factory=session_factory)
+    indexer = ProjectIndexer(session_factory=session_factory, embedding_service=emb,
+                             vector_store=vectors, keyword_store=keywords)
+    indexer.index_project(pid)
+    points = lambda: vectors.get_client(pid)[0].count(vectors.get_client(pid)[1]).count
+
+    # An edit replaces the file's chunks everywhere, not only in the DB.
+    a.write_text("def new_name_alpha():\n    return 3\n", encoding="utf-8")
+    indexer.index_file(a.resolve(), project_id=pid)
+    contents = " ".join(c for _, c in _fts_rows(session_factory, pid))
+    assert "new_name_alpha" in contents and "old_name_alpha" not in contents
+    with session_factory() as s:
+        db_chunks = len(s.exec(select(DocumentChunk)).all())
+    assert points() == db_chunks == len(_fts_rows(session_factory, pid))
+
+    # A deleted file leaves the index.
+    a.unlink()
+    assert indexer.remove_file(a, pid) >= 1
+    assert all("a.py" not in p for p, _ in _fts_rows(session_factory, pid))
+    assert indexer.remove_file(a, pid) == 0
+
+    # A file deleted outside Jarvis is dropped on the next rescan.
+    b.unlink()
+    indexer.index_project(pid)
+    assert _fts_rows(session_factory, pid) == [] and points() == 0
+    with session_factory() as s:
+        assert s.exec(select(Document).where(Document.project_id == pid)).all() == []

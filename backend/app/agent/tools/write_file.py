@@ -63,22 +63,8 @@ def write_file(
         
         logger.info("Successfully wrote %d chars (%d lines) to '%s'", char_count, line_count, path)
 
-        # Trigger automatic RAG indexing for project workspace
-        try:
-            target_pid = project_id
-            if not target_pid:
-                from app.database.session import SessionLocal
-                from app.database.models import Project
-                from sqlmodel import select
-                with SessionLocal() as db:
-                    act = db.exec(select(Project).where(Project.is_active == True)).first()
-                    if act:
-                        target_pid = act.id
-            if target_pid:
-                from app.rag.indexer import WorkspaceIndexer
-                WorkspaceIndexer().index_file(path, project_id=target_pid)
-        except Exception as idx_err:
-            logger.debug("Automatic indexing after write_file skipped/failed: %s", idx_err)
+        from app.agent.tools.workspace_index import reindex
+        reindex(path, project_id)
 
         return f"Successfully wrote {char_count} characters ({line_count} lines) to '{file_path}'."
     except Exception as e:

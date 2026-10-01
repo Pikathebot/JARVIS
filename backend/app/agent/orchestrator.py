@@ -32,6 +32,7 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
+from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
@@ -217,6 +218,26 @@ _NUDGE_TO_ACT = (
     "otherwise give your answer. Do not describe what you are about to do."
 )
 
+# A reply that says it did something on the machine when no tool ran this turn. 2026-09-29:
+# "open qwen" -> "I attempted to open Qwen, but the application isn't currently available"
+# with no call at all (launch_app("qwen") would have worked). Rule 19 alone didn't stop it.
+_UNRUN_ACTION_CLAIM_RE = re.compile(
+    r"\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+)?"
+    r"(?:(?:attempted|tried)\s+to\s+\w+|opened|launched|started|closed|killed|terminated|deleted|"
+    r"removed|saved|created|written|wrote|sent|muted|unmuted|copied|moved|renamed|ran|executed|"
+    r"set the volume|turned (?:up|down|off|on)|paused|skipped|focused|brought)\b",
+    re.IGNORECASE,
+)
+
+_NUDGE_UNRUN_CLAIM = (
+    "No tool ran in this turn, so what you just described did not happen. If the user asked for "
+    "an action, call the tool now. Otherwise say plainly, in one sentence, that you have not done it."
+)
+
+
+def claims_unrun_action(content: str) -> bool:
+    return bool(_UNRUN_ACTION_CLAIM_RE.search(content or ""))
+
 
 def _with_system_prompt(system_prompt: str, conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
@@ -275,7 +296,8 @@ _MEMORY_CUE_RE = re.compile(
     r"the plan is|deadline)\b",
     re.IGNORECASE,
 )
-_FORGET_CUE_RE = re.compile(r"\b(?:forget (?:that|about|it|what)|don'?t remember|stop remembering|no longer true)\b", re.IGNORECASE)
+# The forget cue is the same test the forget tool applies (``asks_to_forget``), so the nudge
+# never pushes the model toward a forget the tool would refuse.
 
 MEMORY_FORGET_NUDGE = (
     "MEMORY: the user wants something forgotten. Call 'forget' with the id of the matching listed "
@@ -287,7 +309,7 @@ def memory_cue(user_message: str) -> str:
     """"save" when the message reads like something lasting (the post-reply capture then asks the
     model to save or skip it), "forget" when it asks for something to be forgotten, else ""."""
     text = user_message or ""
-    if _FORGET_CUE_RE.search(text):
+    if asks_to_forget(text):
         return "forget"
     # A question rarely states anything lasting, and "does python always pass by reference?"
     # got itself saved as "User asked about Python passing by reference." -- unless it says
@@ -852,6 +874,9 @@ class AgentOrchestrator:
         resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
             self._resolve_turn_scope(project_id, active_session_id, chat_mode)
         )
+        # Tools that must know what the user actually said this turn (``forget`` refuses unless
+        # the user asked to forget something) get it injected by ``execute_tool``.
+        tool_context["user_message"] = user_message
 
         # 1. Dynamic Skills Matching & Prompt Injection, then the tools for this turn
         matched_skills = self.skills_loader.match_skills(user_message)
@@ -1052,6 +1077,7 @@ class AgentOrchestrator:
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
         tools_used: list[dict[str, Any]] = []
+        claim_checked = False
 
         for iteration in range(max_iterations):
             logger.info("%s loop iteration %d/%d for model '%s' (turn_id=%s)", provider.name, iteration + 1, max_iterations, model, turn_id)
@@ -1087,6 +1113,14 @@ class AgentOrchestrator:
                         thinking=thinking,
                     )
                     content = synth_response.get("message", {}).get("content", "") or ""
+
+                # As in the streaming loop: a claimed action with no tool run gets one retry.
+                if tools and not tools_used and not claim_checked and claims_unrun_action(content):
+                    claim_checked = True
+                    logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
+                    continue
 
                 logger.info("No further tool calls requested. Returning final %s response.", provider.name)
                 self.memory_store.append_message(session_id, role="assistant", content=content)
@@ -1436,6 +1470,9 @@ class AgentOrchestrator:
         resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
             self._resolve_turn_scope(project_id, active_session_id, chat_mode)
         )
+        # Tools that must know what the user actually said this turn (``forget`` refuses unless
+        # the user asked to forget something) get it injected by ``execute_tool``.
+        tool_context["user_message"] = user_message
 
         # 1. Match skills, then pick the tools for this turn: routing needs to know them.
         matched_skills = self.skills_loader.match_skills(user_message)
@@ -1596,6 +1633,7 @@ class AgentOrchestrator:
 
         tools_used: list[dict[str, Any]] = []
         nudged = False
+        claim_checked = False
 
         for iteration in range(max_iterations):
             logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
@@ -1654,6 +1692,17 @@ class AgentOrchestrator:
                     synth_response = await provider.chat(model=model, messages=messages, profile=profile, thinking=thinking)
                     content = synth_response.get("message", {}).get("content", "") or full_reasoning.strip()
                     yield {"event": "token", "data": {"delta": content}}
+
+                # Said it acted, but nothing ran this turn: once, send it back with the tools
+                # still offered. The claim has already streamed, so the retry follows it after a
+                # paragraph break; only the retry's text is kept in history.
+                if tools and not tools_used and not claim_checked and claims_unrun_action(content):
+                    claim_checked = True
+                    logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
+                    yield {"event": "token", "data": {"delta": "\n\n"}}
+                    continue
 
                 self.memory_store.append_message(
                     session_id, role="assistant", content=content, reasoning_content=full_reasoning or None

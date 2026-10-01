@@ -23,7 +23,7 @@ WinUI port and the model changes, and wrong about models, clients and paths in p
 Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
 so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 498 pass (2026-09-23)
+.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 642 pass (2026-10-01)
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -118,8 +118,10 @@ path runs instead.
   parameters at all; `execute_tool` then filters the call's args by the function signature and
   injects `workspace_path`/`project_id`/`session_id`); a tier in `BASE_TOOL_RISK_MAP`
   (`agent/permissions.py`; unlisted = CONFIRMATION_REQUIRED); and a trigger in
-  `get_relevant_tools`, or it is never offered. Only the **first line** of the docstring becomes
-  the tool description, so any "only when asked" caution must be on that line. Tools are sync
+  `get_relevant_tools`, or it is never offered. The docstring's **first paragraph** (up to a blank
+  line or `Args:`, joined onto one line -- `tool_description` in `tool_schema.py`) becomes the
+  tool description, so any "only when asked" caution must be in it. Don't say there whether the
+  tool asks for confirmation: the permission gate decides that per call. Tools are sync
   functions returning a string (errors as `"Error: ..."` text); they run on a worker thread.
   `agent/tools/git.py` is a compact example.
 - **Permissions:** `LOW_RISK` runs; `CONFIRMATION_REQUIRED` and `HIGH_RISK` are handled

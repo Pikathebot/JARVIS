@@ -10,7 +10,9 @@ import pytest
 
 from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
-from app.agent.orchestrator import AgentOrchestrator, _NUDGE_TO_ACT, _with_system_prompt
+from app.agent.orchestrator import (
+    AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_UNRUN_CLAIM, _with_system_prompt, claims_unrun_action,
+)
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
 
@@ -156,6 +158,66 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     assert events[-1]["data"]["response"] == "prose fallback"
     # Nudged once, then the no-tools synthesis -- never a third streamed attempt.
     assert [("chat" in c) for c in provider.calls] == [False, False, True]
+
+
+# --- a reply that claims an action no tool performed (2026-09-29 "I attempted to open Qwen") ---
+
+@pytest.mark.parametrize("text, claims", [
+    ("I attempted to open Qwen, but the application isn't currently available.", True),
+    ("I've opened Discord for you.", True),
+    ("I have deleted probe.txt.", True),
+    ("Done -- I muted the volume.", True),
+    ("Python passes object references by value.", False),
+    ("I can open it if you tell me the exact name.", False),
+    ("I haven't opened anything yet.", False),
+])
+def test_claims_unrun_action(text, claims):
+    assert claims_unrun_action(text) is claims
+
+
+def _text_turn(text):
+    return [
+        {"event": "text_delta", "content": text},
+        {"event": "done", "raw": {"content": text, "reasoning": "", "tool_calls": None}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_action_with_no_tool_call_is_sent_back_once(tmp_path):
+    provider = ScriptedProvider([
+        _text_turn("I attempted to open Qwen, but it isn't available."),
+        _text_turn("I attempted to open it again."),  # a second claim is not sent back again
+    ])
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+
+    events = [ev async for ev in orch._run_provider_stream_loop(
+        provider=provider, session_id="claim-test", model="main", system_prompt="sys",
+        conversation_messages=[{"role": "user", "content": "open qwen"}],
+        tools=[read_file, delete_file], chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+    )]
+
+    assert events[-1]["event"] == "done"
+    assert len(provider.calls) == 2 and provider.calls[1]["tools"]
+    second = provider.calls[1]["messages"]
+    assert second[-1] == {"role": "user", "content": _NUDGE_UNRUN_CLAIM}
+    assert "attempted to open Qwen" in second[-2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_plain_answers_and_toolless_turns_are_not_checked(tmp_path):
+    for tools, text in (([read_file], "Python passes references by value."),
+                        (None, "I opened the door to new ideas.")):
+        provider = ScriptedProvider([_text_turn(text)])
+        orch = _orchestrator()
+        orch.memory_store = MagicMock()
+        events = [ev async for ev in orch._run_provider_stream_loop(
+            provider=provider, session_id="claim-test-2", model="main", system_prompt="sys",
+            conversation_messages=[{"role": "user", "content": "hi"}],
+            tools=tools, chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+        )]
+        assert events[-1]["event"] == "done"
+        assert len(provider.calls) == 1
 
 
 # --- a fast verdict never swaps models; it runs on whatever is loaded, thinking off on main ---

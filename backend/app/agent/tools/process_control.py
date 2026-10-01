@@ -1,55 +1,63 @@
 import logging
-import os
+import sys
 import time
 from typing import Optional, Any
 import psutil
 
 logger = logging.getLogger("jarvis.agent.tools.process_control")
 
+# psutil's first cpu_percent() per process is always 0.0 (it measures from the previous call),
+# which is why every process showed 0% CPU: prime them all, wait this long, read again.
+_CPU_SAMPLE_SECONDS = 0.5
+_CLOSE_WAIT_SECONDS = 5.0
 
-def list_processes(filter_name: Optional[str] = None) -> str:
+
+def list_processes(filter_name: Optional[str] = None, sort_by: str = "memory") -> str:
     """
-    List running operating system processes with PID, process name, CPU usage %, and Memory (MB).
-    Read-only operation.
+    List running processes with PID, name, memory (MB) and CPU % (share of the whole CPU, as Task Manager shows it); use sort_by="cpu" when the question is about what is using the CPU.
 
     Args:
         filter_name: Optional process name substring to filter results (case-insensitive).
+        sort_by: "memory" (default) or "cpu".
     """
     filter_clean = (filter_name or "").strip().lower()
-    results: list[dict[str, Any]] = []
-
+    procs: list[psutil.Process] = []
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info']):
-            try:
-                pinfo = proc.info
-                pname = pinfo.get('name') or "unknown"
-                if filter_clean and filter_clean not in pname.lower():
-                    continue
-
-                mem_mb = 0.0
-                mem_info = pinfo.get('memory_info')
-                if mem_info:
-                    mem_mb = round(mem_info.rss / (1024 * 1024), 1)
-
-                results.append({
-                    "pid": pinfo.get('pid'),
-                    "name": pname,
-                    "cpu_percent": pinfo.get('cpu_percent') or 0.0,
-                    "memory_mb": mem_mb
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        for proc in psutil.process_iter(['pid', 'name']):
+            name = proc.info.get('name') or ""
+            if filter_clean and filter_clean not in name.lower():
                 continue
+            try:
+                proc.cpu_percent(None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+            procs.append(proc)
     except Exception as e:
         logger.error("Error listing processes: %s", e)
         return f"Error listing processes: {str(e)}"
+
+    time.sleep(_CPU_SAMPLE_SECONDS)
+    cores = psutil.cpu_count() or 1
+    results: list[dict[str, Any]] = []
+    for proc in procs:
+        name = proc.info.get('name') or "unknown"
+        try:
+            with proc.oneshot():
+                mem_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
+                cpu = proc.cpu_percent(None) / cores
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except psutil.AccessDenied:
+            mem_mb, cpu = 0.0, 0.0
+        results.append({"pid": proc.pid, "name": name, "cpu_percent": cpu, "memory_mb": mem_mb})
 
     if not results:
         if filter_clean:
             return f"No running processes found matching '{filter_name}'."
         return "No running processes found."
 
-    # Sort by memory descending
-    results.sort(key=lambda x: x["memory_mb"], reverse=True)
+    key = "cpu_percent" if str(sort_by or "").strip().lower() == "cpu" else "memory_mb"
+    results.sort(key=lambda x: x[key], reverse=True)
 
     lines = [f"{'PID':<8} {'Name':<35} {'Memory (MB)':<14} {'CPU %':<8}", "-" * 68]
     for r in results[:50]:  # Cap at 50 to prevent excessive token output
@@ -61,36 +69,92 @@ def list_processes(filter_name: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
-def kill_process(pid_or_name: str) -> str:
+def jarvis_process_ids() -> set[int]:
+    """Every process that is part of Jarvis: this backend, the uvicorn reloader above it, the
+    Jarvis.App client, and the llama-servers (chat model, captioner and embedding sidecars) and
+    Python workers below them. kill_process refuses all of them. Descendants are filtered by name:
+    apps that launch_app started can be children of the backend, and those stay closable."""
+    me = psutil.Process()
+    roots = [me]
+    try:
+        for parent in me.parents():
+            pname = (parent.name() or "").lower()
+            if pname.startswith(("python", "uvicorn")) or pname == "jarvis.app.exe":
+                roots.append(parent)
+            else:
+                break
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    try:
+        roots += [p for p in psutil.process_iter(['name']) if (p.info.get('name') or "").lower() == "jarvis.app.exe"]
+    except Exception:
+        pass
+    protected: set[int] = set()
+    for root in roots:
+        protected.add(root.pid)
+        try:
+            for child in root.children(recursive=True):
+                try:
+                    cname = (child.name() or "").lower()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if cname == "llama-server.exe" or cname.startswith(("python", "uvicorn")):
+                    protected.add(child.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return protected
+
+
+def _close_windows(pids: set[int]) -> int:
+    """Post WM_CLOSE to the visible top-level windows of these processes -- what clicking X
+    does, so the app can ask to save. Returns how many windows were asked."""
+    if sys.platform != "win32" or not pids:
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    WM_CLOSE, GW_OWNER = 0x0010, 4
+    asked = 0
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _each(hwnd, _):
+        nonlocal asked
+        if not user32.IsWindowVisible(hwnd) or user32.GetWindow(hwnd, GW_OWNER):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids:
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+            asked += 1
+        return True
+
+    user32.EnumWindows(_each, 0)
+    return asked
+
+
+def kill_process(pid_or_name: str, force: bool = False) -> str:
     """
-    Terminate a running operating system process by PID or process name.
-    Attempts graceful termination (terminate) with a grace period fallback to forced kill.
-    Hard-blocks any attempt to terminate Jarvis's own backend process.
+    Close a running program by PID or process name the way clicking its X does (it may ask to save); force=true ends it at once and loses unsaved work -- only when the user says force, or it is frozen.
 
     Args:
         pid_or_name: Target process PID (e.g. '1234') or process name (e.g. 'notepad.exe', 'notepad').
+        force: End the process immediately instead of asking it to close.
     """
     target = str(pid_or_name or "").strip()
     if not target:
-        return "Error: No process PID or name provided to terminate."
+        return "Error: No process PID or name provided to close."
 
-    current_pid = os.getpid()
-    parent_pid = os.getppid() if hasattr(os, "getppid") else None
+    protected = jarvis_process_ids()
+    procs: list[psutil.Process] = []
+    skipped_self = 0
 
-    # 1. Hard-block self-termination
     if target.isdigit():
-        target_pid = int(target)
-        if target_pid in (current_pid, parent_pid):
-            logger.warning("Blocked attempt to kill Jarvis self backend process (PID: %d)", target_pid)
-            return f"Error: Cannot terminate Jarvis backend or launcher process (PID: {target_pid}). Self-protection enforced."
-
-    procs_to_terminate: list[psutil.Process] = []
-
-    # 2. Locate target processes
-    if target.isdigit():
+        if int(target) in protected:
+            logger.warning("Blocked attempt to close a Jarvis process (PID %s)", target)
+            return f"Error: PID {target} is part of Jarvis itself; it can't be closed from chat."
         try:
-            p = psutil.Process(int(target))
-            procs_to_terminate.append(p)
+            procs.append(psutil.Process(int(target)))
         except psutil.NoSuchProcess:
             return f"Error: No running process found with PID {target}."
         except psutil.AccessDenied:
@@ -98,53 +162,44 @@ def kill_process(pid_or_name: str) -> str:
     else:
         target_lower = target.lower()
         target_exe = target_lower if target_lower.endswith(".exe") else f"{target_lower}.exe"
-
-        skipped_self_count = 0
         for p in psutil.process_iter(['pid', 'name']):
-            try:
-                p_name = (p.info.get('name') or "").lower()
-                if p_name in (target_lower, target_exe):
-                    # Check if matching process is Jarvis self PID
-                    if p.pid in (current_pid, parent_pid):
-                        logger.warning("Skipping Jarvis self process in name-matched kill: %d", p.pid)
-                        skipped_self_count += 1
-                        continue
-                    procs_to_terminate.append(p)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        if not procs_to_terminate:
-            if skipped_self_count > 0:
-                return f"Error: Cannot terminate Jarvis backend or launcher process ('{target}'). Self-protection enforced."
+            if (p.info.get('name') or "").lower() in (target_lower, target_exe):
+                if p.pid in protected:
+                    skipped_self += 1
+                    continue
+                procs.append(p)
+        if not procs:
+            if skipped_self:
+                return f"Error: '{target}' is part of Jarvis itself; it can't be closed from chat."
             return f"Error: No running processes found matching '{target}'."
 
-    # 3. Graceful termination with timeout fallback to force kill
-    terminated_details: list[str] = []
+    name = target
+    try:
+        name = procs[0].name()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+    if not force:
+        if _close_windows({p.pid for p in procs}) == 0:
+            return (f"'{name}' has no open window to close, so it can only be ended by force "
+                    "(force=true), which loses anything unsaved. Ask the user first.")
+        gone, alive = psutil.wait_procs(procs, timeout=_CLOSE_WAIT_SECONDS)
+        if not alive:
+            logger.info("kill_process: closed %s (%d processes)", name, len(gone))
+            return f"Closed {name} ({len(gone)} process(es))."
+        return (f"Asked {name} to close, but {len(alive)} of its {len(procs)} process(es) are still "
+                "running -- it may be showing a 'save changes?' prompt. Tell the user; ending it "
+                "by force (force=true) would lose unsaved work.")
+
     errors: list[str] = []
-
-    for proc in procs_to_terminate:
+    for proc in procs:
         try:
-            pid = proc.pid
-            name = proc.name()
-            proc.terminate()
-            terminated_details.append(f"{name} (PID {pid})")
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            errors.append(f"PID {proc.pid}: {str(e)}")
-
-    # Wait up to 3.0 seconds for processes to exit
-    gone, alive = psutil.wait_procs(procs_to_terminate, timeout=3.0)
-
-    # Force kill any lingering processes
-    for proc in alive:
-        try:
-            logger.warning("Process PID %d did not terminate gracefully; force killing.", proc.pid)
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            errors.append(f"PID {proc.pid} force kill failed: {str(e)}")
-
-    success_msg = f"Successfully terminated {len(terminated_details)} process instance(s): {', '.join(terminated_details)}."
-    if errors:
-        success_msg += f" Warnings/Errors: {'; '.join(errors)}"
-
-    logger.info("kill_process completed: %s", success_msg)
-    return success_msg
+            errors.append(f"PID {proc.pid}: {e}")
+    gone, alive = psutil.wait_procs(procs, timeout=3.0)
+    msg = f"Force-ended {name} ({len(gone)} process(es))."
+    if alive or errors:
+        msg += f" Still running: {len(alive)}." + (f" Errors: {'; '.join(errors)}" if errors else "")
+    logger.info("kill_process: %s", msg)
+    return msg

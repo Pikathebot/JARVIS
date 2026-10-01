@@ -401,7 +401,8 @@ def evaluate_launch_app_risk(name_or_path: str) -> tuple[RiskTier, Optional[str]
     target_l = target.lower()
     if is_uri_or_shortcut(target):
         return RiskTier.LOW_RISK, "Installed application opened via the Start Menu or a system URI."
-    if any(marker in target_l for marker in ("\downloads\\", "\temp\\", "\tmp\\", "\appdata\local\temp\\")):
+    # Raw strings: as plain literals "\temp\\" held a tab and "\appdata" a bell, so this never matched.
+    if any(marker in target_l for marker in (r"\downloads" "\\", r"\temp" "\\", r"\tmp" "\\")):
         return RiskTier.CONFIRMATION_REQUIRED, "Executable lives in a downloads or temp folder."
     if target_l.endswith((".cmd", ".bat", ".ps1", ".vbs")):
         return RiskTier.CONFIRMATION_REQUIRED, "Target is a script."
@@ -439,7 +440,7 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
                     return RiskTier.CONFIRMATION_REQUIRED, f"Target process '{proc_name}' (PID {pid_num}) is a Windows core/critical system process."
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-            return RiskTier.CONFIRMATION_REQUIRED, f"Terminating PID {pid_num} discards any unsaved work in it."
+            return RiskTier.CONFIRMATION_REQUIRED, f"Closes PID {pid_num}."
         except Exception:
             return RiskTier.CONFIRMATION_REQUIRED, "PID lookup failed."
 
@@ -467,7 +468,7 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
     if match_count > 1:
         return RiskTier.CONFIRMATION_REQUIRED, f"Process name '{target_str}' matches {match_count} running instances. Multi-instance termination requires user confirmation."
 
-    return RiskTier.CONFIRMATION_REQUIRED, f"Terminating '{target_str}' discards any unsaved work in it."
+    return RiskTier.CONFIRMATION_REQUIRED, f"Closes '{target_str}'."
 
 
 
@@ -597,6 +598,10 @@ def evaluate_tool_permission(
         if kp_tier != RiskTier.LOW_RISK or base_tier == RiskTier.LOW_RISK:
             effective_tier = kp_tier
             custom_reason = kp_reason
+        if str(arguments.get("force", "")).strip().lower() in ("true", "1", "yes"):
+            custom_reason = f"{custom_reason} Force-ends it at once: anything unsaved is lost.".strip()
+        else:
+            custom_reason = f"{custom_reason} Asks it to close, as clicking X does; it may ask to save.".strip()
 
     # 3. Check if user already provided explicit approval token (strictly per action_id)
     if action_id in approved_ids:

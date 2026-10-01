@@ -66,3 +66,52 @@ def test_shortcuts_and_uris_launch_through_the_shell(start_menu, monkeypatch):
 @pytest.mark.skipif(os.name != "nt", reason="Windows PATH lookup")
 def test_path_executables_still_resolve():
     assert resolve_executable("notepad").lower().endswith("notepad.exe")
+
+
+# --- matching what people say, not only exact names (2026-09-29: "qwen studio" found nothing) ---
+
+@pytest.fixture
+def busy_start_menu(start_menu):
+    for name in ("Qwen", "Unsloth Studio", "Android Studio", "Visual Studio Code"):
+        (start_menu / f"{name}.lnk").write_bytes(b"")
+    (start_menu / "Steam" / "Steam.lnk").write_bytes(b"")
+    return start_menu
+
+
+def test_a_phrase_with_no_exact_app_returns_the_closest_ones(busy_start_menu):
+    path, candidates = app_control.match_start_menu("qwen studio")
+    assert path is None
+    assert set(candidates[:3]) == {"Qwen", "Unsloth Studio", "Android Studio"}
+    out = launch_app("qwen studio")
+    assert "'Qwen'" in out and "ask the user" in out
+
+
+def test_several_matches_and_none_exact_ask_instead_of_guessing(busy_start_menu):
+    path, candidates = app_control.match_start_menu("studio")
+    assert path is None and "Android Studio" in candidates and "Unsloth Studio" in candidates
+    # A bare name plus a variant of it is not a real choice.
+    assert app_control.match_start_menu("disc")[0].endswith("Discord.lnk")
+
+
+def test_typos_suggest_the_near_spelling(busy_start_menu):
+    path, candidates = app_control.match_start_menu("discrod")
+    assert path is None and candidates[0] == "Discord"
+
+
+def test_focus_app_prefers_the_process_and_admits_when_windows_refuses(monkeypatch):
+    windows = [
+        (1, "notes.txt - Notepad", "Notepad.exe"),
+        (2, "How to use notepad - Chrome", "chrome.exe"),
+    ]
+    monkeypatch.setattr(app_control, "_visible_windows", lambda: windows)
+    monkeypatch.setattr(app_control.os, "name", "nt")
+    raised = []
+    monkeypatch.setattr(app_control, "_bring_to_front", lambda hwnd: raised.append(hwnd) or True)
+    assert app_control.focus_app("notepad").startswith("Brought 'notes.txt - Notepad'")
+    assert raised == [1]
+
+    monkeypatch.setattr(app_control, "_bring_to_front", lambda hwnd: False)
+    assert "didn't let Jarvis" in app_control.focus_app("notepad")
+
+    windows[:] = [(3, "Project plan - Word", "WINWORD.EXE"), (4, "Project plan - Chrome", "chrome.exe")]
+    assert app_control.focus_app("project plan").startswith("Several windows")

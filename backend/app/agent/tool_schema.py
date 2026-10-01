@@ -1,9 +1,19 @@
 import inspect
 import logging
+import re
 from typing import Any, Callable, Optional
 from app.agent.tools.registry import TOOL_SCHEMAS
 
 logger = logging.getLogger("jarvis.agent.tool_schema")
+
+# The description the model sees is the docstring's first paragraph, joined onto one line: up to
+# a blank line or an "Args:"-style section. It used to be the first *line*, so every docstring
+# that wrapped lost its second half ("...free disk," without "call this whenever...").
+_DESCRIPTION_END_RE = re.compile(r"\n\s*\n|\n\s*(?:Args|Arguments|Parameters|Returns|Raises|Examples?):")
+
+
+def tool_description(doc: str) -> str:
+    return " ".join(_DESCRIPTION_END_RE.split((doc or "").strip(), maxsplit=1)[0].split())
 
 
 def convert_tool_to_openai_schema(tool: Any) -> Optional[dict[str, Any]]:
@@ -39,8 +49,7 @@ def convert_tool_to_openai_schema(tool: Any) -> Optional[dict[str, Any]]:
     if callable(tool):
         fn_name = getattr(tool, "__name__", str(tool))
         doc = inspect.getdoc(tool) or f"Execute {fn_name}."
-        # First line of docstring as short description
-        short_desc = doc.strip().split("\n")[0] if doc else f"Execute {fn_name}."
+        short_desc = tool_description(doc) or f"Execute {fn_name}."
 
         schema_cls = TOOL_SCHEMAS.get(fn_name)
         if schema_cls:

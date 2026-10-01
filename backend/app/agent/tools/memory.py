@@ -93,12 +93,56 @@ def _find(db: Session, memory_id: str, project_id: Optional[str]) -> tuple[Optio
     return rows[0], ""
 
 
+# "forget", "stop remembering", "remove/delete ... memory", "no longer true" -- but not "don't
+# forget to ...", which is a request to remember. A correction ("that's wrong, it's X") is not a
+# forget request: it goes through remember(replaces=<id>). 2026-09-29: "i gave the wrong name bro
+# its actually called qwen" was read as one and the user's only preference was deleted.
+_FORGET_REQUEST_RE = re.compile(
+    r"(?<!don't )(?<!dont )(?<!do not )(?<!never )(?<!not )\bforget\b(?!\s+to\b)|"
+    r"\bunremember\b|\bstop remembering\b|\bdon'?t remember\b|"
+    r"\bno longer (?:true|the case)\b|\bnot (?:true|the case) any ?more\b|"
+    r"\b(?:delete|remove|erase|drop|clear|wipe)\b[^.?!\n]{0,40}\bmemor(?:y|ies)\b|"
+    r"\bmemor(?:y|ies)\b[^.?!\n]{0,40}\b(?:delete|remove|erase|drop|clear|wipe)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_to_forget(user_message: str) -> bool:
+    """Does the user's message ask for something saved to be forgotten?"""
+    return bool(_FORGET_REQUEST_RE.search(user_message or ""))
+
+
+# Facts forgotten in the current turn, per session: re-saving one of them in the same reply is
+# the forget/remember loop from 2026-09-29 (forget -> remember -> forget -> ... ending deleted).
+_forgotten_this_turn: dict[str, tuple[str, list[str]]] = {}
+
+
+def _turn_key(user_message: Optional[str]) -> str:
+    return " ".join((user_message or "").split())[:500]
+
+
+def _note_forgotten(session_id: Optional[str], user_message: Optional[str], content: str) -> None:
+    if not session_id:
+        return
+    key = _turn_key(user_message)
+    prev_key, contents = _forgotten_this_turn.get(session_id, ("", []))
+    _forgotten_this_turn[session_id] = (key, (contents if prev_key == key else []) + [content])
+
+
+def _forgotten_earlier_this_turn(session_id: Optional[str], user_message: Optional[str], text: str) -> bool:
+    if not session_id or session_id not in _forgotten_this_turn:
+        return False
+    key, contents = _forgotten_this_turn[session_id]
+    return key == _turn_key(user_message) and any(_same_fact(c, text) for c in contents)
+
+
 def remember(
     content: str,
     kind: str = "project",
     replaces: str = "",
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    user_message: Optional[str] = None,
 ) -> str:
     """Save a lasting fact for future conversations (only what will still matter later -- never what the files already say, never passing chat); pass replaces=<id> to correct an existing memory instead of adding a near-duplicate.
 
@@ -116,6 +160,9 @@ def remember(
         return f"Error: kind must be one of {', '.join(MEMORY_KINDS)}."
     if _is_ephemeral(session_id):
         return "Not saved: this is an off-the-record conversation, and nothing from it is kept."
+    if _forgotten_earlier_this_turn(session_id, user_message, text):
+        return ("Not saved: you forgot this same fact earlier in this reply. Leave it forgotten; "
+                "if it should stay, tell the user and let them decide.")
     category, project_bound = MEMORY_KINDS[kind]
     if project_bound and not project_id:
         # No project to file it under (Freeform): keep it as a general fact rather than lose it --
@@ -162,16 +209,26 @@ def forget(
     memory_id: str,
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    user_message: Optional[str] = None,
 ) -> str:
-    """Delete a saved memory by its id -- when it is wrong or no longer true, or the user asks you to forget it."""
+    """Forget a saved memory by its id -- only when the user asks for it to be forgotten; to correct a memory use remember(replaces=<id>) instead."""
     if _is_ephemeral(session_id):
         return "Not changed: this is an off-the-record conversation; memories are left as they are."
+    # user_message is None only outside a chat turn (API, tests calling the function directly).
+    if user_message is not None and not asks_to_forget(user_message):
+        return ("Not forgotten: the user didn't ask to forget anything in this message. Leave the "
+                "memory as it is; if it is wrong, correct it with remember(replaces=<id>), or ask "
+                "the user whether to forget it.")
+    from app.memory import memory_bin
+
     with session_factory() as db:
         row, err = _find(db, memory_id, project_id)
         if row is None:
             return err
         sid, content = short_id(row.id), row.content
+        memory_bin.add(row, reason=(user_message or "")[:200], session_id=session_id)
         db.delete(row)
         db.commit()
-    logger.info("Memory %s forgotten", sid)
+    _note_forgotten(session_id, user_message, content)
+    logger.info("Memory %s forgotten (kept in the bin for %d days)", sid, memory_bin.KEEP_DAYS)
     return f"Forgot [{sid}]: {content}"

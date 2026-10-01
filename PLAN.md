@@ -288,6 +288,13 @@ Per-tool notes:
   memories go to a restorable bin (Settings), not a hard delete; (c) loop guard: a turn that
   forgets and re-saves the same fact stops after the first pair; (d) claimed-but-not-done
   actions ("I attempted to open X" with no tool call) -- protocol rule, and consider a check.
+  **Built 2026-10-01 (tests pass, unverified on device):** (a) `asks_to_forget` in
+  `tools/memory.py`, the real user message injected by `execute_tool` (a model-supplied one is
+  ignored); (b) `app/memory/memory_bin.py` -> `data/memory_bin.json`, 30 days, `GET
+  /api/memories/bin` + `POST .../bin/{id}/restore` (no UI yet -- the "Forgot: ... Undo" chat line
+  is still to do); (c) `remember` refuses a fact forgotten earlier in the same turn; (d)
+  `claims_unrun_action` in the orchestrator: a reply claiming an action with no tool run gets
+  sent back once with the tools still offered (both loops).
 
 - `focus_app` (agreed 2026-09-30): (1) it reports success without checking -- Windows'
   foreground lock usually stops a background process (the backend) from raising a window (it
@@ -402,7 +409,17 @@ Per-tool notes:
 fix order: (1) security -- execute_command chaining/paths, fetch_url exfil + SSRF; (2) bugs --
 forget guard + loop + bin, docstring first paragraph (all tools), patch/delete RAG index,
 CPU 0%, launch_app Temp raw strings + name matching, focus honesty, kill = WM_CLOSE + protect
-Jarvis; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+Jarvis; **(2) built 2026-10-01, 642 tests pass, unverified on device:** descriptions = first
+paragraph (`tool_description`; "requires confirmation" lines dropped); RAG: re-index also drops
+the old chunks from Qdrant/FTS5 (they stayed searchable after *every* re-index, write_file
+included -- may bear on §4.8a), `remove_file` on delete, rescan drops vanished files, patch_file
+re-indexes; `list_processes` samples CPU twice (Task Manager scale) + `sort_by`; `kill_process`
+sends WM_CLOSE, `force=true` only on request (card says which), protects Jarvis.App, the
+reloader, llama-servers; launch_app Temp check fixed; `match_start_menu` (exact -> single
+prefix/contains -> closest list, ambiguity asks); `focus_app` ranks process > exact title >
+substring, asks across apps, checks `GetForegroundWindow` and says when Windows refused. Left
+for later: the client calling `AllowSetForegroundWindow` (WinUI), Store/AppX apps, launch_app
+focusing a running app; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
 approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
 patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,

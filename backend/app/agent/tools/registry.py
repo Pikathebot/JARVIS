@@ -204,10 +204,12 @@ class SetClipboardArgs(BaseModel):
 
 class ListProcessesArgs(BaseModel):
     filter_name: Optional[str] = Field(default=None, description="Optional process name filter substring")
+    sort_by: Literal["memory", "cpu"] = Field(default="memory", description="Order by memory use, or by CPU use")
 
 
 class KillProcessArgs(BaseModel):
-    pid_or_name: str = Field(..., description="Process PID or process name to terminate")
+    pid_or_name: str = Field(..., description="Process PID or process name to close")
+    force: bool = Field(default=False, description="End it immediately, losing unsaved work -- only when the user says force or it is frozen")
 
 
 class SendToastArgs(BaseModel):
@@ -332,7 +334,8 @@ def execute_tool(
         # Filter arguments based on function signature
         sig = inspect.signature(func)
         valid_params = set(sig.parameters.keys())
-        filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
+        # user_message is runtime context, never a model argument (see the injection below).
+        filtered_args = {k: v for k, v in arguments.items() if k in valid_params and k != "user_message"}
 
         # Context injection for workspace-aware and session-aware tools
         if context:
@@ -342,6 +345,9 @@ def execute_tool(
                 filtered_args["project_id"] = context["project_id"]
             if "session_id" in valid_params and "session_id" not in filtered_args and "session_id" in context:
                 filtered_args["session_id"] = context["session_id"]
+            if "user_message" in valid_params and "user_message" in context:
+                # Always the turn's real message: a model-supplied value must not stand in for it.
+                filtered_args["user_message"] = context["user_message"]
             if "context" in valid_params and "context" not in filtered_args:
                 filtered_args["context"] = context
 

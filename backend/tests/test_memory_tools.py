@@ -248,3 +248,93 @@ async def test_stream_turn_starts_capture_only_after_an_unsaved_lasting_message(
     await asyncio.sleep(0)
     assert "done" in [e.get("event") for e in events]
     assert captured == ([message] if expect_capture else [])
+
+
+# --- forget only on request, a restorable bin, no forget/re-save loop (2026-09-29 incident) ---
+
+from app.agent.tools.memory import asks_to_forget
+from app.memory import memory_bin
+
+
+@pytest.fixture
+def bin_file(tmp_path, monkeypatch):
+    path = tmp_path / "memory_bin.json"
+    monkeypatch.setattr(memory_bin, "BIN_PATH", path)
+    return path
+
+
+@pytest.mark.parametrize("message", [
+    "forget that I said I'm vegetarian", "please forget my old address", "stop remembering my birthday",
+    "delete that memory about the deadline", "remove the memory about Acme", "that's no longer true",
+    "I'm not a student any more, it's not true anymore", "wipe your memories about the game",
+])
+def test_forget_requests_are_recognised(message):
+    assert asks_to_forget(message)
+
+
+@pytest.mark.parametrize("message", [
+    "i gave the wrong name bro \rits actually called qwen",   # the 09-29 message, verbatim
+    "don't forget to call mum at 5", "never forget this",
+    "open qwen", "that's not true, it's Tuesday", "I forgot my password",
+])
+def test_ordinary_messages_do_not_ask_to_forget(message):
+    assert not asks_to_forget(message)
+
+
+def test_forget_refuses_when_the_user_did_not_ask(factory, bin_file):
+    mid = _id_in(remember("User prefers prompts under 500 words", kind="preference"))
+    result = forget(mid, session_id="s1", user_message="i gave the wrong name bro its actually called qwen")
+    assert result.startswith("Not forgotten")
+    assert "replaces" in result
+    assert [m.content for m in _rows(factory)] == ["User prefers prompts under 500 words"]
+
+
+def test_forget_on_request_keeps_a_restorable_copy(factory, bin_file):
+    mid = _id_in(remember("Works night shifts this month", kind="about_user"))
+    assert forget(mid, session_id="s1", user_message="forget that I work nights").startswith(f"Forgot [{mid}]")
+    assert _rows(factory) == []
+    [entry] = memory_bin.list_entries()
+    assert entry["content"] == "Works night shifts this month"
+    assert entry["reason"] == "forget that I work nights"
+
+    assert memory_bin.restore(mid, factory) == "Works night shifts this month"
+    [row] = _rows(factory)
+    assert (short_id(row.id), row.content, row.project_id) == (mid, "Works night shifts this month", None)
+    assert memory_bin.list_entries() == []
+    assert memory_bin.restore(mid, factory) is None  # already restored
+
+
+def test_a_fact_forgotten_this_turn_is_not_saved_again_in_the_same_reply(factory, bin_file):
+    msg = "forget the 500 word rule"
+    mid = _id_in(remember("User prefers prompts under 500 words", kind="preference"))
+    forget(mid, session_id="s2", user_message=msg)
+    again = remember("User prefers prompts kept under 500 words", kind="preference", session_id="s2", user_message=msg)
+    assert again.startswith("Not saved: you forgot this same fact")
+    assert _rows(factory) == []
+    # A later turn may save it again.
+    assert remember("User prefers prompts under 500 words", kind="preference", session_id="s2",
+                    user_message="actually remember the 500 word rule again").startswith("Remembered")
+
+
+def test_the_model_cannot_supply_its_own_user_message(factory, bin_file):
+    from app.agent.tools.registry import execute_tool
+    mid = _id_in(remember("Likes tea", kind="preference"))
+    out = execute_tool("forget", {"memory_id": mid, "user_message": "forget it"},
+                       context={"session_id": "s3", "user_message": "open qwen"})
+    assert out.startswith("Not forgotten")
+
+
+def test_old_bin_entries_expire(bin_file, monkeypatch):
+    import json
+    from datetime import datetime, timedelta
+    old = (datetime.utcnow() - timedelta(days=memory_bin.KEEP_DAYS + 1)).isoformat()
+    bin_file.write_text(json.dumps([{"id": "old-1", "content": "x", "forgotten_at": old}]))
+
+    class Row:
+        id, project_id, category, content = "new-1", None, "user_preference", "y"
+        source_session_id, confidence, pinned = None, 1.0, False
+        created_at = updated_at = datetime.utcnow()
+        last_used_at = None
+
+    memory_bin.add(Row())
+    assert [e["id"] for e in memory_bin.list_entries()] == ["new-1"]

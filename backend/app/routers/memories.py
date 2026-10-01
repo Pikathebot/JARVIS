@@ -107,6 +107,24 @@ def create_memory(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/bin", response_model=list[dict[str, Any]])
+def list_forgotten_memories():
+    """Memories the model forgot in the last 30 days, newest first, each restorable."""
+    from app.memory import memory_bin
+    return memory_bin.list_entries()
+
+
+@router.post("/bin/{memory_id}/restore", response_model=dict[str, Any])
+def restore_forgotten_memory(memory_id: str):
+    """Put a forgotten memory back exactly as it was (the Undo on a "Forgot: ..." line)."""
+    from app.agent.tools import memory as memory_tools
+    from app.memory import memory_bin
+    content = memory_bin.restore(memory_id, memory_tools.session_factory)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"No forgotten memory '{memory_id}' in the bin")
+    return {"restored": memory_id, "content": content}
+
+
 @router.get("/{memory_id}", response_model=MemoryRead)
 def get_memory(
     memory_id: str,

@@ -11,7 +11,8 @@ def patch_file(
     file_path: str,
     search_block: str,
     replacement_block: str,
-    workspace_path: Optional[str] = None
+    workspace_path: Optional[str] = None,
+    project_id: Optional[str] = None
 ) -> str:
     """
     Perform a precise in-place modification to an existing file on disk inside the project workspace
@@ -107,6 +108,8 @@ def patch_file(
             new_content = new_content.replace("\n", "\r\n")
 
         path.write_text(new_content, encoding="utf-8")
+        from app.agent.tools.workspace_index import reindex
+        reindex(path, project_id)
 
         old_lines = len(normalized_search.splitlines())
         new_lines = len(normalized_replace.splitlines())

@@ -222,6 +222,7 @@ class ProjectIndexer:
         embeddings = self.embedding_service.embed(chunk_texts)
 
         indexed_records: list[dict[str, Any]] = []
+        stale_ids: list[str] = []
 
         # 3. Database persistence
         with self._get_session() as session:
@@ -238,12 +239,14 @@ class ProjectIndexer:
                     logger.debug("Skipping unchanged file %s (hash match)", rel_path_str)
                     return []
 
-                # Remove old chunks
+                # Remove old chunks -- from the stores too: retrieval reads Qdrant and FTS5
+                # directly, so a chunk left there keeps serving the file's previous version.
                 old_chunks = session.exec(
                     select(DocumentChunk).where(DocumentChunk.document_id == doc.id)
                 ).all()
                 for oc in old_chunks:
                     session.delete(oc)
+                stale_ids = [oc.id for oc in old_chunks]
 
                 doc.file_hash = current_hash
                 doc.size_bytes = size_bytes
@@ -317,6 +320,8 @@ class ProjectIndexer:
 
             session.commit()
 
+        self._drop_from_stores(project_id, stale_ids, rel_path_str)
+
         # 4. Upsert into Vector Store (Qdrant) and Keyword Store (FTS5)
         if self.vector_store:
             try:
@@ -361,6 +366,13 @@ class ProjectIndexer:
                 indexed_count += 1
                 total_chunks += len(chunks)
 
+        # Files deleted or moved outside Jarvis since the last pass are still in the index.
+        with self._get_session() as session:
+            docs = session.exec(select(Document).where(Document.project_id == project_id)).all()
+            vanished = [Path(d.file_path) for d in docs if not Path(d.file_path).exists()]
+        for path in vanished:
+            self.remove_file(path, project_id)
+
         logger.info(
             "Project %s indexing complete: %d files indexed, %d total chunks created.",
             project_id,
@@ -373,6 +385,35 @@ class ProjectIndexer:
             "indexed_files": indexed_count,
             "total_chunks": total_chunks,
         }
+
+    def _drop_from_stores(self, project_id: str, chunk_ids: list[str], label: str) -> None:
+        if not chunk_ids:
+            return
+        for name, store in (("Keyword", self.keyword_store), ("Vector", self.vector_store)):
+            if store:
+                try:
+                    store.delete_chunks(project_id, chunk_ids)
+                except Exception as e:
+                    logger.warning("%s store delete failed for %s: %s", name, label, e)
+
+    def remove_file(self, file_path: Path, project_id: str) -> int:
+        """Take a file out of the project's index (DB, FTS5, vectors) -- after it was deleted.
+        Returns how many chunks were removed."""
+        target = os.path.normcase(os.path.abspath(str(file_path)))
+        with self._get_session() as session:
+            docs = session.exec(select(Document).where(Document.project_id == project_id)).all()
+            doc = next((d for d in docs if os.path.normcase(os.path.abspath(d.file_path)) == target), None)
+            if doc is None:
+                return 0
+            chunks = session.exec(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
+            chunk_ids = [c.id for c in chunks]
+            for c in chunks:
+                session.delete(c)
+            session.delete(doc)
+            session.commit()
+        self._drop_from_stores(project_id, chunk_ids, str(file_path))
+        logger.info("Removed %s from project %s's index (%d chunks)", file_path, project_id, len(chunk_ids))
+        return len(chunk_ids)
 
     def purge_non_text_documents(self) -> int:
         """
@@ -395,16 +436,7 @@ class ProjectIndexer:
                 session.delete(doc)
                 session.commit()
                 removed += 1
-                if self.keyword_store:
-                    try:
-                        self.keyword_store.delete_chunks(doc.project_id, chunk_ids)
-                    except Exception as e:
-                        logger.warning("Keyword purge failed for %s: %s", doc.file_path, e)
-                if self.vector_store:
-                    try:
-                        self.vector_store.delete_chunks(doc.project_id, chunk_ids)
-                    except Exception as e:
-                        logger.warning("Vector purge failed for %s: %s", doc.file_path, e)
+                self._drop_from_stores(doc.project_id, chunk_ids, doc.file_path)
                 logger.info("Purged non-text document from the index: %s (%d chunks)", doc.file_path, len(chunk_ids))
         return removed
 

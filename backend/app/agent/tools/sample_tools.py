@@ -79,7 +79,7 @@ def execute_command(command: str, workspace_path: Optional[str] = None) -> str:
         return f"Error executing command '{cmd_clean}': {str(e)}"
 
 
-def delete_file(file_path: str, workspace_path: Optional[str] = None) -> str:
+def delete_file(file_path: str, workspace_path: Optional[str] = None, project_id: Optional[str] = None) -> str:
     """
     Permanently delete or remove a file from disk within the active project workspace.
     Use ONLY when the user explicitly requests deleting or removing a file.
@@ -114,6 +114,8 @@ def delete_file(file_path: str, workspace_path: Optional[str] = None) -> str:
     try:
         os.remove(path)
         logger.info("Successfully deleted file '%s'", path)
+        from app.agent.tools.workspace_index import unindex
+        unindex(path, project_id)
         return f"Successfully deleted file '{file_path}'."
     except Exception as e:
         logger.error("Error deleting file '%s': %s", path, e)

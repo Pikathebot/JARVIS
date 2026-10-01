@@ -65,7 +65,6 @@ def _set_clipboard_win32(text: str) -> None:
 def get_clipboard() -> str:
     """
     Read and return the current plain text contents of the Windows clipboard.
-    Requires user confirmation before execution to protect private or sensitive data.
     """
     try:
         text = ""
@@ -89,7 +88,6 @@ def get_clipboard() -> str:
 def set_clipboard(text: str) -> str:
     """
     Copy specified text into the active Windows system clipboard.
-    Requires user confirmation before execution.
 
     Args:
         text: The string content to copy to the clipboard.

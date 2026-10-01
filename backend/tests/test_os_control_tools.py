@@ -109,9 +109,11 @@ def test_kill_process_ordinary_single_still_asks():
 
         tier, reason = evaluate_kill_process_risk("dummy_calculator.exe")
         assert tier == RiskTier.CONFIRMATION_REQUIRED
-        assert "unsaved work" in reason
 
         dec = evaluate_tool_permission("kill_process", {"pid_or_name": "dummy_calculator.exe"})
+        assert "may ask to save" in dec.reason
+        forced = evaluate_tool_permission("kill_process", {"pid_or_name": "dummy_calculator.exe", "force": True})
+        assert forced.allowed is False and "unsaved is lost" in forced.reason
         assert dec.allowed is False
         assert dec.risk_tier == RiskTier.CONFIRMATION_REQUIRED
 
@@ -149,8 +151,7 @@ def test_kill_process_protects_jarvis_self():
     """kill_process must hard-block killing Jarvis's own backend process by PID or matching name."""
     self_pid = str(os.getpid())
     result_pid = kill_process(self_pid)
-    assert "Cannot terminate Jarvis backend or launcher process" in result_pid
-    assert "Self-protection enforced" in result_pid
+    assert "part of Jarvis itself" in result_pid
 
     # Test name-based self protection
     with patch("psutil.process_iter") as mock_iter:
@@ -160,8 +161,7 @@ def test_kill_process_protects_jarvis_self():
         mock_iter.return_value = [mock_self_proc]
 
         result_name = kill_process("jarvis_backend.exe")
-        assert "Cannot terminate Jarvis backend or launcher process" in result_name
-        assert "Self-protection enforced" in result_name
+        assert "part of Jarvis itself" in result_name
 
 
 # 3. Tool Functionality & Robustness Checks
