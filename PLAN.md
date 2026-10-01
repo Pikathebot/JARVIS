@@ -431,7 +431,21 @@ on the card, not part of the approval id; `set_clipboard` LOW_RISK, `get_clipboa
 the message mentions the clipboard. Cost to watch on device: the first turn of a workspace chat
 now prefills ~4k tokens of tool schemas even for "hi" (cached after). Not done from the per-tool
 notes: list_directory sizes/caps, find_files/grep clutter rules, binary sniffing, PDF text,
-fetch_url offset/links -- smaller behaviour items, still open in the notes above; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+fetch_url offset/links -- smaller behaviour items, still open in the notes above; **(4) built
+2026-10-01, 671 tests pass, unverified on device:** git_checkout -> `git_switch` (create=true)
++ `git_restore` (backs up first); `git_push` (sets upstream on first push) and `git_pull
+--ff-only` (diverged -> says so, touches nothing), both ask, GIT_TERMINAL_PROMPT=0; big diffs
+show `--stat` first; `patch_artifact` (closest region on a miss, replace_all); `web_search
+news=true` (date + source, newest first; description asks for the links used); `remind_me` /
+`reminders` replace send_toast -- one-shot (`Routine.at`, fires late with a note if Jarvis was
+off, then removed) or daily/weekdays/weekly, through `AwarenessMonitor.emit` plus a Windows
+toast when Jarvis isn't in front, toasts under the app's AUMID (`JARVIS_AUMID` from
+BackendHost -- that C# line is **not build-checked**, the app was running); `set_volume(change=)`
+reports old -> new; `mute_toggle` -> `set_mute(on)`; `media_key` -> `media_control` on Windows'
+media session API (new deps: winrt-* packages, in requirements.txt) with status / real play vs
+pause, falling back to media keys. Also fixed protocol rule 9 (`list_directory(path=)` named a
+parameter that doesn't exist). Still open from §4.6: `look_at_screen`, opening URLs via
+launch_app, artifact list in the turn context, the smaller per-tool behaviour notes; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
 approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
 patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,

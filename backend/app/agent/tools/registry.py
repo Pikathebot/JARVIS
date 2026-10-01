@@ -12,13 +12,13 @@ from app.agent.tools.write_file import write_file
 from app.agent.tools.patch_file import patch_file
 from app.agent.tools.file_search import find_files, grep_in_files
 from app.agent.tools.app_control import launch_app, focus_app
-from app.agent.tools.media_control import set_volume, mute_toggle, media_key
+from app.agent.tools.media_control import set_volume, set_mute, media_control
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
 from app.agent.tools.process_control import list_processes, kill_process
-from app.agent.tools.notify import send_toast
-from app.agent.tools.artifacts import create_artifact, update_artifact, read_artifact
+from app.agent.tools.reminders import remind_me, reminders
+from app.agent.tools.artifacts import create_artifact, update_artifact, patch_artifact, read_artifact
 from app.agent.tools.system_status import get_system_status
-from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_checkout
+from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 
 logger = logging.getLogger("jarvis.agent.tools")
@@ -37,25 +37,30 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # Artifact Tools (Build Plan §15)
     "create_artifact": create_artifact,
     "update_artifact": update_artifact,
+    "patch_artifact": patch_artifact,
     "read_artifact": read_artifact,
     # Phase 3 OS Tools
     "launch_app": launch_app,
     "focus_app": focus_app,
     "set_volume": set_volume,
-    "mute_toggle": mute_toggle,
-    "media_key": media_key,
+    "set_mute": set_mute,
+    "media_control": media_control,
     "get_clipboard": get_clipboard,
     "set_clipboard": set_clipboard,
     "list_processes": list_processes,
     "kill_process": kill_process,
-    "send_toast": send_toast,
+    "remind_me": remind_me,
+    "reminders": reminders,
     "get_system_status": get_system_status,
     # Git (ported from the never-offered app/tools BaseTool stack)
     "git_status": git_status,
     "git_diff": git_diff,
     "git_log": git_log,
     "git_commit": git_commit,
-    "git_checkout": git_checkout,
+    "git_switch": git_switch,
+    "git_restore": git_restore,
+    "git_push": git_push,
+    "git_pull": git_pull,
     # Long-term memory the model keeps for itself
     "remember": remember,
     "forget": forget,
@@ -75,18 +80,20 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Artifact Tools
     create_artifact,
     update_artifact,
+    patch_artifact,
     read_artifact,
     # Phase 3 OS Tools
     launch_app,
     focus_app,
     set_volume,
-    mute_toggle,
-    media_key,
+    set_mute,
+    media_control,
     get_clipboard,
     set_clipboard,
     list_processes,
     kill_process,
-    send_toast,
+    remind_me,
+    reminders,
     # No play_audio/stop_playback: Jarvis's speech is played by the client, so the backend has
     # no audio of its own for a model to start or stop (removed 2026-09-26).
     get_system_status,
@@ -95,7 +102,10 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     git_diff,
     git_log,
     git_commit,
-    git_checkout,
+    git_switch,
+    git_restore,
+    git_push,
+    git_pull,
     # Memory
     remember,
     forget,
@@ -123,8 +133,9 @@ class DeleteFileArgs(BaseModel):
 
 
 class WebSearchArgs(BaseModel):
-    query: str = Field(..., description="Search query string")
+    query: str = Field(..., description="Short search terms")
     max_results: int = Field(default=5, ge=1, le=10, description="Max results")
+    news: bool = Field(default=False, description="Search recent news articles (dated, with source) instead of web pages")
 
 
 class FetchUrlArgs(BaseModel):
@@ -173,6 +184,14 @@ class UpdateArtifactArgs(BaseModel):
     summary: Optional[str] = Field(default=None, description="Changelog summary for this new version")
 
 
+class PatchArtifactArgs(BaseModel):
+    artifact_id: str = Field(..., description="Unique UUID of the artifact to change")
+    search_block: str = Field(..., description="Exact existing text to replace")
+    replacement_block: str = Field(..., description="New text")
+    replace_all: bool = Field(default=False, description="Replace every occurrence instead of exactly one")
+    summary: Optional[str] = Field(default=None, description="Changelog summary for this new version")
+
+
 class ReadArtifactArgs(BaseModel):
     artifact_id: str = Field(..., description="Unique UUID of the artifact to read")
 
@@ -186,15 +205,17 @@ class FocusAppArgs(BaseModel):
 
 
 class SetVolumeArgs(BaseModel):
-    level: int = Field(..., ge=0, le=100, description="Volume level from 0 to 100")
+    level: Optional[int] = Field(default=None, ge=0, le=100, description="Absolute volume, 0-100")
+    change: Optional[int] = Field(default=None, ge=-100, le=100, description="Relative step, e.g. 10 or -5")
 
 
-class MuteToggleArgs(BaseModel):
-    pass
+class SetMuteArgs(BaseModel):
+    on: bool = Field(..., description="True to mute, False to unmute")
 
 
-class MediaKeyArgs(BaseModel):
-    action: Literal["play_pause", "next", "previous", "stop"] = Field(..., description="Media playback action")
+class MediaControlArgs(BaseModel):
+    action: Literal["status", "play", "pause", "play_pause", "next", "previous", "stop"] = Field(
+        default="status", description="status = what is playing; the rest control playback")
 
 
 class GetClipboardArgs(BaseModel):
@@ -215,10 +236,15 @@ class KillProcessArgs(BaseModel):
     force: bool = Field(default=False, description="End it immediately, losing unsaved work -- only when the user says force or it is frozen")
 
 
-class SendToastArgs(BaseModel):
-    title: str = Field(..., description="Toast notification header title")
-    message: str = Field(..., description="Toast notification message body")
-    urgent: bool = Field(default=False, description="Flag for urgent/high priority toast")
+class RemindMeArgs(BaseModel):
+    text: str = Field(..., description="What to remind the user of, phrased to be read out")
+    when: str = Field(..., description="'in 20 minutes', '17:30', '5pm', 'tomorrow 9am' or '2026-10-02 08:00' (local time)")
+    repeat: Literal["once", "daily", "weekdays", "weekly"] = Field(default="once", description="How often")
+
+
+class RemindersArgs(BaseModel):
+    action: Literal["list", "cancel"] = Field(default="list", description="List reminders, or cancel one")
+    reminder_id: str = Field(default="", description="For cancel: the reminder's id from the list")
 
 
 class GetSystemStatusArgs(BaseModel):
@@ -247,8 +273,18 @@ class GitCommitArgs(BaseModel):
     repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
 
 
-class GitCheckoutArgs(BaseModel):
-    target: str = Field(..., description="Branch to switch to, or file to restore to its last committed state")
+class GitSwitchArgs(BaseModel):
+    branch: str = Field(..., description="Branch to switch to")
+    create: bool = Field(default=False, description="Create the branch first (from the current commit)")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitRestoreArgs(BaseModel):
+    file_path: str = Field(..., description="File whose uncommitted changes are thrown away, relative to the repository")
+    repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
+
+
+class GitRemoteArgs(BaseModel):
     repo_path: str = Field(default=".", description="Repository directory relative to the workspace")
 
 
@@ -284,24 +320,29 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     # Artifact Tools
     "create_artifact": CreateArtifactArgs,
     "update_artifact": UpdateArtifactArgs,
+    "patch_artifact": PatchArtifactArgs,
     "read_artifact": ReadArtifactArgs,
     # Phase 3 OS Tools
     "launch_app": LaunchAppArgs,
     "focus_app": FocusAppArgs,
     "set_volume": SetVolumeArgs,
-    "mute_toggle": MuteToggleArgs,
-    "media_key": MediaKeyArgs,
+    "set_mute": SetMuteArgs,
+    "media_control": MediaControlArgs,
     "get_clipboard": GetClipboardArgs,
     "set_clipboard": SetClipboardArgs,
     "list_processes": ListProcessesArgs,
     "kill_process": KillProcessArgs,
-    "send_toast": SendToastArgs,
+    "remind_me": RemindMeArgs,
+    "reminders": RemindersArgs,
     "get_system_status": GetSystemStatusArgs,
     "git_status": GitStatusArgs,
     "git_diff": GitDiffArgs,
     "git_log": GitLogArgs,
     "git_commit": GitCommitArgs,
-    "git_checkout": GitCheckoutArgs,
+    "git_switch": GitSwitchArgs,
+    "git_restore": GitRestoreArgs,
+    "git_push": GitRemoteArgs,
+    "git_pull": GitRemoteArgs,
     "remember": RememberArgs,
     "forget": ForgetArgs,
 }
@@ -378,8 +419,9 @@ def execute_tool(
 FREEFORM_MODE = "FREEFORM"
 WORKSPACE_BOUND_TOOLS = frozenset({
     "read_file", "write_file", "patch_file", "delete_file", "find_files", "grep_in_files",
-    "list_directory", "execute_command", "create_artifact", "update_artifact", "read_artifact",
-    "git_status", "git_diff", "git_log", "git_commit", "git_checkout",
+    "list_directory", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
+    "git_status", "git_diff", "git_log", "git_commit", "git_switch",
+    "git_restore", "git_push", "git_pull",
 })
 
 

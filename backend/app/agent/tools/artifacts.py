@@ -88,6 +88,75 @@ def update_artifact(
         return f"Error updating artifact '{clean_id}': {str(e)}"
 
 
+def _closest_region(content: str, block: str, context: int = 2) -> str:
+    """The lines of ``content`` that look most like ``block``, with a little context -- so a
+    near-miss can be fixed from the error instead of re-reading the whole artifact."""
+    import difflib
+
+    lines, want = content.splitlines(), block.splitlines() or [block]
+    if not lines:
+        return ""
+    width = max(1, len(want))
+    best, best_at = -1.0, 0
+    for i in range(max(1, len(lines) - width + 1)):
+        score = difflib.SequenceMatcher(None, "\n".join(lines[i:i + width]), "\n".join(want)).ratio()
+        if score > best:
+            best, best_at = score, i
+    lo, hi = max(0, best_at - context), min(len(lines), best_at + width + context)
+    return "\n".join(f"{n + 1}: {lines[n]}" for n in range(lo, hi))
+
+
+def patch_artifact(
+    artifact_id: str,
+    search_block: str,
+    replacement_block: str,
+    replace_all: bool = False,
+    summary: Optional[str] = None,
+) -> str:
+    """
+    Change part of an existing artifact by replacing an exact block of its text, saving a new version -- use this instead of update_artifact for edits, so the whole artifact isn't resent.
+
+    Args:
+        artifact_id: The unique ID of the artifact to change.
+        search_block: The exact existing text to replace (unique unless replace_all).
+        replacement_block: The new text.
+        replace_all: Replace every occurrence instead of requiring exactly one.
+        summary: Optional changelog note for the new version.
+    """
+    clean_id = str(artifact_id or "").strip()
+    if not clean_id:
+        return "Error: artifact_id cannot be empty."
+    if not search_block:
+        return "Error: search_block cannot be empty."
+    try:
+        service = ArtifactService()
+        art = service.get_artifact(clean_id)
+        if not art:
+            return f"Error: Artifact with ID '{clean_id}' not found."
+        current = (art.content or "").replace("\r\n", "\n")
+        search = search_block.replace("\r\n", "\n")
+        count = current.count(search)
+        if count == 0:
+            return (f"Error: That text isn't in '{art.name}'. The closest part of version {art.version} is:\n"
+                    f"{_closest_region(current, search)}\n"
+                    "Use the exact current text (without the line numbers) as search_block.")
+        if count > 1 and not replace_all:
+            return (f"Error: That text appears {count} times in '{art.name}'. Include more surrounding "
+                    "lines to make it unique, or pass replace_all=true.")
+        new_content = current.replace(search, (replacement_block or "").replace("\r\n", "\n"), -1 if replace_all else 1)
+        updated = service.update_artifact(
+            artifact_id=clean_id, content=new_content, summary=summary or "Edited part of the artifact", created_by="agent"
+        )
+        logger.info("Agent patched artifact '%s' to v%d (%d replacement(s))", updated.id, updated.version, count if replace_all else 1)
+        return (f"Patched '{updated.name}' (ID: {updated.id}): {count if replace_all else 1} replacement(s), "
+                f"now version {updated.version}.")
+    except KeyError:
+        return f"Error: Artifact with ID '{clean_id}' not found."
+    except Exception as e:
+        logger.error("Error patching artifact '%s': %s", clean_id, e)
+        return f"Error patching artifact '{clean_id}': {str(e)}"
+
+
 def read_artifact(artifact_id: str) -> str:
     """
     Retrieve and read the current content and metadata of an existing artifact by ID.

@@ -3,10 +3,11 @@ Git tools for the project workspace, ported from the BaseTool stack in ``app/too
 (which was registered but never offered to the model).
 
 Git runs as an argv list rather than through a shell, so a file path or commit message is always
-one argument -- nothing in it can be read as another command. Reads are LOW_RISK; commit and
-checkout change the working tree and need the user's approval (``permissions.py``).
+one argument -- nothing in it can be read as another command. Reads are LOW_RISK; commit, switch,
+restore, push and pull change the repository and need the user's approval (``permissions.py``).
 """
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,8 @@ from app.config import settings
 logger = logging.getLogger("jarvis.agent.tools.git")
 
 GIT_TIMEOUT_SECONDS = 30
+NETWORK_TIMEOUT_SECONDS = 120
+DIFF_MAX_CHARS = 12000
 LOG_MAX_COMMITS = 100
 
 
@@ -32,8 +35,10 @@ def _resolve_repo(repo_path: Optional[str], workspace_path: Optional[str]) -> Pa
     return resolved
 
 
-def _git(args: list[str], cwd: Path) -> tuple[int, str]:
+def _git(args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT_SECONDS) -> tuple[int, str]:
     """Run git; returns (exit code, combined output). Exit code -1 means git could not run."""
+    # No terminal prompt for credentials: nobody can answer it, and push/pull would hang.
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         result = subprocess.run(
             ["git", *args],
@@ -42,12 +47,13 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=GIT_TIMEOUT_SECONDS,
+            timeout=timeout,
+            env=env,
         )
     except FileNotFoundError:
         return -1, "Error: git is not installed or not on PATH."
     except subprocess.TimeoutExpired:
-        return -1, f"Error: git {' '.join(args[:1])} timed out ({GIT_TIMEOUT_SECONDS}s limit)."
+        return -1, f"Error: git {' '.join(args[:1])} timed out ({timeout}s limit)."
     output = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
     if result.returncode != 0:
@@ -101,7 +107,14 @@ def git_diff(
     code, out = _git(args, cwd)
     if code != 0:
         return f"Error: git diff failed: {out}"
-    return out or ("No staged changes." if staged else "No unstaged changes.")
+    if not out:
+        return "No staged changes." if staged else "No unstaged changes."
+    if len(out) > DIFF_MAX_CHARS and not (file_path and str(file_path).strip()):
+        # A cut-off diff ends mid-hunk; the summary plus one file at a time reads better.
+        _, stat = _git(["diff", "--staged", "--stat"] if staged else ["diff", "--stat"], cwd)
+        return (f"The diff is large ({len(out)} characters). Summary:" + chr(10) + stat + chr(10) * 2
+                + "Call git_diff with file_path to see one file's changes.")
+    return out
 
 
 def git_log(
@@ -178,24 +191,104 @@ def git_commit(
     return out
 
 
-def git_checkout(target: str, repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
+def _current_branch(cwd: Path) -> str:
+    code, out = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    return out.strip() if code == 0 else ""
+
+
+def git_switch(branch: str, create: bool = False, repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
     """
-    Switch git branch, or restore a file (discarding its uncommitted changes) -- only when asked.
+    Switch to another git branch, or create one and switch to it with create=true -- only when the user asks.
 
     Args:
-        target: Branch name to switch to, or file path to restore.
+        branch: Branch name.
+        create: Create the branch from the current commit first (git switch -c).
         repo_path: Repository directory relative to the workspace (default '.').
         workspace_path: Optional active project workspace root boundary.
     """
-    tgt = str(target or "").strip()
-    if not tgt:
-        return "Error: Checkout target cannot be empty."
-    if tgt.startswith("-"):
-        return "Error: Checkout target must be a branch or file, not an option."
+    name = str(branch or "").strip()
+    if not name:
+        return "Error: Branch name cannot be empty."
+    if name.startswith("-"):
+        return "Error: Branch name must not start with '-'."
     cwd = _resolve_repo(repo_path, workspace_path)
     if isinstance(cwd, str):
         return cwd
-    code, out = _git(["checkout", tgt], cwd)
+    code, out = _git(["switch", "-c", name] if create else ["switch", name], cwd)
     if code != 0:
-        return f"Error: git checkout failed: {out}"
-    return out or f"Checked out '{tgt}'."
+        return f"Error: git switch failed: {out}"
+    return f"{'Created and switched to' if create else 'Switched to'} branch '{name}'."
+
+
+def git_restore(file_path: str, repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
+    """
+    Throw away a file's uncommitted changes, putting it back as it was in the last commit -- only when the user asks; the current version is backed up first.
+
+    Args:
+        file_path: File to restore, relative to the repository.
+        repo_path: Repository directory relative to the workspace (default '.').
+        workspace_path: Optional active project workspace root boundary.
+    """
+    rel = str(file_path or "").strip()
+    if not rel:
+        return "Error: File path cannot be empty."
+    cwd = _resolve_repo(repo_path, workspace_path)
+    if isinstance(cwd, str):
+        return cwd
+    from app.agent.tools.file_safety import backup_file, shown
+    from app.agent.tools.paths import is_inside, workspace_root
+
+    target = (cwd / rel).resolve()
+    ws_root = workspace_root(workspace_path)
+    if not is_inside(target, ws_root):
+        return f"Error: Access denied. '{file_path}' resolves outside the workspace."
+    backup = backup_file(target, ws_root)
+    # "--" so a model-supplied "-p" or "--staged" is a file name, never an option.
+    code, out = _git(["restore", "--", rel], cwd)
+    if code != 0:
+        return f"Error: git restore failed: {out}"
+    note = f" Its uncommitted version is saved as '{shown(backup, ws_root)}'." if backup else ""
+    return f"Restored '{rel}' to the last commit.{note}"
+
+
+def git_push(repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
+    """
+    Push the current branch to its remote (setting the upstream on first push) -- only when the user asks.
+
+    Args:
+        repo_path: Repository directory relative to the workspace (default '.').
+        workspace_path: Optional active project workspace root boundary.
+    """
+    cwd = _resolve_repo(repo_path, workspace_path)
+    if isinstance(cwd, str):
+        return cwd
+    branch = _current_branch(cwd)
+    if not branch or branch == "HEAD":
+        return "Error: Not on a branch (detached HEAD); nothing to push."
+    has_upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd)[0] == 0
+    args = ["push"] if has_upstream else ["push", "-u", "origin", branch]
+    code, out = _git(args, cwd, timeout=NETWORK_TIMEOUT_SECONDS)
+    if code != 0:
+        return f"Error: git push failed: {out}"
+    return out or f"Pushed '{branch}'."
+
+
+def git_pull(repo_path: str = ".", workspace_path: Optional[str] = None) -> str:
+    """
+    Fetch and fast-forward the current branch from its remote -- only when the user asks; it never merges, so it can't start a conflict.
+
+    Args:
+        repo_path: Repository directory relative to the workspace (default '.').
+        workspace_path: Optional active project workspace root boundary.
+    """
+    cwd = _resolve_repo(repo_path, workspace_path)
+    if isinstance(cwd, str):
+        return cwd
+    code, out = _git(["pull", "--ff-only"], cwd, timeout=NETWORK_TIMEOUT_SECONDS)
+    if code != 0:
+        low = out.lower()
+        if "fast-forward" in low or "diverg" in low:
+            return ("Can't fast-forward: this branch and the remote have both changed. Nothing was "
+                    "touched. Tell the user; merging or rebasing is their call.")
+        return f"Error: git pull failed: {out}"
+    return out or "Already up to date."

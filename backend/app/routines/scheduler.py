@@ -25,6 +25,29 @@ from app.routines.models import Routine, RoutineKind
 logger = logging.getLogger("jarvis.routines")
 
 DEFAULT_STATE_PATH = BASE_DIR.parent / "data" / "routines.json"
+# A one-shot reminder this far past its minute was missed (Jarvis off or asleep): say so.
+LATE_AFTER_SECONDS = 180
+
+
+def _toast_unless_jarvis_in_front(title: str, message: str) -> None:
+    """A Windows toast for a reminder, unless the Jarvis window is already in front (the client
+    shows and speaks it there)."""
+    try:
+        import ctypes
+        import psutil
+
+        user32 = ctypes.windll.user32
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+        if pid.value and psutil.Process(pid.value).name().lower() == "jarvis.app.exe":
+            return
+    except Exception:
+        pass
+    try:
+        from app.agent.tools.notify import send_toast
+        send_toast(title, message)
+    except Exception as e:
+        logger.warning("Reminder toast failed: %s", e)
 
 
 class RoutineScheduler:
@@ -76,7 +99,8 @@ class RoutineScheduler:
     # -------------------------------------------------------------- CRUD
 
     def list(self) -> list[Routine]:
-        return sorted(self._routines.values(), key=lambda r: r.time)
+        # One-shot reminders first (by date), then the daily schedule (by time of day).
+        return sorted(self._routines.values(), key=lambda r: (r.at is None, r.at or r.time))
 
     def get(self, routine_id: str) -> Optional[Routine]:
         return self._routines.get(routine_id)
@@ -134,13 +158,21 @@ class RoutineScheduler:
             data={"routine_id": routine.id},
         )
 
-    def fire(self, routine: Routine) -> Observation:
+    def fire(self, routine: Routine, late_since: Optional[str] = None) -> Observation:
         """Fire a routine immediately, independent of scheduling."""
-        return self.monitor.emit(self._build_observation(routine))
+        observation = self._build_observation(routine)
+        if late_since:
+            observation.detail = f"(Due at {late_since}, while Jarvis was off.) {observation.detail}"
+        emitted = self.monitor.emit(observation)
+        if routine.reminder:
+            _toast_unless_jarvis_in_front(routine.name, routine.message or routine.name)
+        return emitted
 
     def _due(self, routine: Routine, now: datetime) -> bool:
         if not routine.enabled:
             return False
+        if routine.at:
+            return now.strftime("%Y-%m-%dT%H:%M") >= routine.at
         today = now.strftime("%Y-%m-%d")
         if routine.last_fired_date == today:
             return False
@@ -154,11 +186,19 @@ class RoutineScheduler:
         for routine in list(self._routines.values()):
             if not self._due(routine, now):
                 continue
+            late = None
+            if routine.at:
+                due = datetime.strptime(routine.at, "%Y-%m-%dT%H:%M")
+                if (now - due).total_seconds() > LATE_AFTER_SECONDS:
+                    late = due.strftime("%H:%M on %a %d %b")
             try:
-                self.fire(routine)
+                self.fire(routine, late_since=late)
             except Exception as e:
                 logger.warning("Routine %s failed to fire: %s", routine.id, e)
             routine.last_fired_date = today
+            if routine.at:
+                # One-shot: done. (A failed fire is not retried every 20 s forever.)
+                self._routines.pop(routine.id, None)
         self._save_state()
 
     # ----------------------------------------------------------- lifecycle

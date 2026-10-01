@@ -1,5 +1,7 @@
+import asyncio
 import ctypes
 import logging
+import threading
 from typing import Literal, Optional
 
 logger = logging.getLogger("jarvis.agent.tools.media_control")
@@ -20,8 +22,27 @@ def _send_virtual_key(vk_code: int) -> None:
     ctypes.windll.user32.keybd_event(vk_code, 0, KEYEVENTF_KEYUP, 0)
 
 
+_com_thread = threading.local()
+
+
+def _ensure_com() -> None:
+    """COM must be initialised on every thread that uses it, and tools run on a pool of worker
+    threads: a call landing on a fresh one failed with "CoInitialize has not been called"
+    (seen on device 2026-10-01, intermittently). Initialised once per thread and left so --
+    uninitialising while pycaw's pointers are alive would crash on their release."""
+    if getattr(_com_thread, "ready", False):
+        return
+    import comtypes
+    try:
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+    except OSError:
+        pass  # already initialised on this thread (in another mode): COM is usable
+    _com_thread.ready = True
+
+
 def _get_endpoint_volume():
     """Helper to initialize and return pycaw master audio volume endpoint."""
+    _ensure_com()
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     from ctypes import cast, POINTER
     from comtypes import CLSCTX_ALL
@@ -40,85 +61,119 @@ def _get_endpoint_volume():
     return cast(interface, POINTER(IAudioEndpointVolume))
 
 
-def set_volume(level: int) -> str:
+def set_volume(level: Optional[int] = None, change: Optional[int] = None) -> str:
     """
-    Set the Windows master audio volume level.
+    Set the Windows master volume to a level (0-100), or change it by a step (change=+10 / -10); the result says old -> new. Steps by wording: "slightly"/"a tiny bit" 5, "a bit"/"louder"/"quieter" 10, "a lot"/"way louder" 20, a number the user says exactly.
 
     Args:
-        level: Master volume percentage from 0 to 100 (automatically clamped).
+        level: Absolute master volume percentage, 0-100.
+        change: Relative step in percentage points, e.g. 10 or -5.
     """
+    if level is None and change is None:
+        return "Error: Give a level (0-100) or a change (e.g. +10 or -10)."
     try:
-        clamped_level = max(0, min(100, int(level)))
-        scalar = clamped_level / 100.0
-
-        try:
-            volume = _get_endpoint_volume()
-            volume.SetMasterVolumeLevelScalar(scalar, None)
-            logger.info("Set system volume to %d%%", clamped_level)
-            return f"Successfully set master volume to {clamped_level}%."
-        except Exception as e:
-            logger.warning("pycaw volume adjustment failed (%s), attempting virtual key fallback", e)
-            # Fallback: cannot set exact scalar via keybd_event, but report attempt
-            return f"Error adjusting volume to {clamped_level}%: {str(e)}"
+        volume = _get_endpoint_volume()
+        before = round(volume.GetMasterVolumeLevelScalar() * 100)
+        target = int(level) if level is not None else before + int(change)
+        target = max(0, min(100, target))
+        volume.SetMasterVolumeLevelScalar(target / 100.0, None)
+        muted = bool(volume.GetMute())
+        logger.info("Volume %d%% -> %d%%", before, target)
+        note = " (sound is muted, so nothing is audible until it is unmuted)" if muted else ""
+        return f"Volume {before}% -> {target}%{note}."
     except Exception as e:
         logger.error("Error in set_volume: %s", e)
         return f"Error setting volume: {str(e)}"
 
 
-def mute_toggle() -> str:
+def set_mute(on: bool) -> str:
     """
-    Toggle Windows master audio mute state (mute / unmute).
-    """
-    try:
-        try:
-            volume = _get_endpoint_volume()
-            current_mute = volume.GetMute()
-            new_mute = not current_mute
-            volume.SetMute(new_mute, None)
-            state_str = "muted" if new_mute else "unmuted"
-            logger.info("Toggled mute state to: %s", state_str)
-            return f"Master audio is now {state_str}."
-        except Exception as pycaw_err:
-            logger.warning("pycaw mute toggle failed (%s), using virtual key", pycaw_err)
-            _send_virtual_key(VK_VOLUME_MUTE)
-            return "Successfully toggled master audio mute state."
-    except Exception as e:
-        logger.error("Error in mute_toggle: %s", e)
-        return f"Error toggling mute state: {str(e)}"
-
-
-def media_key(action: Literal["play_pause", "next", "previous", "stop"]) -> str:
-    """
-    Send media playback controls (play/pause, next track, previous track, stop) to the active media player.
+    Mute (on=true) or unmute (on=false) the Windows master audio; the result says the state now.
 
     Args:
-        action: The media action to trigger ('play_pause', 'next', 'previous', 'stop').
+        on: True to mute, False to unmute.
     """
-    raw_action = str(action or "").strip().lower().replace("-", "_").replace(" ", "_")
-
-    key_map = {
-        "play": VK_MEDIA_PLAY_PAUSE,
-        "pause": VK_MEDIA_PLAY_PAUSE,
-        "play_pause": VK_MEDIA_PLAY_PAUSE,
-        "playpause": VK_MEDIA_PLAY_PAUSE,
-        "next": VK_MEDIA_NEXT_TRACK,
-        "next_track": VK_MEDIA_NEXT_TRACK,
-        "prev": VK_MEDIA_PREV_TRACK,
-        "previous": VK_MEDIA_PREV_TRACK,
-        "prev_track": VK_MEDIA_PREV_TRACK,
-        "previous_track": VK_MEDIA_PREV_TRACK,
-        "stop": VK_MEDIA_STOP,
-    }
-
-    if raw_action not in key_map:
-        valid_options = "play_pause, next, previous, stop"
-        return f"Error: Unknown media action '{action}'. Valid actions are: {valid_options}."
-
     try:
-        vk = key_map[raw_action]
-        _send_virtual_key(vk)
-        logger.info("Sent media key for action '%s' (VK: 0x%X)", raw_action, vk)
-        return f"Successfully triggered media key '{raw_action}'."
+        volume = _get_endpoint_volume()
+        was = bool(volume.GetMute())
+        want = bool(on) if not isinstance(on, str) else on.strip().lower() in ("true", "1", "yes", "on")
+        if was != want:
+            volume.SetMute(want, None)
+        now = bool(volume.GetMute())
+        state = "muted" if now else "unmuted"
+        logger.info("Mute: %s -> %s", was, now)
+        return f"Sound is {state}" + (" (it already was)." if was == now and was == want else ".")
     except Exception as e:
-        logger.error("Error sending media key '%s': %s", action, e)
-        return f"Error sending media key '{action}': {str(e)}"
+        logger.error("Error in set_mute: %s", e)
+        return f"Error changing mute: {str(e)}"
+
+
+MEDIA_ACTIONS = ("status", "play", "pause", "play_pause", "next", "previous", "stop")
+
+_KEY_FALLBACK = {
+    "play": VK_MEDIA_PLAY_PAUSE, "pause": VK_MEDIA_PLAY_PAUSE, "play_pause": VK_MEDIA_PLAY_PAUSE,
+    "next": VK_MEDIA_NEXT_TRACK, "previous": VK_MEDIA_PREV_TRACK, "stop": VK_MEDIA_STOP,
+}
+
+
+def _app_name(source_id: str) -> str:
+    """"SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify" -> "Spotify"; "chrome.exe" -> "chrome"."""
+    name = (source_id or "").split("!")[-1]
+    return name[:-4] if name.lower().endswith(".exe") else (name or "an app")
+
+
+async def _session_action(action: str) -> str:
+    from winrt.windows.media.control import (
+        GlobalSystemMediaTransportControlsSessionManager as Manager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+    )
+
+    manager = await Manager.request_async()
+    session = manager.get_current_session()
+    if session is None:
+        if action == "status":
+            return "Nothing is playing (no app has a media session open)."
+        return f"Nothing to {action.replace('_', '/')}: no app has a media session open."
+
+    async def describe() -> str:
+        props = await session.try_get_media_properties_async()
+        status = session.get_playback_info().playback_status
+        state = {Status.PLAYING: "Playing", Status.PAUSED: "Paused", Status.STOPPED: "Stopped"}.get(status, "Idle")
+        what = " -- ".join(x for x in ((props.title or "").strip(), (props.artist or "").strip()) if x) if props else ""
+        return f"{state} in {_app_name(session.source_app_user_model_id)}" + (f": {what}" if what else "") + "."
+
+    if action == "status":
+        return await describe()
+    calls = {
+        "play": session.try_play_async, "pause": session.try_pause_async,
+        "play_pause": session.try_toggle_play_pause_async, "next": session.try_skip_next_async,
+        "previous": session.try_skip_previous_async, "stop": session.try_stop_async,
+    }
+    ok = await calls[action]()
+    if not ok:
+        return f"{_app_name(session.source_app_user_model_id)} didn't accept '{action}'. " + await describe()
+    await asyncio.sleep(0.4)  # the app updates its state a moment later
+    return await describe()
+
+
+def media_control(action: str = "status") -> str:
+    """
+    Control or check what is playing (Spotify, a browser video, ...): action = status ("what's playing"), play, pause, play_pause, next, previous or stop; the result says what is playing now, or that nothing is.
+
+    Args:
+        action: status, play, pause, play_pause, next, previous or stop.
+    """
+    act = str(action or "status").strip().lower().replace("-", "_").replace(" ", "_")
+    act = {"prev": "previous", "skip": "next", "resume": "play", "toggle": "play_pause"}.get(act, act)
+    if act not in MEDIA_ACTIONS:
+        return f"Error: Unknown media action '{action}'. Valid actions are: {', '.join(MEDIA_ACTIONS)}."
+    try:
+        return asyncio.run(_session_action(act))
+    except ImportError:
+        logger.info("WinRT media packages missing; falling back to media keys")
+    except Exception as e:
+        logger.warning("Media session call failed (%s); falling back to media keys", e)
+    if act == "status":
+        return "Can't tell what is playing right now (the Windows media API isn't available)."
+    _send_virtual_key(_KEY_FALLBACK[act])
+    return f"Sent the '{act}' media key (couldn't check what is playing)."

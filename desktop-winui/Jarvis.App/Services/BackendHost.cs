@@ -155,6 +155,13 @@ public sealed class BackendHost : IDisposable
         // Python block-buffers stdout when it is a pipe; unbuffered so prints land in
         // backend.log as they happen rather than in 8 KB bursts.
         startInfo.Environment["PYTHONUNBUFFERED"] = "1";
+        // The backend's Windows toasts (reminders) go out under this app's identity, so they
+        // show as "Jarvis" and a click opens the app. Unpackaged runs have no identity: skip.
+        try
+        {
+            startInfo.Environment["JARVIS_AUMID"] = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!App";
+        }
+        catch (InvalidOperationException) { }
 
         _process?.Dispose();
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };

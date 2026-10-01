@@ -43,6 +43,24 @@ def test_web_search_mocked():
         assert "FastAPI Guide" in res
 
 
+def test_news_search_is_dated_sourced_and_newest_first():
+    news = [
+        {"date": "2026-09-16T03:57:31+00:00", "title": "Older story", "url": "https://a.example/old",
+         "body": "old", "source": "Paper A"},
+        {"date": "2026-09-30T10:00:00+00:00", "title": "Newer story", "url": "https://b.example/new",
+         "body": "new", "source": "Paper B"},
+    ]
+    mock_instance = MagicMock()
+    mock_instance.__enter__.return_value = mock_instance
+    mock_instance.news.return_value = news
+    with patch("ddgs.DDGS", return_value=mock_instance):
+        res = web_search("nvidia", news=True)
+    assert res.startswith('## News for: "nvidia"')
+    assert res.index("Newer story") < res.index("Older story")
+    assert "**Published**: 2026-09-30 by Paper B" in res and "https://b.example/new" in res
+    mock_instance.text.assert_not_called()
+
+
 
 def test_fetch_url_empty():
     res = fetch_url("")

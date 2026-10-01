@@ -34,6 +34,11 @@ class Routine:
     # "YYYY-MM-DD" of the last local date this routine fired, so a restart
     # or a slow poll tick cannot fire it twice in one day.
     last_fired_date: Optional[str] = None
+    # One-shot: "YYYY-MM-DDTHH:MM" local. Fires once when that minute has come (late, if Jarvis
+    # was off then) and is then removed. None = the daily ``time`` schedule above.
+    at: Optional[str] = None
+    # Set by remind_me from chat: also raises a Windows toast when Jarvis isn't in front.
+    reminder: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +50,8 @@ class Routine:
             "days": list(self.days),
             "enabled": self.enabled,
             "last_fired_date": self.last_fired_date,
+            "at": self.at,
+            "reminder": self.reminder,
         }
 
     @classmethod
@@ -58,4 +65,6 @@ class Routine:
             days=[int(d) for d in data.get("days", []) if isinstance(d, (int, float, str)) and str(d).strip() != ""],
             enabled=bool(data.get("enabled", True)),
             last_fired_date=data.get("last_fired_date"),
+            at=data.get("at") or None,
+            reminder=bool(data.get("reminder", False)),
         )

@@ -12,11 +12,14 @@ import pytest
 
 from app.agent.permissions import RiskTier, build_confirmation_prompt, evaluate_tool_permission
 from app.agent.tool_schema import convert_tool_to_openai_schema
-from app.agent.tools.git import git_checkout, git_commit, git_diff, git_log, git_status
+from app.agent.tools import git as git_tools
+from app.agent.tools.git import (
+    git_commit, git_diff, git_log, git_pull, git_push, git_restore, git_status, git_switch,
+)
 from app.agent.tools.read_file import read_file
 from app.agent.tools.registry import AVAILABLE_TOOLS, TOOL_FUNCTIONS, execute_tool, tools_for_space
 
-GIT_TOOLS = ("git_status", "git_diff", "git_log", "git_commit", "git_checkout")
+GIT_TOOLS = ("git_status", "git_diff", "git_log", "git_commit", "git_switch", "git_restore", "git_push", "git_pull")
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -53,7 +56,8 @@ def test_git_tools_are_registered_offered_and_schemad():
 def test_reads_are_free_and_writes_need_approval():
     for name in ("git_status", "git_diff", "git_log"):
         assert evaluate_tool_permission(name, {}).allowed
-    for name, args in (("git_commit", {"message": "x"}), ("git_checkout", {"target": "main"})):
+    for name, args in (("git_commit", {"message": "x"}), ("git_switch", {"branch": "main"}),
+                       ("git_restore", {"file_path": "a.txt"}), ("git_push", {}), ("git_pull", {})):
         decision = evaluate_tool_permission(name, args)
         assert not decision.allowed
         assert decision.risk_tier == RiskTier.CONFIRMATION_REQUIRED
@@ -112,11 +116,59 @@ def test_commit_with_files_commits_only_those(repo):
 
 
 @needs_git
-def test_checkout_switches_branch_and_refuses_options(repo):
+def test_switch_changes_or_creates_a_branch_and_refuses_options(repo):
     _run(repo, "branch", "feature")
-    git_checkout("feature", workspace_path=str(repo))
+    assert git_switch("feature", workspace_path=str(repo)) == "Switched to branch 'feature'."
     assert "feature" in git_status(workspace_path=str(repo)).splitlines()[0]
-    assert git_checkout("--force", workspace_path=str(repo)).startswith("Error")
+    assert git_switch("idea", create=True, workspace_path=str(repo)).startswith("Created and switched")
+    assert "idea" in git_status(workspace_path=str(repo)).splitlines()[0]
+    assert git_switch("--force", workspace_path=str(repo)).startswith("Error")
+
+
+@needs_git
+def test_restore_discards_changes_but_keeps_a_backup(repo):
+    (repo / "a.txt").write_text("edited\n", encoding="utf-8")
+    out = git_restore("a.txt", workspace_path=str(repo))
+    assert out.startswith("Restored 'a.txt'") and ".jarvis/backups/a.txt." in out
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "one\n"
+    [backup] = (repo / ".jarvis" / "backups").glob("a.txt.*.bak")
+    assert backup.read_text(encoding="utf-8") == "edited\n"
+    card = evaluate_tool_permission("git_restore", {"file_path": "a.txt"})
+    assert "Throws away the uncommitted changes to 'a.txt'" in card.reason
+
+
+@needs_git
+def test_push_and_pull_against_a_local_remote(repo, tmp_path_factory):
+    remote = tmp_path_factory.mktemp("remote")
+    _run(remote, "init", "-q", "--bare", "-b", "main")
+    _run(repo, "remote", "add", "origin", str(remote))
+    # First push sets the upstream.
+    assert not git_push(workspace_path=str(repo)).startswith("Error")
+    assert "Already up to date" in git_pull(workspace_path=str(repo))
+
+    # Someone else pushes; we commit too: diverged, and pull touches nothing.
+    other = tmp_path_factory.mktemp("other")
+    _run(other, "clone", "-q", str(remote), ".")
+    _run(other, "config", "user.name", "O")
+    _run(other, "config", "user.email", "o@example.com")
+    (other / "b.txt").write_text("theirs\n", encoding="utf-8")
+    _run(other, "add", "-A")
+    _run(other, "commit", "-q", "-m", "theirs")
+    _run(other, "push", "-q")
+    (repo / "c.txt").write_text("mine\n", encoding="utf-8")
+    _run(repo, "add", "-A")
+    _run(repo, "commit", "-q", "-m", "mine")
+    assert git_pull(workspace_path=str(repo)).startswith("Can't fast-forward")
+    assert not (repo / "b.txt").exists()
+
+
+@needs_git
+def test_a_large_diff_shows_the_summary_first(repo, monkeypatch):
+    monkeypatch.setattr(git_tools, "DIFF_MAX_CHARS", 20)
+    (repo / "a.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    out = git_diff(workspace_path=str(repo))
+    assert out.startswith("The diff is large") and "a.txt" in out and "file_path" in out
+    assert "+two" in git_diff(file_path="a.txt", workspace_path=str(repo))
 
 
 @needs_git

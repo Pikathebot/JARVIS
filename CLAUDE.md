@@ -23,7 +23,7 @@ WinUI port and the model changes, and wrong about models, clients and paths in p
 Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
 so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 648 pass (2026-10-01)
+.\.venv\Scripts\python.exe -m pytest                                   # ~1.5 min; 671 pass (2026-10-01)
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```

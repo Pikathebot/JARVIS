@@ -69,7 +69,7 @@ def send_toast(title: str, message: str, urgent: bool = False) -> str:
     if HAS_WINOTIFY:
         try:
             toast = Notification(
-                app_id="Jarvis Assistant",
+                app_id=os.environ.get("JARVIS_AUMID") or "Jarvis Assistant",
                 title=clean_title,
                 msg=clean_msg,
             )

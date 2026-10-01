@@ -58,13 +58,14 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     # Artifact Tools (Build Plan §15)
     "create_artifact": RiskTier.LOW_RISK,
     "update_artifact": RiskTier.LOW_RISK,
+    "patch_artifact": RiskTier.LOW_RISK,
     "read_artifact": RiskTier.LOW_RISK,
     # Phase 3: Windows OS Power Controls & Desktop Toast Alerts
     "launch_app": RiskTier.CONFIRMATION_REQUIRED,
     "focus_app": RiskTier.LOW_RISK,
     "set_volume": RiskTier.LOW_RISK,
-    "mute_toggle": RiskTier.LOW_RISK,
-    "media_key": RiskTier.LOW_RISK,
+    "set_mute": RiskTier.LOW_RISK,
+    "media_control": RiskTier.LOW_RISK,
     # Reading runs when the user's message points at the clipboard (see _CLIPBOARD_CUE_RE);
     # writing it is no riskier than the user pressing Ctrl+C (tool review, 2026-09-30).
     "get_clipboard": RiskTier.CONFIRMATION_REQUIRED,
@@ -72,14 +73,19 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "list_processes": RiskTier.LOW_RISK,
     # Killing a program loses its unsaved work, so it always asks; the reason says which kind.
     "kill_process": RiskTier.CONFIRMATION_REQUIRED,
-    "send_toast": RiskTier.LOW_RISK,
+    # Reminders only schedule something Jarvis will say; cancelling one is as easy to redo.
+    "remind_me": RiskTier.LOW_RISK,
+    "reminders": RiskTier.LOW_RISK,
     "get_system_status": RiskTier.LOW_RISK,
     # Git: reads are free; commit and checkout rewrite the working tree / history.
     "git_status": RiskTier.LOW_RISK,
     "git_diff": RiskTier.LOW_RISK,
     "git_log": RiskTier.LOW_RISK,
     "git_commit": RiskTier.CONFIRMATION_REQUIRED,
-    "git_checkout": RiskTier.CONFIRMATION_REQUIRED,
+    "git_switch": RiskTier.CONFIRMATION_REQUIRED,
+    "git_restore": RiskTier.CONFIRMATION_REQUIRED,
+    "git_push": RiskTier.CONFIRMATION_REQUIRED,
+    "git_pull": RiskTier.CONFIRMATION_REQUIRED,
     # Memory: the model's own notes, shown to the user as a tool card; ephemeral turns refuse.
     "remember": RiskTier.LOW_RISK,
     "forget": RiskTier.LOW_RISK,
@@ -548,6 +554,13 @@ class BatchPermissionResult:
 
 REASON_TOOLS = frozenset({"write_file", "patch_file", "delete_file", "execute_command"})
 
+_GIT_CARD_TEXT = {
+    "git_restore": "Throws away the uncommitted changes to '{file}' (its current version is backed up first).",
+    "git_switch": "{verb} to branch '{branch}'.",
+    "git_push": "Pushes the current branch to its remote (GitHub or wherever origin points).",
+    "git_pull": "Fast-forwards the current branch from its remote; stops without touching anything if they diverged.",
+}
+
 
 def _resolve_for_card(path: Any, workspace_path: Optional[str | Path]) -> Optional[Path]:
     raw = str(path or "").strip()
@@ -663,6 +676,11 @@ def evaluate_tool_permission(
             custom_reason = f"{custom_reason} Force-ends it at once: anything unsaved is lost.".strip()
         else:
             custom_reason = f"{custom_reason} Asks it to close, as clicking X does; it may ask to save.".strip()
+    elif tool_name in _GIT_CARD_TEXT:
+        custom_reason = _GIT_CARD_TEXT[tool_name].format(
+            file=arguments.get("file_path") or "", branch=arguments.get("branch") or "",
+            verb="Creates and switches" if str(arguments.get("create", "")).lower() in ("true", "1") else "Switches",
+        )
 
     # The model's own "why" (write/patch/delete/execute_command), shown on the card.
     model_reason = str(arguments.get("reason") or "").strip()

@@ -172,3 +172,25 @@ def test_artifacts_rest_api(isolated_artifact_service):
 
     finally:
         app.dependency_overrides.pop(get_artifact_service, None)
+
+
+# --- patch_artifact: edit part of an artifact without resending all of it (2026-10-01) ---
+
+def test_patch_artifact_replaces_one_block_and_versions_it(isolated_artifact_service, monkeypatch):
+    from app.agent.tools import artifacts as art_tools
+    monkeypatch.setattr(art_tools, "ArtifactService", lambda: isolated_artifact_service)
+    art = isolated_artifact_service.create_artifact(
+        name="plan.md", type="document", content="# Plan\nStep one\nStep two\nStep two\n",
+        conversation_id="c", project_id="p", created_by="agent",
+    )
+
+    out = art_tools.patch_artifact(art.id, "# Plan", "# Launch plan")
+    assert out.startswith("Patched 'plan.md'") and "version 2" in out
+    assert isolated_artifact_service.get_artifact(art.id).content.startswith("# Launch plan\n")
+
+    assert "appears 2 times" in art_tools.patch_artifact(art.id, "Step two", "Step 2")
+    assert "2 replacement(s)" in art_tools.patch_artifact(art.id, "Step two", "Step 2", replace_all=True)
+
+    miss = art_tools.patch_artifact(art.id, "Step tree", "x")
+    assert "isn't in 'plan.md'" in miss and "Step one" in miss
+    assert isolated_artifact_service.get_artifact(art.id).version == 3

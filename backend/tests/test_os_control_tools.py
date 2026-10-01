@@ -22,7 +22,7 @@ from app.agent.tools.registry import (
     execute_tool,
 )
 from app.agent.tools.app_control import launch_app, focus_app, resolve_executable
-from app.agent.tools.media_control import set_volume, mute_toggle, media_key
+from app.agent.tools.media_control import set_volume, set_mute, media_control
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
 from app.agent.tools.process_control import list_processes, kill_process
 from app.agent.tools.notify import send_toast
@@ -33,8 +33,8 @@ from app.agent.tools.notify import send_toast
 def test_all_phase3_tools_registered():
     """Verify all 10 tools are registered in TOOL_FUNCTIONS, AVAILABLE_TOOLS, and TOOL_SCHEMAS."""
     expected_tools = [
-        "launch_app", "focus_app", "set_volume", "mute_toggle", "media_key",
-        "get_clipboard", "set_clipboard", "list_processes", "kill_process", "send_toast"
+        "launch_app", "focus_app", "set_volume", "set_mute", "media_control",
+        "get_clipboard", "set_clipboard", "list_processes", "kill_process", "remind_me", "reminders"
     ]
     registered_func_names = [fn.__name__ for fn in AVAILABLE_TOOLS]
     for tool_name in expected_tools:
@@ -67,8 +67,8 @@ def test_media_controls_low_risk():
     """Volume, mute, and media keys must all be LOW_RISK."""
     for tool, args in [
         ("set_volume", {"level": 50}),
-        ("mute_toggle", {}),
-        ("media_key", {"action": "play_pause"}),
+        ("set_mute", {"on": True}),
+        ("media_control", {"action": "play_pause"}),
     ]:
         decision = evaluate_tool_permission(tool, args)
         assert decision.allowed is True, f"{tool} should be allowed"
@@ -95,9 +95,9 @@ def test_list_processes_low_risk():
     assert decision.risk_tier == RiskTier.LOW_RISK
 
 
-def test_toast_low_risk():
-    """send_toast is informational and must be LOW_RISK."""
-    decision = evaluate_tool_permission("send_toast", {"title": "Test", "message": "Message"})
+def test_reminders_are_low_risk():
+    """Setting a reminder only schedules something Jarvis will say."""
+    decision = evaluate_tool_permission("remind_me", {"text": "Stretch", "when": "in 5 minutes"})
     assert decision.allowed is True
     assert decision.risk_tier == RiskTier.LOW_RISK
 
@@ -193,42 +193,56 @@ def test_focus_app_missing():
     assert "Error: No visible window matching" in res
 
 
-def test_set_volume_clamping():
-    """set_volume clamps inputs within 0..100 range."""
+def test_set_volume_absolute_and_relative_report_old_and_new():
     with patch("app.agent.tools.media_control._get_endpoint_volume") as mock_vol_getter:
         mock_vol = MagicMock()
-        mock_vol_getter.return_value = mock_vol
-
-        res_neg = set_volume(-50)
-        assert "0%" in res_neg
-        mock_vol.SetMasterVolumeLevelScalar.assert_called_with(0.0, None)
-
-        res_high = set_volume(150)
-        assert "100%" in res_high
-        mock_vol.SetMasterVolumeLevelScalar.assert_called_with(1.0, None)
-
-
-def test_mute_toggle_execution():
-    """mute_toggle flips mute state and returns confirmation."""
-    with patch("app.agent.tools.media_control._get_endpoint_volume") as mock_vol_getter:
-        mock_vol = MagicMock()
+        mock_vol.GetMasterVolumeLevelScalar.return_value = 0.4
         mock_vol.GetMute.return_value = False
         mock_vol_getter.return_value = mock_vol
 
-        res = mute_toggle()
-        assert "muted" in res
-        mock_vol.SetMute.assert_called_with(True, None)
+        assert set_volume(level=150) == "Volume 40% -> 100%."
+        mock_vol.SetMasterVolumeLevelScalar.assert_called_with(1.0, None)
+        assert set_volume(change=10) == "Volume 40% -> 50%."
+        assert set_volume(change=-60) == "Volume 40% -> 0%."
+        mock_vol.GetMute.return_value = True
+        assert "muted" in set_volume(change=5)
+        assert set_volume().startswith("Error")
 
 
-def test_media_key_actions():
-    """media_key accepts normalized actions and sends virtual keycodes."""
-    with patch("app.agent.tools.media_control._send_virtual_key") as mock_send_vk:
-        res = media_key("play_pause")
-        assert "Successfully triggered" in res
-        assert mock_send_vk.called
+def test_set_mute_sets_the_state_and_says_it():
+    with patch("app.agent.tools.media_control._get_endpoint_volume") as mock_vol_getter:
+        mock_vol = MagicMock()
+        state = {"muted": False}
+        mock_vol.GetMute.side_effect = lambda: state["muted"]
+        mock_vol.SetMute.side_effect = lambda on, _: state.update(muted=on)
+        mock_vol_getter.return_value = mock_vol
 
-        res_invalid = media_key("destroy_computer")
-        assert "Error: Unknown media action" in res_invalid
+        assert set_mute(True) == "Sound is muted."
+        assert set_mute(True) == "Sound is muted (it already was)."
+        assert set_mute(False) == "Sound is unmuted."
+
+
+def test_media_control_uses_the_session_and_falls_back_to_keys():
+    import app.agent.tools.media_control as mc
+
+    async def session(action):
+        return {"status": "Playing in Spotify: Song -- Artist.", "pause": "Paused in Spotify: Song -- Artist."}[action]
+
+    with patch.object(mc, "_session_action", session), patch.object(mc, "_send_virtual_key") as keys:
+        assert media_control("status") == "Playing in Spotify: Song -- Artist."
+        assert media_control("pause").startswith("Paused")
+        keys.assert_not_called()
+
+    async def broken(action):
+        raise OSError("no WinRT")
+
+    with patch.object(mc, "_session_action", broken), patch.object(mc, "_send_virtual_key") as keys:
+        assert media_control("next").startswith("Sent the 'next' media key")
+        keys.assert_called_once()
+        assert "Can't tell" in media_control("status")
+    assert media_control("destroy_computer").startswith("Error: Unknown media action")
+    assert mc._app_name("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify") == "Spotify"
+    assert mc._app_name("chrome.exe") == "chrome"
 
 
 def test_clipboard_read_write():
@@ -273,3 +287,23 @@ def test_no_governor_scaffolding_imported():
     assert "process_watcher" not in source
     assert "resource_governor" not in source
     assert "app.governor" not in source
+
+
+def test_audio_initialises_com_once_on_each_worker_thread():
+    """Tools run on a thread pool; pycaw on a thread without COM failed with "CoInitialize has
+    not been called" (on device, 2026-10-01, intermittently)."""
+    import threading
+    import comtypes
+    import app.agent.tools.media_control as mc
+
+    calls = []
+    with patch.object(comtypes, "CoInitializeEx", side_effect=lambda *a: calls.append(threading.get_ident())):
+        def worker():
+            mc._ensure_com()
+            mc._ensure_com()
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert len(calls) == 3 and len(set(calls)) == 3
