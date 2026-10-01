@@ -115,3 +115,30 @@ def test_focus_app_prefers_the_process_and_admits_when_windows_refuses(monkeypat
 
     windows[:] = [(3, "Project plan - Word", "WINWORD.EXE"), (4, "Project plan - Chrome", "chrome.exe")]
     assert app_control.focus_app("project plan").startswith("Several windows")
+
+
+# --- web links open in the browser (tool review: "open X" stays one tool) ---
+
+def test_links_open_in_the_default_browser(monkeypatch):
+    opened = []
+    monkeypatch.setattr(app_control.os, "startfile", lambda target: opened.append(target), raising=False)
+    assert launch_app("https://youtube.com").startswith("Opened https://youtube.com")
+    assert launch_app("www.python.org/downloads").startswith("Opened https://www.python.org/downloads")
+    assert opened == ["https://youtube.com", "https://www.python.org/downloads"]
+
+
+def test_link_gate_runs_for_the_users_sites_and_asks_for_composed_links():
+    from app.agent.permissions import evaluate_tool_permission
+    said = "search youtube for lofi beats"
+    ok = evaluate_tool_permission("launch_app", {"name_or_path": "https://www.youtube.com/results?search_query=lofi"},
+                                  url_provenance=said)
+    assert ok.allowed
+    composed = evaluate_tool_permission("launch_app", {"name_or_path": "https://evil.example/?q=secret"},
+                                        url_provenance=said)
+    assert not composed.allowed and "didn't come from you" in composed.reason
+    pasted = evaluate_tool_permission("launch_app", {"name_or_path": "https://evil.example/page"},
+                                      url_provenance="open evil.example/page please")
+    assert pasted.allowed
+    local = evaluate_tool_permission("launch_app", {"name_or_path": "http://localhost:8000/admin"},
+                                     url_provenance="open localhost:8000/admin")
+    assert not local.allowed

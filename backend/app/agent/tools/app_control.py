@@ -206,19 +206,40 @@ def resolve_executable(name_or_path: str) -> Optional[str]:
     return None
 
 
+_WEB_URL_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.IGNORECASE)
+
+
+def as_web_url(text: str) -> Optional[str]:
+    """An http(s) link ("www.x.com" gets https://), or None for anything else."""
+    raw = (text or "").strip().strip("'\"")
+    if not _WEB_URL_RE.match(raw):
+        return None
+    return raw if raw.lower().startswith("http") else f"https://{raw}"
+
+
 def is_uri_or_shortcut(target: str) -> bool:
     return target.lower().endswith((".lnk", ".url", ".appref-ms")) or _is_uri(target)
 
 
 def launch_app(name_or_path: str) -> str:
     """
-    Launch a local Windows application by name, alias, or executable path.
+    Launch a local Windows application by name, alias, or executable path -- or open a web link (https://...) in the default browser.
 
     Args:
-        name_or_path: Name of application (e.g. 'notepad', 'chrome', 'calculator') or full file path.
+        name_or_path: Name of application (e.g. 'notepad', 'chrome', 'calculator'), a full file path, or an https:// link.
     """
     if not name_or_path or not name_or_path.strip():
         return "Error: No application name or path provided."
+
+    url = as_web_url(name_or_path)
+    if url:
+        # A web link opens in the default browser -- "open youtube.com" stays one tool.
+        try:
+            os.startfile(url)
+        except Exception as e:
+            return f"Error opening '{url}' in the browser: {e}"
+        logger.info("Opened %s in the default browser", url)
+        return f"Opened {url} in the default browser."
 
     target = resolve_executable(name_or_path)
     if not target:

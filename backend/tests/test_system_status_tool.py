@@ -54,3 +54,17 @@ def test_status_tool_measures_fresh(monkeypatch):
     assert out.startswith("System status (measured just now): ")
     assert "VRAM 6.2/8.0 GB used" in out and "53°C" in out and "CPU 7% load" in out
     assert "governor: IDLE" in out
+
+
+def test_every_fixed_drive_is_named():
+    from collections import namedtuple
+    from unittest.mock import patch
+    from app.agent.tools import system_status as ss
+    Part = namedtuple("Part", "device mountpoint fstype opts")
+    Usage = namedtuple("Usage", "total used free percent")
+    parts = [Part("C:\\", "C:\\", "NTFS", "rw,fixed"), Part("D:\\", "D:\\", "NTFS", "rw,fixed"),
+             Part("E:\\", "E:\\", "", "cdrom")]
+    sizes = {"C:\\": Usage(280 * 2**30, 0, 15 * 2**30, 0), "D:\\": Usage(650 * 2**30, 0, 64 * 2**30, 0)}
+    with patch.object(ss.psutil, "disk_partitions", return_value=parts), \
+         patch.object(ss.psutil, "disk_usage", side_effect=lambda m: sizes[m]):
+        assert ss.fixed_drives_line() == "drives: C: 15 of 280 GB free, D: 64 of 650 GB free"

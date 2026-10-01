@@ -13,8 +13,11 @@ TEST_DIR = Path("test_sandbox_phase2")
 
 
 @pytest.fixture(autouse=True)
-def cleanup_sandbox(monkeypatch):
+def cleanup_sandbox(monkeypatch, tmp_path):
     from app.config import settings
+    # Work in a temp dir, not the repo: overwrites and patches now leave backups in
+    # <workspace>/.jarvis/backups, which used to pile up in the repo root.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(settings, "workspace_path", str(Path(".").resolve()))
     if TEST_DIR.exists():
         shutil.rmtree(TEST_DIR, ignore_errors=True)
@@ -70,7 +73,7 @@ def test_patch_file_not_found():
     target_file.write_text("Line 1\nLine 2\nLine 3\n", encoding="utf-8")
 
     res = patch_file(str(target_file), "Nonexistent Line", "Replacement")
-    assert "Error: The specified search block was not found" in res
+    assert "Error: The search block was not found" in res
 
 
 def test_patch_file_multiple_occurrences():

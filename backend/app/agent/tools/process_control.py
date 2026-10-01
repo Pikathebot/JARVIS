@@ -12,19 +12,22 @@ _CPU_SAMPLE_SECONDS = 0.5
 _CLOSE_WAIT_SECONDS = 5.0
 
 
-def list_processes(filter_name: Optional[str] = None, sort_by: str = "memory") -> str:
+def list_processes(filter_name: Optional[str] = None, sort_by: str = "memory", group: bool = True) -> str:
     """
-    List running processes with PID, name, memory (MB) and CPU % (share of the whole CPU, as Task Manager shows it); use sort_by="cpu" when the question is about what is using the CPU.
+    List running programs, one row per app with its process count, memory and CPU % (share of the whole CPU, as Task Manager shows it); sort_by="cpu" when the question is about CPU use, group=false for one row per PID.
 
     Args:
         filter_name: Optional process name substring to filter results (case-insensitive).
         sort_by: "memory" (default) or "cpu".
+        group: One row per app name (default) or one per process.
     """
     filter_clean = (filter_name or "").strip().lower()
     procs: list[psutil.Process] = []
     try:
         for proc in psutil.process_iter(['pid', 'name']):
             name = proc.info.get('name') or ""
+            if proc.pid == 0:
+                continue  # "System Idle Process": its CPU % is idle time, not load
             if filter_clean and filter_clean not in name.lower():
                 continue
             try:
@@ -57,6 +60,23 @@ def list_processes(filter_name: Optional[str] = None, sort_by: str = "memory") -
         return "No running processes found."
 
     key = "cpu_percent" if str(sort_by or "").strip().lower() == "cpu" else "memory_mb"
+    if group:
+        apps: dict[str, dict[str, Any]] = {}
+        for r in results:
+            app = apps.setdefault(r["name"].lower(), {"name": r["name"], "count": 0, "cpu_percent": 0.0, "memory_mb": 0.0})
+            app["count"] += 1
+            app["cpu_percent"] += r["cpu_percent"]
+            app["memory_mb"] += r["memory_mb"]
+        rows = sorted(apps.values(), key=lambda x: x[key], reverse=True)
+        lines = [f"{len(rows)} apps, {len(results)} processes (sorted by {'CPU' if key == 'cpu_percent' else 'memory'}):"]
+        for a in rows[:40]:
+            mem = f"{a['memory_mb'] / 1024:.1f} GB" if a["memory_mb"] >= 1024 else f"{a['memory_mb']:.0f} MB"
+            count = f" x{a['count']}" if a["count"] > 1 else ""
+            lines.append(f"- {a['name']}{count}: {mem}, {a['cpu_percent']:.1f}% CPU")
+        if len(rows) > 40:
+            lines.append(f"... and {len(rows) - 40} more apps.")
+        return "\n".join(lines)
+
     results.sort(key=lambda x: x[key], reverse=True)
 
     lines = [f"{'PID':<8} {'Name':<35} {'Memory (MB)':<14} {'CPU %':<8}", "-" * 68]

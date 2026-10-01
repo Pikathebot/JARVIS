@@ -200,7 +200,7 @@ TOOL_PROTOCOL_RULES = (
     "8. When inspecting or reading a local disk file, invoke 'read_file(file_path=...)'.\n"
     "9. When browsing a directory tree, invoke 'list_directory(directory_path=...)'.\n"
     "10. When running shell commands, terminal tools, or scripts, invoke 'execute_command(command=...)'.\n"
-    "11. When opening or launching desktop applications, invoke 'launch_app(name_or_path=...)'. ALWAYS prefer checking or calling 'focus_app(name_or_title_substring=...)' first if a window for that app may already be open, avoiding duplicate application instances.\n"
+    "11. When opening or launching desktop applications, or opening a web page in the user's browser (pass the https:// link), invoke 'launch_app(name_or_path=...)'. ALWAYS prefer checking or calling 'focus_app(name_or_title_substring=...)' first if a window for that app may already be open, avoiding duplicate application instances.\n"
     "12. When controlling audio volume, invoke 'set_volume(level=...)' (0-100) or 'set_volume(change=...)' for louder/quieter, and 'set_mute(on=...)'. For music or video playback, and to say what is playing, invoke 'media_control(action=...)' ('status', 'play', 'pause', 'next', 'previous', 'stop').\n"
     "13. When reading or writing system clipboard text, invoke 'get_clipboard()' or 'set_clipboard(text=...)'.\n"
     "14. When listing running processes, invoke 'list_processes(filter_name=...)'. When terminating an application or process, invoke 'kill_process(pid_or_name=...)'.\n"
@@ -377,6 +377,31 @@ WORKSPACE_LISTING_LIMIT = 50
 _WORKSPACE_LISTING_SKIP_DIRS = {"indexes", "memory"}
 
 
+ARTIFACT_LISTING_LIMIT = 20
+
+
+def workspace_artifact_listing(project_id: str, limit: int = ARTIFACT_LISTING_LIMIT) -> str:
+    """
+    The workspace's artifacts, newest first, as a per-turn block. Without it the model had no way
+    to find an artifact again -- read/update need its id, and nothing listed them (the user hit
+    this in real chats; tool review 2026-09-30). Empty when there are none.
+    """
+    try:
+        from app.services.artifact_service import ArtifactService
+        arts = ArtifactService().list_artifacts(project_id=project_id)
+    except Exception as e:
+        logger.debug("Artifact listing skipped: %s", e)
+        return ""
+    if not arts:
+        return ""
+    lines = [f"- {a.name} ({a.type}, v{a.version}) id: {a.id}" for a in arts[:limit]]
+    more = f"\n- ... and {len(arts) - limit} older" if len(arts) > limit else ""
+    return (
+        "ARTIFACTS in this workspace (newest first; pass the id to read_artifact, patch_artifact "
+        "or update_artifact):\n" + "\n".join(lines) + more
+    )
+
+
 def workspace_file_listing(workspace_path: Path | str, limit: int = WORKSPACE_LISTING_LIMIT) -> str:
     """
     The project's files as a per-turn block, so the model knows what exists without guessing a
@@ -517,6 +542,9 @@ class AgentOrchestrator:
             project_memory = build_project_memory_context(session_factory, project_id) if session_factory else ""
             if project_memory:
                 parts.append(project_memory)
+            artifacts = workspace_artifact_listing(project_id)
+            if artifacts:
+                parts.append(artifacts)
         profile = build_profile_context(session_factory, ephemeral=self.is_ephemeral) if session_factory else ""
         if profile:
             parts.append(profile)
@@ -800,6 +828,15 @@ class AgentOrchestrator:
         except Exception as exc:
             logger.warning("Image captioning skipped: %s", exc)
             return attachments
+
+    def _tool_message_content(self, name: str, result: str, model: Optional[str]):
+        """A tool result as the model gets it this turn. look_at_screen's screenshot rides on it
+        as an image part when the slot can see; history keeps only the text (see screen.py)."""
+        if name != "look_at_screen":
+            return result
+        from app.agent.tools.screen import screenshot_tool_content
+        slot = "fast" if "fast" in str(model or "").lower() else "main"
+        return screenshot_tool_content(result, self._slot_has_vision(slot, "llama_cpp"))
 
     def _slot_has_vision(self, slot: str, provider: Optional[str]) -> bool:
         """
@@ -1419,7 +1456,7 @@ class AgentOrchestrator:
                     "role": "tool",
                     "tool_call_id": call_id,
                     "name": fn_name,
-                    "content": tool_output
+                    "content": self._tool_message_content(fn_name, tool_output, model)
                 })
                 self._persist_tool_result(session_id, call_id, fn_name, fn_args, tool_output)
 
@@ -1842,7 +1879,7 @@ class AgentOrchestrator:
                     "role": "tool",
                     "tool_call_id": t_id,
                     "name": t_name,
-                    "content": result_str
+                    "content": self._tool_message_content(t_name, result_str, model)
                 })
                 self._persist_tool_result(session_id, t_id, t_name, t_args, result_str)
 

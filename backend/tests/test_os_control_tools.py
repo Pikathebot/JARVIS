@@ -260,8 +260,9 @@ def test_clipboard_read_write():
 
 
 def test_list_processes_execution():
-    """list_processes returns a formatted table containing PID and Name."""
-    output = list_processes()
+    """list_processes groups by app by default; group=False gives the per-PID table."""
+    assert " apps, " in list_processes().splitlines()[0]
+    output = list_processes(group=False)
     assert "PID" in output
     assert "Name" in output
     assert "Memory (MB)" in output

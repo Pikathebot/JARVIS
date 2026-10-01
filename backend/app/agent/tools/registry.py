@@ -16,6 +16,7 @@ from app.agent.tools.media_control import set_volume, set_mute, media_control
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
 from app.agent.tools.process_control import list_processes, kill_process
 from app.agent.tools.reminders import remind_me, reminders
+from app.agent.tools.screen import look_at_screen
 from app.agent.tools.artifacts import create_artifact, update_artifact, patch_artifact, read_artifact
 from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
@@ -50,6 +51,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "list_processes": list_processes,
     "kill_process": kill_process,
     "remind_me": remind_me,
+    "look_at_screen": look_at_screen,
     "reminders": reminders,
     "get_system_status": get_system_status,
     # Git (ported from the never-offered app/tools BaseTool stack)
@@ -94,6 +96,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     kill_process,
     remind_me,
     reminders,
+    look_at_screen,
     # No play_audio/stop_playback: Jarvis's speech is played by the client, so the backend has
     # no audio of its own for a model to start or stop (removed 2026-09-26).
     get_system_status,
@@ -141,6 +144,7 @@ class WebSearchArgs(BaseModel):
 class FetchUrlArgs(BaseModel):
     url: str = Field(..., description="Web URL to fetch")
     max_chars: int = Field(default=8000, ge=500, le=25000, description="Max character budget")
+    offset: int = Field(default=0, ge=0, description="Continue from this character position (from the previous result's note)")
 
 
 class WriteFileArgs(BaseModel):
@@ -154,6 +158,7 @@ class PatchFileArgs(BaseModel):
     file_path: str = Field(..., description="Target file path")
     search_block: str = Field(..., description="Exact code block to replace")
     replacement_block: str = Field(..., description="New code block")
+    replace_all: bool = Field(default=False, description="Replace every occurrence instead of exactly one")
     reason: str = Field(default="", description="Why, in a few words -- shown to the user on the approval card")
 
 
@@ -229,6 +234,7 @@ class SetClipboardArgs(BaseModel):
 class ListProcessesArgs(BaseModel):
     filter_name: Optional[str] = Field(default=None, description="Optional process name filter substring")
     sort_by: Literal["memory", "cpu"] = Field(default="memory", description="Order by memory use, or by CPU use")
+    group: bool = Field(default=True, description="One row per app (default), or false for one row per process with its PID")
 
 
 class KillProcessArgs(BaseModel):
@@ -240,6 +246,10 @@ class RemindMeArgs(BaseModel):
     text: str = Field(..., description="What to remind the user of, phrased to be read out")
     when: str = Field(..., description="'in 20 minutes', '17:30', '5pm', 'tomorrow 9am' or '2026-10-02 08:00' (local time)")
     repeat: Literal["once", "daily", "weekdays", "weekly"] = Field(default="once", description="How often")
+
+
+class LookAtScreenArgs(BaseModel):
+    window: str = Field(default="", description="App name or window title to capture only that window; empty = the main screen")
 
 
 class RemindersArgs(BaseModel):
@@ -334,6 +344,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "kill_process": KillProcessArgs,
     "remind_me": RemindMeArgs,
     "reminders": RemindersArgs,
+    "look_at_screen": LookAtScreenArgs,
     "get_system_status": GetSystemStatusArgs,
     "git_status": GitStatusArgs,
     "git_diff": GitDiffArgs,

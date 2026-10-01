@@ -194,3 +194,24 @@ def test_patch_artifact_replaces_one_block_and_versions_it(isolated_artifact_ser
     miss = art_tools.patch_artifact(art.id, "Step tree", "x")
     assert "isn't in 'plan.md'" in miss and "Step one" in miss
     assert isolated_artifact_service.get_artifact(art.id).version == 3
+
+
+def test_artifacts_are_listed_per_turn_and_scoped_to_their_workspace(isolated_artifact_service, monkeypatch):
+    import app.services.artifact_service as svc_mod
+    from app.agent import orchestrator
+    from app.agent.tools import artifacts as art_tools
+    monkeypatch.setattr(svc_mod, "ArtifactService", lambda *a, **k: isolated_artifact_service)
+    monkeypatch.setattr(art_tools, "ArtifactService", lambda: isolated_artifact_service)
+    mine = isolated_artifact_service.create_artifact(name="Launch plan", type="document", content="x",
+                                                     conversation_id="c", project_id="p1", created_by="agent")
+    other = isolated_artifact_service.create_artifact(name="Other plan", type="document", content="y",
+                                                      conversation_id="c", project_id="p2", created_by="agent")
+
+    listing = orchestrator.workspace_artifact_listing("p1")
+    assert f"- Launch plan (document, v1) id: {mine.id}" in listing and "Other plan" not in listing
+    assert orchestrator.workspace_artifact_listing("empty") == ""
+
+    assert "not found in this workspace" in art_tools.read_artifact(other.id, project_id="p1")
+    assert "not found in this workspace" in art_tools.patch_artifact(other.id, "y", "z", project_id="p1")
+    assert "not found in this workspace" in art_tools.update_artifact(other.id, "z", project_id="p1")
+    assert "Launch plan" in art_tools.read_artifact(mine.id, project_id="p1")

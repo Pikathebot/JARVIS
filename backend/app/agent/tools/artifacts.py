@@ -5,6 +5,7 @@ Allows the agent to create, update, and read structured artifacts in the databas
 import logging
 from typing import Optional
 from app.services.artifact_service import ArtifactService
+from app.agent.tools.file_kinds import closest_region
 
 logger = logging.getLogger("jarvis.agent.tools.artifacts")
 
@@ -19,8 +20,7 @@ def create_artifact(
     session_id: Optional[str] = None,
 ) -> str:
     """
-    Create a new structured artifact (e.g. code file, markdown doc, diagram, report) saved to the project/session.
-    Always use this tool when generating significant standalone documents, code deliverables, or reusable artifacts.
+    Save substantial, self-contained content the user will reuse, edit or keep -- a plan, report, spec, document, or longer code meant to be read and iterated on -- as a versioned artifact. Short answers, snippets and explanations stay in chat; anything that must live on disk to be used (a script to run, config, a change to project code) is a file (write_file).
 
     Args:
         name: The title or filename of the artifact (e.g. 'main.py', 'Architecture Plan', 'design_system.md').
@@ -58,6 +58,7 @@ def update_artifact(
     artifact_id: str,
     content: str,
     summary: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> str:
     """
     Update the content of an existing artifact, automatically creating a new version snapshot.
@@ -73,6 +74,9 @@ def update_artifact(
 
     try:
         service = ArtifactService()
+        err = _out_of_scope(service, clean_id, project_id)
+        if err:
+            return err
         art = service.update_artifact(
             artifact_id=clean_id,
             content=content,
@@ -88,22 +92,14 @@ def update_artifact(
         return f"Error updating artifact '{clean_id}': {str(e)}"
 
 
-def _closest_region(content: str, block: str, context: int = 2) -> str:
-    """The lines of ``content`` that look most like ``block``, with a little context -- so a
-    near-miss can be fixed from the error instead of re-reading the whole artifact."""
-    import difflib
-
-    lines, want = content.splitlines(), block.splitlines() or [block]
-    if not lines:
+def _out_of_scope(service, artifact_id: str, project_id: Optional[str]) -> str:
+    """An artifact from another workspace is invisible from this one (tool review, 2026-09-30)."""
+    if not project_id:
         return ""
-    width = max(1, len(want))
-    best, best_at = -1.0, 0
-    for i in range(max(1, len(lines) - width + 1)):
-        score = difflib.SequenceMatcher(None, "\n".join(lines[i:i + width]), "\n".join(want)).ratio()
-        if score > best:
-            best, best_at = score, i
-    lo, hi = max(0, best_at - context), min(len(lines), best_at + width + context)
-    return "\n".join(f"{n + 1}: {lines[n]}" for n in range(lo, hi))
+    art = service.get_artifact(artifact_id)
+    if art and art.project_id and art.project_id != project_id:
+        return f"Error: Artifact with ID '{artifact_id}' not found in this workspace."
+    return ""
 
 
 def patch_artifact(
@@ -112,6 +108,7 @@ def patch_artifact(
     replacement_block: str,
     replace_all: bool = False,
     summary: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> str:
     """
     Change part of an existing artifact by replacing an exact block of its text, saving a new version -- use this instead of update_artifact for edits, so the whole artifact isn't resent.
@@ -131,14 +128,14 @@ def patch_artifact(
     try:
         service = ArtifactService()
         art = service.get_artifact(clean_id)
-        if not art:
-            return f"Error: Artifact with ID '{clean_id}' not found."
+        if not art or (project_id and art.project_id and art.project_id != project_id):
+            return f"Error: Artifact with ID '{clean_id}' not found in this workspace."
         current = (art.content or "").replace("\r\n", "\n")
         search = search_block.replace("\r\n", "\n")
         count = current.count(search)
         if count == 0:
             return (f"Error: That text isn't in '{art.name}'. The closest part of version {art.version} is:\n"
-                    f"{_closest_region(current, search)}\n"
+                    f"{closest_region(current, search)}\n"
                     "Use the exact current text (without the line numbers) as search_block.")
         if count > 1 and not replace_all:
             return (f"Error: That text appears {count} times in '{art.name}'. Include more surrounding "
@@ -157,7 +154,7 @@ def patch_artifact(
         return f"Error patching artifact '{clean_id}': {str(e)}"
 
 
-def read_artifact(artifact_id: str) -> str:
+def read_artifact(artifact_id: str, project_id: Optional[str] = None) -> str:
     """
     Retrieve and read the current content and metadata of an existing artifact by ID.
 
@@ -171,8 +168,8 @@ def read_artifact(artifact_id: str) -> str:
     try:
         service = ArtifactService()
         art = service.get_artifact(clean_id)
-        if not art:
-            return f"Error: Artifact with ID '{clean_id}' not found."
+        if not art or (project_id and art.project_id and art.project_id != project_id):
+            return f"Error: Artifact with ID '{clean_id}' not found in this workspace."
         return (
             f"Artifact: {art.name} (ID: {art.id})\n"
             f"Type: {art.type} | Language: {art.language or 'text'} | Version: {art.version}\n"

@@ -5,6 +5,21 @@ from pathlib import Path
 from typing import Optional
 from app.config import settings
 from app.agent.tools.paths import is_inside, resolve_tool_path
+from app.agent.tools.file_kinds import CLUTTER_DIRS, file_facts, is_binary
+
+SEARCH_SCAN_CAP = 2000
+GREP_MAX_BYTES = 5 * 1024 * 1024
+GREP_LINE_CHARS = 200
+
+
+def _around(line: str, start: int, end: int) -> str:
+    """A matched line, cut to ~GREP_LINE_CHARS around the match (minified JS, one-line JSON)."""
+    line = line.strip() if len(line) <= GREP_LINE_CHARS else line
+    if len(line) <= GREP_LINE_CHARS:
+        return line
+    mid = (start + end) // 2
+    lo = max(0, min(mid - GREP_LINE_CHARS // 2, len(line) - GREP_LINE_CHARS))
+    return ("..." if lo else "") + line[lo:lo + GREP_LINE_CHARS] + ("..." if lo + GREP_LINE_CHARS < len(line) else "")
 
 logger = logging.getLogger("jarvis.agent.tools.file_search")
 
@@ -13,12 +28,6 @@ IGNORED_DIRS = {
     ".pytest_cache", ".gemini", "data", "dist", "build"
 }
 
-IGNORED_EXTENSIONS = {
-    ".pyc", ".pyd", ".dll", ".exe", ".so", ".dylib",
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-    ".zip", ".tar", ".gz", ".7z", ".mp3", ".wav", ".webm",
-    ".db", ".sqlite", ".sqlite3"
-}
 
 
 def find_files(
@@ -49,43 +58,39 @@ def find_files(
     shown_from = ws_root if is_inside(start_path, ws_root) else start_path
 
     if not start_path.exists():
-        return f"Error: Search directory '{root_dir}' does not exist within workspace '{ws_root}'."
+        return f"Error: Search directory '{root_dir}' does not exist."
 
-    matches = []
+    found: list[tuple[float, str, str]] = []
     try:
         for root, dirs, files in os.walk(start_path):
-            # Prune ignored directories in-place
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
-
-            for fname in files:
-                ext = Path(fname).suffix.lower()
-                if ext in IGNORED_EXTENSIONS:
+            dirs[:] = [d for d in dirs if d not in CLUTTER_DIRS]
+            for name, is_dir in [(d, True) for d in dirs] + [(f, False) for f in files]:
+                full = Path(root) / name
+                rel = os.path.relpath(full, shown_from).replace(os.sep, "/")
+                if not (full.match(clean_pattern) or Path(name).match(clean_pattern)):
                     continue
-
-                full_file_path = Path(root) / fname
-                rel_path = os.path.relpath(full_file_path, shown_from).replace("\\", "/")
-
-                if full_file_path.match(clean_pattern) or Path(fname).match(clean_pattern):
-                    matches.append(rel_path)
-                    if len(matches) >= max_results:
-                        break
-            if len(matches) >= max_results:
+                try:
+                    mtime = full.stat().st_mtime
+                except OSError:
+                    continue
+                facts = "folder" if is_dir else file_facts(full)
+                found.append((mtime, rel + ("/" if is_dir else ""), facts))
+                if len(found) >= SEARCH_SCAN_CAP:
+                    break
+            if len(found) >= SEARCH_SCAN_CAP:
                 break
-
-        if not matches:
-            return f"No files matching pattern '{clean_pattern}' were found in '{root_dir}'."
-
-        lines = [f"### Found {len(matches)} file(s) matching '{clean_pattern}':"]
-        for m in matches:
-            lines.append(f"- `{m}`")
-
-        if len(matches) >= max_results:
-            lines.append(f"\n*(Results capped at {max_results} files. Use a more specific pattern if needed)*")
-
-        return "\n".join(lines)
     except Exception as e:
         logger.error("find_files error: %s", e)
         return f"Error searching files: {str(e)}"
+
+    if not found:
+        return f"No files or folders matching pattern '{clean_pattern}' were found in '{root_dir}'."
+    found.sort(reverse=True)  # newest first
+    lines = [f"### Found {len(found)} match(es) for '{clean_pattern}' (newest first):"]
+    lines += [f"- `{rel}` ({facts})" for _, rel, facts in found[:max_results]]
+    if len(found) > max_results:
+        lines.append(f"\n*(Showing {max_results} of {len(found)}. Use a more specific pattern if needed)*")
+    return "\n".join(lines)
 
 
 def grep_in_files(
@@ -129,34 +134,39 @@ def grep_in_files(
 
     matched_results = []
     total_matches = 0
+    skipped = 0
 
     def search_file(fpath: Path):
-        nonlocal total_matches
+        nonlocal total_matches, skipped
         try:
-            content = fpath.read_text(encoding="utf-8", errors="ignore")
-            for line_idx, line in enumerate(content.splitlines(), start=1):
-                if regex.search(line):
-                    rel_p = os.path.relpath(fpath, shown_from).replace("\\", "/")
-                    matched_results.append({
-                        "file": rel_p,
-                        "line": line_idx,
-                        "content": line.strip()
-                    })
-                    total_matches += 1
-                    if total_matches >= max_matches:
-                        return
+            if fpath.stat().st_size > GREP_MAX_BYTES or is_binary(fpath):
+                skipped += 1
+                return
+            lines = fpath.read_text(encoding="utf-8", errors="ignore").splitlines()
         except Exception:
-            pass
+            return
+        rel_p = os.path.relpath(fpath, shown_from).replace(os.sep, "/")
+        for idx, line in enumerate(lines):
+            m = regex.search(line)
+            if not m:
+                continue
+            matched_results.append({
+                "file": rel_p,
+                "line": idx + 1,
+                "content": _around(line, m.start(), m.end()),
+                "before": _around(lines[idx - 1], 0, 0) if idx > 0 else None,
+                "after": _around(lines[idx + 1], 0, 0) if idx + 1 < len(lines) else None,
+            })
+            total_matches += 1
+            if total_matches >= max_matches:
+                return
 
     if target_path.is_file():
         search_file(target_path)
     else:
         for root, dirs, files in os.walk(target_path):
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
+            dirs[:] = [d for d in dirs if d not in CLUTTER_DIRS]
             for fname in files:
-                ext = Path(fname).suffix.lower()
-                if ext in IGNORED_EXTENSIONS:
-                    continue
                 search_file(Path(root) / fname)
                 if total_matches >= max_matches:
                     break
@@ -164,7 +174,8 @@ def grep_in_files(
                 break
 
     if not matched_results:
-        return f"No occurrences of '{clean_pattern}' found in '{path}'."
+        extra = f" ({skipped} binary or very large file(s) skipped)" if skipped else ""
+        return f"No occurrences of '{clean_pattern}' found in '{path}'{extra}."
 
     output_lines = [f"### Grep Results for `{clean_pattern}` ({len(matched_results)} match(es)):"]
     current_file = None
@@ -172,9 +183,15 @@ def grep_in_files(
         if r["file"] != current_file:
             current_file = r["file"]
             output_lines.append(f"\n**{current_file}**:")
-        output_lines.append(f"  - `L{r['line']}`: {r['content']}")
+        if r["before"] is not None:
+            output_lines.append(f"    L{r['line'] - 1}: {r['before']}")
+        output_lines.append(f"  > L{r['line']}: {r['content']}")
+        if r["after"] is not None:
+            output_lines.append(f"    L{r['line'] + 1}: {r['after']}")
 
     if total_matches >= max_matches:
         output_lines.append(f"\n*(Results capped at {max_matches} matches)*")
+    if skipped:
+        output_lines.append(f"\n*({skipped} binary or very large file(s) were not searched)*")
 
     return "\n".join(output_lines)

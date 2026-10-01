@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 from app.config import settings
 from app.agent.tools.paths import resolve_tool_path
+from app.agent.tools.file_kinds import binary_refusal, is_binary
 
 def read_file(
     file_path: str,
@@ -34,6 +35,7 @@ def read_file(
     if err:
         return err
     path = resolved_path
+    given = path
 
     # Fallback resolution inside workspace if not found directly
     if not path.exists():
@@ -61,11 +63,17 @@ def read_file(
         return f"Error: File not found at '{file_path}' within workspace '{ws_root}'."
     if path.is_dir():
         return f"Error: '{file_path}' is a directory, not a file."
+    if is_binary(path):
+        return binary_refusal(path, file_path)
+    # Found by name somewhere else in the workspace: say so, or the model reports on the wrong file.
+    note = ""
+    if path != given:
+        note = f"[Nothing at '{file_path}'; this is '{os.path.relpath(path, ws_root).replace(os.sep, '/')}']\n"
 
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             if start_line is None and end_line is None:
-                return f.read()
+                return note + f.read()
             lines = f.readlines()
     except Exception as e:
         return f"Error reading file '{file_path}': {str(e)}"
@@ -83,4 +91,4 @@ def read_file(
         return f"Error: start_line {first} is past the end of '{file_path}' ({total} lines)."
     if last < first:
         return f"Error: end_line {last} is before start_line {first}."
-    return f"[Lines {first}-{last} of {total} in '{file_path}']\n" + "".join(lines[first - 1:last])
+    return note + f"[Lines {first}-{last} of {total} in '{file_path}']\n" + "".join(lines[first - 1:last])

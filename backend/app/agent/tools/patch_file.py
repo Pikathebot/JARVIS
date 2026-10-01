@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 from app.config import settings
 from app.agent.tools.file_safety import backup_file, shown
+from app.agent.tools.file_kinds import closest_region
 from app.agent.tools.paths import is_inside, resolve_tool_path
 
 logger = logging.getLogger("jarvis.agent.tools.patch_file")
@@ -13,6 +14,7 @@ def patch_file(
     file_path: str,
     search_block: str,
     replacement_block: str,
+    replace_all: bool = False,
     workspace_path: Optional[str] = None,
     project_id: Optional[str] = None,
     allow_outside: bool = False
@@ -34,6 +36,7 @@ def patch_file(
     path, ws_root, err = resolve_tool_path(clean_path_str, workspace_path, allow_outside, what="Target path")
     if err:
         return err
+    given = path
 
     # Fallback resolution inside workspace if not found directly
     if not path.exists():
@@ -79,21 +82,20 @@ def patch_file(
                 match_count = normalized_current.count(normalized_search)
 
         if match_count == 0:
-            preview = current_content[:400] + ("..." if len(current_content) > 400 else "")
             return (
-                f"Error: The specified search block was not found in '{file_path}'. "
-                f"Current file contents:\n```\n{preview}\n```\n"
-                "Please use the exact content from the file above as your search block."
+                f"Error: The search block was not found in '{shown(path, ws_root)}'. The closest part "
+                f"of the file is:\n```\n{closest_region(normalized_current, normalized_search)}\n```\n"
+                "Use the exact current text (without the line numbers) as search_block."
             )
 
-        if match_count > 1:
+        if match_count > 1 and not replace_all:
             return (
                 f"Error: Found {match_count} occurrences of the search block in '{file_path}'. "
                 "The search block must be unique. Please include more surrounding context lines to disambiguate the target location."
             )
 
         # Exact single replacement
-        new_content = normalized_current.replace(normalized_search, normalized_replace, 1)
+        new_content = normalized_current.replace(normalized_search, normalized_replace, -1 if replace_all else 1)
 
         # Restore original line ending style if CRLF was present
         if "\r\n" in current_content:
@@ -111,7 +113,9 @@ def patch_file(
         sign = f"+{delta}" if delta >= 0 else str(delta)
 
         logger.info("Successfully patched '%s' (%s lines)", path, sign)
-        result = f"Successfully patched '{file_path}' (replaced {old_lines} line(s) with {new_lines} line(s), delta: {sign} lines)."
+        where = f"'{file_path}'" if path == given else f"'{shown(path, ws_root)}' (nothing was at '{file_path}')"
+        times = f", {match_count} places" if replace_all and match_count > 1 else ""
+        result = f"Successfully patched {where} (replaced {old_lines} line(s) with {new_lines} line(s){times}, delta: {sign} lines)."
         if backup:
             result += f" The previous version is saved as '{shown(backup, ws_root)}'."
         return result

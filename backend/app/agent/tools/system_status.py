@@ -1,7 +1,30 @@
 import logging
+import re
 import time
 
+import psutil
+
 logger = logging.getLogger("jarvis.agent.tools.system_status")
+
+
+def fixed_drives_line() -> str:
+    """"drives: C: 120 of 476 GB free, D: 310 of 931 GB free" -- local fixed drives only."""
+    parts = []
+    try:
+        for part in psutil.disk_partitions(all=False):
+            if "fixed" not in (part.opts or "") and part.fstype in ("", "CDFS"):
+                continue
+            if "cdrom" in (part.opts or "") or "removable" in (part.opts or ""):
+                continue
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+            except OSError:
+                continue
+            letter = part.device.rstrip("\\/") or part.mountpoint
+            parts.append(f"{letter} {usage.free / 1024**3:.0f} of {usage.total / 1024**3:.0f} GB free")
+    except Exception as e:
+        logger.debug("Drive listing failed: %s", e)
+    return ("drives: " + ", ".join(parts)) if parts else ""
 
 
 def get_system_status() -> str:
@@ -39,7 +62,11 @@ def get_system_status() -> str:
         pass
 
     line = system_state_line(snapshot, loaded_model=loaded)
-    extras = []
+    drives = fixed_drives_line()
+    if drives:
+        # The snapshot's single figure is the backend's own drive, unlabelled: name every drive.
+        line = re.sub(r",?\s*disk \d+ GB free", "", line)
+    extras = [drives] if drives else []
     if snapshot.governor_status:
         extras.append(f"governor: {snapshot.governor_status}")
     if snapshot.throttled and snapshot.throttle_reasons:

@@ -75,6 +75,9 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "kill_process": RiskTier.CONFIRMATION_REQUIRED,
     # Reminders only schedule something Jarvis will say; cancelling one is as easy to redo.
     "remind_me": RiskTier.LOW_RISK,
+    # Runs when the user's message asks to look (see _SCREEN_CUE_RE), asks otherwise: the screen
+    # can show anything, and the model shouldn't peek on its own initiative.
+    "look_at_screen": RiskTier.CONFIRMATION_REQUIRED,
     "reminders": RiskTier.LOW_RISK,
     "get_system_status": RiskTier.LOW_RISK,
     # Git: reads are free; commit and checkout rewrite the working tree / history.
@@ -385,6 +388,22 @@ def url_provenance_text(messages: list[dict[str, Any]]) -> str:
 _CLIPBOARD_CUE_RE = re.compile(r"\b(?:clipboard|copied|paste[ds]?|pasting)\b", re.IGNORECASE)
 
 
+def site_named_in(url: str, provenance_text: str) -> bool:
+    """"search youtube for lofi" -> youtube.com/results?... is on a site the user named."""
+    host = (urlparse(url).hostname or "").lower()
+    labels = [p for p in host.split(".") if p and p != "www"]
+    site = labels[-2] if len(labels) >= 2 else (labels[0] if labels else "")
+    return len(site) >= 3 and re.search(rf"\b{re.escape(site)}\b", provenance_text or "") is not None
+
+
+# "what's on my screen", "look at this error", "can you see this window", "take a screenshot".
+_SCREEN_CUE_RE = re.compile(
+    r"\b(?:screen|screenshot|monitor|display|look(?:ing)? at|see (?:this|that|it|my)|"
+    r"what(?:'s| is) (?:this|that)|this (?:error|window|page|dialog|popup))\b",
+    re.IGNORECASE,
+)
+
+
 def url_came_from_conversation(url: str, provenance_text: str) -> bool:
     key = _url_key(url)
     return bool(key) and key in provenance_text
@@ -618,6 +637,11 @@ def evaluate_tool_permission(
         else:
             custom_reason = ("You didn't mention the clipboard, and it can hold passwords or "
                              "other private text.")
+    elif tool_name == "look_at_screen":
+        if user_message is not None and _SCREEN_CUE_RE.search(user_message):
+            effective_tier = RiskTier.LOW_RISK
+        else:
+            custom_reason = "You didn't ask Jarvis to look at your screen, and it can show anything that's open."
     elif tool_name == "delete_file":
         effective_tier = RiskTier.HIGH_RISK
         target = _resolve_for_card(arguments.get("file_path") or arguments.get("path") or "", workspace_path)
@@ -663,9 +687,22 @@ def evaluate_tool_permission(
             )
     elif tool_name == "launch_app":
         target = arguments.get("name_or_path") or arguments.get("name") or arguments.get("app") or ""
-        la_tier, la_reason = evaluate_launch_app_risk(str(target))
-        effective_tier = la_tier
-        custom_reason = la_reason
+        from app.agent.tools.app_control import as_web_url
+        web_url = as_web_url(str(target))
+        if web_url:
+            # Opening a link sends a request from this machine, like fetch_url: a link the model
+            # composed could carry conversation text out in its query string.
+            effective_tier, custom_reason = evaluate_url_risk(web_url), "Opens a link in your browser."
+            if (effective_tier == RiskTier.LOW_RISK and url_provenance is not None
+                    and not url_came_from_conversation(web_url, url_provenance)
+                    and not site_named_in(web_url, url_provenance)):
+                effective_tier = RiskTier.CONFIRMATION_REQUIRED
+                custom_reason = ("Opens a link that didn't come from you, a search result or a page "
+                                 "already opened in this chat, on a site you didn't name.")
+        else:
+            la_tier, la_reason = evaluate_launch_app_risk(str(target))
+            effective_tier = la_tier
+            custom_reason = la_reason
     elif tool_name == "kill_process":
         target = arguments.get("pid_or_name") or arguments.get("pid") or arguments.get("name") or arguments.get("process_name") or ""
         kp_tier, kp_reason = evaluate_kill_process_risk(target)

@@ -3,6 +3,9 @@ from pathlib import Path
 from typing import Optional
 from app.config import settings
 from app.agent.tools.paths import resolve_tool_path
+from app.agent.tools.file_kinds import CLUTTER_DIRS, count_entries, file_facts
+
+LIST_CAP = 200
 
 def list_directory(directory_path: str = ".", workspace_path: Optional[str] = None, allow_outside: bool = False) -> str:
     """
@@ -24,16 +27,30 @@ def list_directory(directory_path: str = ".", workspace_path: Optional[str] = No
         return f"Error: '{directory_path}' is a file, not a directory."
     
     try:
-        entries = sorted(os.listdir(path))
-        if not entries:
-            return f"Directory '{directory_path}' is empty."
-        
-        result_lines = [f"Contents of '{directory_path}':"]
-        for entry in entries:
-            full_item = path / entry
-            marker = "[DIR]" if full_item.is_dir() else "[FILE]"
-            result_lines.append(f"  {marker} {entry}")
-        
-        return "\n".join(result_lines)
+        names = sorted(os.listdir(path), key=str.lower)
     except Exception as e:
         return f"Error listing directory '{directory_path}': {str(e)}"
+    if not names:
+        return f"Directory '{directory_path}' is empty."
+
+    folders = [n for n in names if (path / n).is_dir()]
+    files = [n for n in names if not (path / n).is_dir()]
+    lines = [f"Contents of '{directory_path}' ({len(folders)} folders, {len(files)} files):"]
+    shown = 0
+    for name in folders:
+        if shown >= LIST_CAP:
+            break
+        if name in CLUTTER_DIRS:
+            # node_modules, .git, .venv ...: one line, not thousands.
+            lines.append(f"  [DIR] {name}/  ({count_entries(path / name):,} entries, not expanded)")
+        else:
+            lines.append(f"  [DIR] {name}/")
+        shown += 1
+    for name in files:
+        if shown >= LIST_CAP:
+            break
+        lines.append(f"  [FILE] {name}  ({file_facts(path / name)})")
+        shown += 1
+    if len(names) > shown:
+        lines.append(f"  ...and {len(names) - shown} more; use find_files to search inside.")
+    return "\n".join(lines)

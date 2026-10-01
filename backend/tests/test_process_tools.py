@@ -36,7 +36,7 @@ def test_list_processes_reports_real_cpu_and_sorts_by_it():
     procs = [proc(1, "big_mem.exe", 0.0, 900), proc(2, "busy.exe", 160.0, 50)]
     with patch.object(pc.psutil, "process_iter", return_value=procs), \
          patch.object(pc.psutil, "cpu_count", return_value=16), patch.object(pc.time, "sleep"):
-        by_cpu = pc.list_processes(sort_by="cpu").splitlines()[2:]
+        by_cpu = pc.list_processes(sort_by="cpu", group=False).splitlines()[2:]
     assert by_cpu[0].split()[:2] == ["2", "busy.exe"] and by_cpu[0].split()[-1] == "10.0"
 
 
@@ -65,3 +65,20 @@ def test_launch_app_from_a_temp_folder_asks():
          patch("app.agent.tools.app_control.is_uri_or_shortcut", return_value=False):
         tier, reason = evaluate_launch_app_risk("setup_tool")
     assert tier == RiskTier.CONFIRMATION_REQUIRED and "temp" in reason
+
+
+def test_list_processes_groups_by_app_like_task_manager():
+    def proc(pid, name, cpu, mem_mb):
+        m = _proc(pid, name)
+        m.cpu_percent.side_effect = [0.0, cpu]
+        m.memory_info.return_value = MagicMock(rss=mem_mb * 1024 * 1024)
+        return m
+
+    procs = [proc(0, "System Idle Process", 1500.0, 0)] + [proc(10 + i, "chrome.exe", 16.0, 700) for i in range(3)] \
+        + [proc(2, "notepad.exe", 0.0, 20)]
+    with patch.object(pc.psutil, "process_iter", return_value=procs), \
+         patch.object(pc.psutil, "cpu_count", return_value=16), patch.object(pc.time, "sleep"):
+        out = pc.list_processes().splitlines()
+    assert out[0] == "2 apps, 4 processes (sorted by memory):"
+    assert out[1] == "- chrome.exe x3: 2.1 GB, 3.0% CPU"
+    assert out[2] == "- notepad.exe: 20 MB, 0.0% CPU"

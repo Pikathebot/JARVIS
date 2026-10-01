@@ -16,6 +16,7 @@ os.environ.setdefault("WORKSPACE_PATH", os.path.join(os.path.dirname(_TEST_DB), 
 # deterministic and needs no model. Sidecar-specific tests construct one explicitly.
 os.environ.setdefault("RAG_EMBEDDING_SIDECAR_ENABLED", "false")
 # Forgotten memories go to a bin file under repo-root data/; keep test runs out of the real one.
+os.environ.setdefault("JARVIS_SCREENSHOT_DIR", os.path.join(os.path.dirname(_TEST_DB), "screenshots"))
 os.environ.setdefault("JARVIS_MEMORY_BIN_PATH", os.path.join(os.path.dirname(_TEST_DB), "memory_bin.json"))
 
 import pytest

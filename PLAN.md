@@ -444,8 +444,26 @@ BackendHost -- that C# line is **not build-checked**, the app was running); `set
 reports old -> new; `mute_toggle` -> `set_mute(on)`; `media_key` -> `media_control` on Windows'
 media session API (new deps: winrt-* packages, in requirements.txt) with status / real play vs
 pause, falling back to media keys. Also fixed protocol rule 9 (`list_directory(path=)` named a
-parameter that doesn't exist). Still open from §4.6: `look_at_screen`, opening URLs via
-launch_app, artifact list in the turn context, the smaller per-tool behaviour notes; (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+parameter that doesn't exist). **(5) leftovers, built 2026-10-01, 689 tests pass, unverified on
+device:** `launch_app` opens http(s) links in the default browser (runs for a link from the
+user/search/opened page or on a site the user named, asks otherwise); the workspace's 20
+newest artifacts listed in each turn's context, artifact tools scoped to the workspace,
+`create_artifact`'s description carries the when-to-use rule; file tools: clutter-only skips
+(`file_kinds.py`), binaries sniffed by content (read_file refuses with type+size, grep skips
+them and files >5 MB), grep lines cut to ~200 chars with one line of context, find_files matches
+folders and lists newest first with size/date, list_directory folders-first with size/date,
+clutter folders collapsed, cap 200, read_file/patch_file say when they used a file found
+elsewhere, patch_file shows the closest region on a miss and takes replace_all; fetch_url
+`offset` + total length, links as a numbered list (max 30) at the end, honest JS-only and PDF
+messages (no PDF reader installed -- pypdf would be used if added); get_system_status names
+every fixed drive; list_processes groups per app (`group=false` for PIDs), idle process hidden;
+`look_at_screen(window?)` -- tested first: llama-server + the Qwen3.5 template take an image
+inside a tool result and the 9B read "7351" off a test image -- 1280 px max, saved to
+`backend/data/screenshots` (temp for off-the-record), runs when the message asks to look, says
+"can't see" when no projector is loaded; later turns get text only. A test (test_file_tools)
+had been writing backups into the repo root -- moved to tmp. Still open (all WinUI): the query
+on web_search's collapsed row, the "Remembered/Forgot ... Undo" chat line, AllowSetForegroundWindow
+for focus_app, showing screenshots in the chat history; and PDF text in grep. (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
 approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
 patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,

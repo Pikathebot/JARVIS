@@ -114,7 +114,41 @@ def test_fetch_url_truncation():
         mock_client_cls.return_value = mock_client
 
         res = fetch_url("https://example.com/long", max_chars=500)
-        assert "Content truncated at 500 characters" in res
+        assert "[Characters 0-500 of 2,000]" in res and "call fetch_url with offset=500" in res
+        rest = fetch_url("https://example.com/long", max_chars=500, offset=1800)
+        assert "[Characters 1,800-2,000 of 2,000]" in rest and "offset=" not in rest.split("]", 1)[1]
+
+
+def _fake_page(html, content_type="text/html; charset=utf-8"):
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.headers = {"content-type": content_type}
+    response.text = html
+    response.content = html.encode() if isinstance(html, str) else html
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.return_value = response
+    return patch("httpx.Client", return_value=client)
+
+
+def test_fetch_url_lists_links_once_at_the_end():
+    html = ("<html><body><article><p>Read <a href='/docs'>the docs</a> or "
+            "<a href='https://other.example/x#top'>other</a>, <a href='/docs'>again</a>, "
+            "<a href='mailto:a@b.c'>mail</a>.</p></article></body></html>")
+    with _fake_page(html):
+        res = fetch_url("https://example.com/page")
+    body, links = res.split("Links on this page:")
+    assert "https://example.com/docs" not in body
+    assert links.strip().splitlines() == ["[1] the docs -- https://example.com/docs",
+                                          "[2] other -- https://other.example/x"]
+
+
+def test_fetch_url_says_when_a_page_is_javascript_only_or_a_pdf():
+    shell = "<html><body><div id='root'></div>" + "<script>x()</script>" * 5 + "</body></html>"
+    with _fake_page(shell):
+        assert "builds its content with JavaScript" in fetch_url("https://app.example/")
+    with _fake_page(b"%PDF-1.7 ...", content_type="application/pdf"):
+        assert "is a PDF" in fetch_url("https://example.com/paper.pdf")
 
 
 def test_evaluate_url_risk_ssrf():

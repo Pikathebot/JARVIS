@@ -46,7 +46,7 @@ def test_read_file_directory():
 
 def test_list_directory_success():
     result = list_directory("app")
-    assert "Contents of 'app':" in result
+    assert "Contents of 'app' (" in result
     assert "main.py" in result
 
 
