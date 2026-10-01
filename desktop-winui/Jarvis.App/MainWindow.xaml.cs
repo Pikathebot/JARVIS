@@ -237,6 +237,8 @@ public sealed partial class MainWindow : Window
         // process lived on (the HUD and the tray icon keep it running), so the tray's Show and a
         // second launch -- which single-instance redirects here -- both found nothing to show.
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+        if (AppWindowTitleBar.IsCustomizationSupported())
+            SetUpWindowControls(InputNonClientPointerSource.GetForWindowId(_appWindow.Id));
         _appWindow.Closing += (_, e) =>
         {
             if (!HideOnClose) return;
@@ -283,6 +285,7 @@ public sealed partial class MainWindow : Window
     }
 
     private Windows.Graphics.RectInt32[] _passthrough = Array.Empty<Windows.Graphics.RectInt32>();
+    private int _captionWidth;
 
     /// <summary>
     /// The top 48 px drag the window, except where a control sits: the toolbar's capsules and
@@ -302,13 +305,17 @@ public sealed partial class MainWindow : Window
                 (int)Math.Round(b.X * scale), (int)Math.Round(b.Y * scale),
                 (int)Math.Round(b.Width * scale), (int)Math.Round(b.Height * scale)));
         }
-        if (rects.SequenceEqual(_passthrough)) return; // LayoutUpdated fires for any layout pass
-        _passthrough = rects.ToArray();
-
         var source = InputNonClientPointerSource.GetForWindowId(_appWindow?.Id ?? Win32Interop.GetWindowIdFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)));
+        UpdateControlRegions(source, scale);
+        // The caption (drag) strip stops where the traffic-light buttons start.
+        var captionWidth = (int)Math.Round(WindowControlsLeft * scale);
+        if (rects.SequenceEqual(_passthrough) && captionWidth == _captionWidth) return; // LayoutUpdated fires for any layout pass
+        _passthrough = rects.ToArray();
+        _captionWidth = captionWidth;
+
         source.SetRegionRects(NonClientRegionKind.Caption, new[]
         {
-            new Windows.Graphics.RectInt32(0, 0, (int)Math.Round(RootGrid.ActualWidth * scale), (int)Math.Round(48 * scale)),
+            new Windows.Graphics.RectInt32(0, 0, captionWidth, (int)Math.Round(48 * scale)),
         });
         source.SetRegionRects(NonClientRegionKind.Passthrough, _passthrough);
     }
@@ -325,8 +332,9 @@ public sealed partial class MainWindow : Window
     private const double SidebarGap = 8;
     private const double PanelWidth = 380;
     private const double PanelGap = 8;
-    /// <summary>Room the system caption buttons take at the window's top right.</summary>
-    private const double CaptionButtonsWidth = 138;
+    /// <summary>Room the traffic-light buttons take at the window's top right: three 23 px
+    /// cells plus the 16 px inset (the system buttons took 138).</summary>
+    private const double CaptionButtonsWidth = 85;
     /// <summary>The caption row (toolbar) plus its gap: where the floating panels start.</summary>
     private const double ToolbarHeight = 48;
     private bool _compactSidebar;

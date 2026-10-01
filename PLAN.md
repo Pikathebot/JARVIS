@@ -547,6 +547,20 @@ order yellow, green, red (close stays in the corner); **glyphs only on hover** (
 otherwise, as macOS); **green = maximize** (Snap Layouts kept); **main window only** (the HUD
 stays borderless). Size: match macOS proportions scaled to our caption row -- check with a
 snapshot.
+Designed on a canvas 2026-10-01 (https://claude.ai/artifact/4bhcSBKLzptratFdgMvS1e, the user:
+"feels good"): 14 px dots, 9 px apart, 23 x 28 cells, 16 px from the right edge, close's cell
+running to the corner; glyphs on hover, grey when unfocused, restore glyph while maximized; high
+contrast always shows glyphs and rings the dots. **Built 2026-10-01, confirmed on device by the user
+("works perfectly"):** `MainWindow.WindowControls.cs` -- system buttons hidden with
+`TitleBar.PreferredHeightOption = Collapsed` (`SetBorderAndTitleBar(true, false)` left them drawn
+behind the dots: seen in a snapshot); the dots' cells are the window's Minimize / Maximize /
+Close non-client regions (`SetRegionRects`), so Windows does the actions, Snap layouts and
+close-to-tray; looks driven by the non-client pointer events; regions re-applied when Windows
+resets them (microsoft-ui-xaml #10379). New palette tokens WindowClose / WindowMinimize /
+WindowMaximize / WindowControlInactive / WindowControlGlyph. Caption drag strip stops at the
+dots; the toolbar gains 53 px. First snapshot (before the Collapsed fix) showed the dots placed
+right. To check: system buttons gone, hover/press looks, Snap layouts on green, maximize/restore,
+close hides to tray, dragging the caption, unfocused grey.
 
 **b. Still open:** adaptive glass (renderer: per-slab luminance, flip small chrome between
 dark/light, raise tint on reading areas -- thresholds in the artifact); app tile PNGs from

@@ -35,7 +35,7 @@ public static class JarvisPalette
 
         AccentText = Hex(0x0A84FF), AccentFill = Hex(0x0071E3),
         StatusSuccess = Hex(0x30D158), StatusWarning = Hex(0xFF9F0A), StatusError = Hex(0xFF453A),
-        ToggleOff = Hex(0x787880, 0x52),
+        ToggleOff = Hex(0x787880, 0x52), WindowControlInactive = Hex(0x48484C),
         SyntaxString = Hex(0x30D158), SyntaxNumber = Hex(0xFF9F0A), SyntaxKeyword = Hex(0xBF5AF2), SyntaxType = Hex(0x40C8E0),
 
         RegularTintFloor = 0.20f, ThickTintFloor = 0.62f,
@@ -53,7 +53,7 @@ public static class JarvisPalette
 
         AccentText = Hex(0x0062CC), AccentFill = Hex(0x0071E3),
         StatusSuccess = Hex(0x1E7B34), StatusWarning = Hex(0xC93400), StatusError = Hex(0xD70015),
-        ToggleOff = Hex(0xE9E9EB),
+        ToggleOff = Hex(0xE9E9EB), WindowControlInactive = Hex(0xD1D1D6),
         SyntaxString = Hex(0x1E7B34), SyntaxNumber = Hex(0xC93400), SyntaxKeyword = Hex(0x8944AB), SyntaxType = Hex(0x0B7285),
 
         RegularTintFloor = 0.80f, ThickTintFloor = 0.90f,
@@ -71,7 +71,9 @@ public static class JarvisPalette
 
         AccentText = Hex(0x409CFF), AccentFill = Hex(0x0055AA),
         StatusSuccess = Hex(0x30DB5B), StatusWarning = Hex(0xFFB340), StatusError = Hex(0xFF6961),
-        ToggleOff = Hex(0x636366),
+        ToggleOff = Hex(0x636366), WindowControlInactive = Hex(0x636366),
+        WindowClose = Hex(0xFF6961), WindowMinimize = Hex(0xFFD426), WindowMaximize = Hex(0x30DB5B),
+        WindowControlGlyph = Hex(0x000000),
         SyntaxString = Hex(0x30DB5B), SyntaxNumber = Hex(0xFFB340), SyntaxKeyword = Hex(0xDA8FFF), SyntaxType = Hex(0x5DE6FF),
 
         RegularTintFloor = 0.75f, ThickTintFloor = 0.90f,
@@ -176,6 +178,14 @@ public sealed class JarvisColors
     public Color ToggleOff { get; init; }
     public Color Thumb { get; init; } = JarvisPalette.Hex(0xFFFFFF);
 
+    // The main window's traffic-light buttons (macOS colours, not the iOS system red/yellow/
+    // green: those read as status). Grey while another window is in front.
+    public Color WindowClose { get; init; } = JarvisPalette.Hex(0xFF5F57);
+    public Color WindowMinimize { get; init; } = JarvisPalette.Hex(0xFEBC2E);
+    public Color WindowMaximize { get; init; } = JarvisPalette.Hex(0x28C840);
+    public Color WindowControlInactive { get; init; }
+    public Color WindowControlGlyph { get; init; } = JarvisPalette.Hex(0x000000, 0x99);
+
     // Meters.
     public Color MeterNormal => Accent;
     public Color MeterHigh => StatusWarning;
@@ -235,6 +245,11 @@ public sealed class JarvisColors
         yield return (nameof(ToggleOn), ToggleOn);
         yield return (nameof(ToggleOff), ToggleOff);
         yield return (nameof(Thumb), Thumb);
+        yield return (nameof(WindowClose), WindowClose);
+        yield return (nameof(WindowMinimize), WindowMinimize);
+        yield return (nameof(WindowMaximize), WindowMaximize);
+        yield return (nameof(WindowControlInactive), WindowControlInactive);
+        yield return (nameof(WindowControlGlyph), WindowControlGlyph);
         yield return (nameof(MeterNormal), MeterNormal);
         yield return (nameof(MeterHigh), MeterHigh);
         yield return (nameof(MeterCritical), MeterCritical);
