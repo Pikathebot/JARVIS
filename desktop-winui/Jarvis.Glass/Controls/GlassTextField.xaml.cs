@@ -94,6 +94,18 @@ public sealed partial class GlassTextField : UserControl
         set => SetValue(InputMaxHeightProperty, value);
     }
 
+    public static readonly DependencyProperty InputPaddingProperty = DependencyProperty.Register(
+        nameof(InputPadding), typeof(Thickness), typeof(GlassTextField), new PropertyMetadata(new Thickness(16, 8, 16, 0), (d, e) => ((GlassTextField)d).Input.Padding = (Thickness)e.NewValue));
+
+    /// <summary>The text's inset inside the pill. A host that lays buttons over the pill's ends
+    /// (the composer's attach, mic and send) widens the sides so text never runs under them.
+    /// Top-only vertical padding: see the note on the TextBox in the XAML.</summary>
+    public Thickness InputPadding
+    {
+        get => (Thickness)GetValue(InputPaddingProperty);
+        set => SetValue(InputPaddingProperty, value);
+    }
+
     private void ApplyMultiline()
     {
         Input.AcceptsReturn = AcceptsReturn;

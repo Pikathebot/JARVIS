@@ -5,12 +5,11 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:glass="using:Jarvis_Glass"
-    HorizontalAlignment="Stretch"
+        HorizontalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
     mc:Ignorable="d">
 
-    <Grid Margin="0,4,0,4">
+    <Grid>
         <!-- System message: centered pill -->
         <Border
             x:Name="SystemPill"
@@ -23,58 +22,41 @@
         </Border>
 
         <!--
-            User message: right-aligned accent glass bubble. Bubbles are GlassSlabs nested in the
-            chat panel's slab, so they auto-publish one layer above it, clipped to the list's
-            viewport; XAML here draws only the text.
+            User message: a right-aligned accent bubble. Plain XAML on the reading surface,
+            not glass: nothing on the surface is glass but the composer.
         -->
-        <StackPanel x:Name="UserRow" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <glass:GlassSlab
-                Material="Accent"
-                SlabCornerRadius="{StaticResource RadiusPanel}"
-                Frost="8"
-                BezelWidth="6"
-                Refraction="4"
-                Specular="0.45"
-                Shadow="0.22"
-                ShadowRadius="14"
-                ShadowOffsetY="4"
-                Padding="12,8"
-                MaxWidth="640">
-                <glass:GlassSlab.ContextFlyout>
-                    <MenuFlyout>
-                        <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
-                    </MenuFlyout>
-                </glass:GlassSlab.ContextFlyout>
-                <TextBlock x:Name="UserText" Style="{StaticResource MessageText}" Foreground="{ThemeResource OnAccentBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-            </glass:GlassSlab>
-            <Border Width="28" Height="28" CornerRadius="14" Background="{ThemeResource SurfaceAvatarBrush}" VerticalAlignment="Top">
-                <TextBlock Text="U" Style="{StaticResource FootnoteText}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
-        </StackPanel>
+        <Border
+            x:Name="UserRow"
+            Visibility="Collapsed"
+            HorizontalAlignment="Right"
+            MaxWidth="520"
+            Margin="0,8,0,8"
+            Padding="14,8"
+            CornerRadius="18"
+            Background="{ThemeResource AccentFillBrush}">
+            <Border.ContextFlyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
+                </MenuFlyout>
+            </Border.ContextFlyout>
+            <TextBlock x:Name="UserText" Style="{StaticResource MessageText}" Foreground="{ThemeResource OnAccentBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+        </Border>
 
-        <!-- Assistant message: left-aligned glass bubble -->
-        <StackPanel x:Name="AssistantRow" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Left" Spacing="8">
+        <!-- Assistant message: no bubble, just text beside the mark, as long answers read best. -->
+        <Grid x:Name="AssistantRow" Visibility="Collapsed" ColumnSpacing="12" Margin="0,4,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="24" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.ContextFlyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
+                </MenuFlyout>
+            </Grid.ContextFlyout>
             <!-- Jarvis's avatar is the mark. -->
-            <Image Source="{ThemeResource MarkSource}" Width="28" Height="28" VerticalAlignment="Top" />
-            <StackPanel MaxWidth="720" Spacing="6">
-                <glass:GlassSlab
-                    SlabCornerRadius="{StaticResource RadiusPanel}"
-                    TintAmount="0.3"
-                    Frost="6"
-                    BezelWidth="6"
-                    Refraction="4"
-                    Specular="0.45"
-                    Shadow="0.22"
-                    ShadowRadius="14"
-                    ShadowOffsetY="4"
-                    Padding="12,8">
-                    <glass:GlassSlab.ContextFlyout>
-                        <MenuFlyout>
-                            <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
-                        </MenuFlyout>
-                    </glass:GlassSlab.ContextFlyout>
-                    <StackPanel Spacing="8">
-                        <!-- Tool step cards -->
+            <Image Source="{ThemeResource MarkSource}" Width="24" Height="24" VerticalAlignment="Top" Margin="0,1,0,0" />
+            <StackPanel Grid.Column="1" Spacing="8">
+                        <!-- Tool steps: one line each, open for detail -->
                         <ItemsControl x:Name="ToolStepsHost" />
 
                         <!-- Rendered markdown content goes here via code-behind -->
@@ -87,7 +69,9 @@
                         <Border
                             x:Name="ConfirmationBanner"
                             Visibility="Collapsed"
-                            CornerRadius="{StaticResource RowCornerRadius}"
+                            MaxWidth="560"
+                            HorizontalAlignment="Left"
+                            CornerRadius="{StaticResource CardCornerRadius}"
                             Padding="12">
                             <Border.Background>
                                 <SolidColorBrush Color="{ThemeResource StatusWarningColor}" Opacity="0.14" />
@@ -105,12 +89,10 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                    </StackPanel>
-                </glass:GlassSlab>
 
                 <!-- Metadata footer -->
-                <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Margin="4,0,0,0" Visibility="Collapsed" />
+                <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Foreground="{ThemeResource LabelTertiaryBrush}" Visibility="Collapsed" />
             </StackPanel>
-        </StackPanel>
+        </Grid>
     </Grid>
 </UserControl>

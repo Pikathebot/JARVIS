@@ -25,49 +25,49 @@
         <!--
             Nothing is painted behind the panels: the window is fully transparent and the
             GlassHost's slabs are the only surfaces, over the live desktop.
+
+            Layout (the design system's AppLayout card): the sidebar runs the full height,
+            its header sitting in the caption row; the chat column's toolbar is clear-glass
+            capsules in the caption row too (no header slab); under it one thick reading surface
+            holds the transcript and the composer. The top 48 px drag the window except where a
+            control sits (UpdateTitleBarRegions).
         -->
-
-        <!-- Custom title bar: draggable region, app name left, window controls handled by AppWindow. -->
-        <Grid x:Name="TitleBarRow" Grid.Row="0" Background="Transparent">
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
-                <!-- Only at narrow widths, where the sidebar is hidden and floats on demand. -->
-                <Button x:Name="SidebarToggleButton" Padding="8,4" Background="Transparent" BorderThickness="0"
-                        Visibility="Collapsed" Click="SidebarToggle_Click" ToolTipService.ToolTip="Sidebar">
-                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE700;" FontSize="20" Foreground="{ThemeResource LabelSecondaryBrush}" />
-                </Button>
-                <Image Source="{ThemeResource MarkSource}" Width="16" Height="16" VerticalAlignment="Center" />
-                <TextBlock Text="Jarvis" Style="{StaticResource BodyEmphasisText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
-            </StackPanel>
-        </Grid>
-
-        <Grid x:Name="BodyGrid" Grid.Row="1" Padding="12,0,12,12">
+        <Grid x:Name="BodyGrid" Grid.Row="0" Grid.RowSpan="2" Padding="8">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SidebarColumn" Width="240" />
+                <ColumnDefinition x:Name="SidebarColumn" Width="260" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="RightPanelColumn" Width="0" />
             </Grid.ColumnDefinitions>
 
-            <!-- Sidebar: floating glass slab. At narrow widths it leaves the grid and floats over
-                 the chat from the ☰ button (see ApplyResponsiveLayout). -->
+            <!-- Sidebar: the navigation layer, the one big glass pane. At narrow widths (or when
+                 hidden from the toolbar) it leaves the grid and floats over the chat (see
+                 ApplyResponsiveLayout). Rows are plain XAML on the pane, not glass. -->
             <glass:GlassSlab x:Name="SidebarSlab" Grid.Column="0" Margin="0,0,8,0" SlabCornerRadius="{StaticResource RadiusPanel}">
-                    <!--
-                        Header / list / footer rows rather than one StackPanel: a ListView in a
-                        StackPanel is measured with infinite height and realises every row. Each
-                        row is a glass slab, so with hundreds of sessions that blew the scene's
-                        shape budget (toggle thumbs vanished) and republished hundreds of slabs
-                        per layout pass. In a * row the list virtualises to what is visible.
-                    -->
-                    <Grid Padding="16" RowSpacing="12">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0" Spacing="12">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Image Source="{ThemeResource MarkSource}" Width="24" Height="24" VerticalAlignment="Center" />
-                            <TextBlock Text="Jarvis" Style="{StaticResource Title3Text}" VerticalAlignment="Center" />
-                        </StackPanel>
+                <!--
+                    Header / list / footer rows rather than one StackPanel: a ListView in a
+                    StackPanel is measured with infinite height and realises every row. In a *
+                    row the list virtualises to what is visible.
+                -->
+                <Grid Padding="10" RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Spacing="8">
+                        <Grid Height="32" Margin="4,0,0,0">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Image Source="{ThemeResource MarkSource}" Width="24" Height="24" VerticalAlignment="Center" />
+                                <TextBlock Text="Jarvis" Style="{StaticResource Title3Text}" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Button x:Name="ComposeButton" Style="{StaticResource IconButtonStyle}" HorizontalAlignment="Right"
+                                    ToolTipService.ToolTip="New chat (Ctrl+N)" Click="NewChat_Click">
+                                <Button.KeyboardAccelerators>
+                                    <KeyboardAccelerator Modifiers="Control" Key="N" />
+                                </Button.KeyboardAccelerators>
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE70F;" />
+                            </Button>
+                        </Grid>
 
                         <!--
                             The two spaces. Freeform: plain conversation, no project, no working
@@ -84,160 +84,233 @@
                         -->
                         <glass:GlassButton x:Name="WorkspaceButton" Text="Default Workspace" HorizontalAlignment="Stretch" Click="WorkspaceButton_Click" />
 
-                        <glass:GlassButton Text="New chat" IsAccent="True" HorizontalAlignment="Stretch" Click="NewChat_Click" />
-                        <TextBlock x:Name="RecentSessionsHeader" Text="Recent sessions" Style="{StaticResource SectionHeaderText}" Margin="0,12,0,0" />
-                        </StackPanel>
-                        <!--
-                            Each session is a small glass row nested in the sidebar slab (auto
-                            layer 2, clipped to the list). The active one is tinted accent from
-                            code-behind (UpdateSessionHighlight) since the template can't see
-                            ChatViewModel.
-                        -->
-                        <ListView
-                            x:Name="SessionsList"
-                            Grid.Row="1"
-                            Background="Transparent"
-                            SelectionMode="None"
-                            ItemsSource="{x:Bind SessionsViewModel.Sessions}">
-                            <!-- No theme transitions: they animate on the compositor, where the
-                                 rows' glass can't follow. Page motion is MainWindow.Motion's. -->
-                            <ListView.ItemContainerTransitions>
-                                <TransitionCollection />
-                            </ListView.ItemContainerTransitions>
-                            <ListView.ItemContainerStyle>
-                                <Style TargetType="ListViewItem">
-                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                    <Setter Property="Padding" Value="0" />
-                                    <Setter Property="MinHeight" Value="0" />
-                                    <Setter Property="Margin" Value="0,0,0,6" />
-                                </Style>
-                            </ListView.ItemContainerStyle>
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:Session">
-                                    <glass:GlassSlab
-                                        Material="Clear"
-                                        SlabCornerRadius="{StaticResource RadiusRow}"
-                                        TintAmount="0.14"
-                                        Frost="0"
-                                        BezelWidth="4"
-                                        Refraction="2"
-                                        Specular="0.35"
-                                        Shadow="0"
-                                        Padding="10,7"
-                                        Tapped="SessionItem_Tapped"
-                                        Loaded="SessionRow_Loaded"
+                        <!-- Search: filters the list below by title and last message. -->
+                        <TextBox x:Name="SessionSearch" PlaceholderText="Search chats" Height="32" MinHeight="0" Padding="34,6,10,0"
+                                 FontSize="13" CornerRadius="{StaticResource RowCornerRadius}" BorderThickness="0"
+                                 TextChanged="SessionSearch_TextChanged">
+                            <TextBox.Resources>
+                                <StaticResource x:Key="TextControlBackground" ResourceKey="FillTertiaryBrush" />
+                                <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="FillSecondaryBrush" />
+                                <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="FillSecondaryBrush" />
+                                <StaticResource x:Key="TextControlPlaceholderForeground" ResourceKey="PlaceholderBrush" />
+                                <StaticResource x:Key="TextControlPlaceholderForegroundPointerOver" ResourceKey="PlaceholderBrush" />
+                                <StaticResource x:Key="TextControlPlaceholderForegroundFocused" ResourceKey="PlaceholderBrush" />
+                                <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                            </TextBox.Resources>
+                        </TextBox>
+                    </StackPanel>
+                    <FontIcon x:Name="SessionSearchIcon" Grid.Row="0" Style="{StaticResource JarvisIcon}" Glyph="&#xE721;" FontSize="14"
+                              Foreground="{ThemeResource PlaceholderBrush}" IsHitTestVisible="False"
+                              HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,9" />
+
+                    <!--
+                        Sessions grouped by date (Today, Yesterday, Previous 7 days, Older), as
+                        plain rows: the active one on fill-secondary, "..." (delete) on hover.
+                        ItemsSource is a grouped CollectionViewSource built in code
+                        (RebuildSessionGroups), filtered by the search box.
+                    -->
+                    <ListView
+                        x:Name="SessionsList"
+                        Grid.Row="1"
+                        Margin="-4,0,-4,0"
+                        Background="Transparent"
+                        SelectionMode="None">
+                        <ListView.Resources>
+                            <!-- Group headers are plain labels, without WinUI's rule under them. -->
+                            <SolidColorBrush x:Key="ListViewHeaderItemDividerStroke" Color="Transparent" />
+                        </ListView.Resources>
+                        <!-- No theme transitions: they animate on the compositor, where the
+                             pane's glass can't follow. Page motion is MainWindow.Motion's. -->
+                        <ListView.ItemContainerTransitions>
+                            <TransitionCollection />
+                        </ListView.ItemContainerTransitions>
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="4,0" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="Margin" Value="0,0,0,2" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.GroupStyle>
+                            <GroupStyle HidesIfEmpty="True">
+                                <GroupStyle.HeaderContainerStyle>
+                                    <Style TargetType="ListViewHeaderItem">
+                                        <Setter Property="MinHeight" Value="0" />
+                                        <Setter Property="Padding" Value="12,10,0,4" />
+                                        <Setter Property="Margin" Value="0" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                    </Style>
+                                </GroupStyle.HeaderContainerStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate x:DataType="local:SessionGroup">
+                                        <TextBlock Text="{x:Bind Key}" Style="{StaticResource SecondaryFootnoteText}" />
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListView.GroupStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="models:Session">
+                                <Grid
+                                    Height="34"
+                                    Padding="8,0,4,0"
+                                    ColumnSpacing="8"
+                                    CornerRadius="{StaticResource RowCornerRadius}"
+                                    Background="Transparent"
+                                    Tapped="SessionItem_Tapped"
+                                    PointerEntered="SessionRow_PointerEntered"
+                                    PointerExited="SessionRow_PointerExited"
+                                    Tag="{x:Bind}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE8BD;" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{x:Bind local:MainWindow.SessionRowLabel(SessionId, LastMessage)}"
+                                        Style="{StaticResource BodyText}"
+                                        VerticalAlignment="Center"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Width="28"
+                                        Height="28"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Opacity="0"
+                                        ToolTipService.ToolTip="More"
                                         Tag="{x:Bind}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock
-                                            Text="{x:Bind local:MainWindow.SessionRowLabel(SessionId, LastMessage)}"
-                                            Style="{StaticResource BodyText}"
-                                            VerticalAlignment="Center"
-                                            TextTrimming="CharacterEllipsis" />
-                                        <Button
-                                            Grid.Column="1"
-                                            Padding="4"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            ToolTipService.ToolTip="Delete session"
-                                            Tag="{x:Bind}"
-                                            Click="DeleteSession_Click">
-                                            <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
-                                        </Button>
-                                    </glass:GlassSlab>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <StackPanel Grid.Row="2" Spacing="12">
-                        <glass:GlassButton Text="Free VRAM" HorizontalAlignment="Stretch" Click="FreeVram_Click" />
-                        <glass:GlassButton Text="Settings" HorizontalAlignment="Stretch" Click="Settings_Click" />
-                        </StackPanel>
-                    </Grid>
+                                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE712;" FontSize="14" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                                        <Button.Flyout>
+                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                <MenuFlyoutItem Text="Delete" Tag="{x:Bind}" Click="DeleteSession_Click">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon Glyph="&#xE74D;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource SeparatorBrush}" Padding="0,6,0,0">
+                        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Height="34" Padding="8,0"
+                                Background="Transparent" BorderThickness="0" CornerRadius="{StaticResource RowCornerRadius}"
+                                Click="Settings_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE713;" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="Settings" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Border>
+                </Grid>
             </glass:GlassSlab>
 
-            <!-- Chat surface -->
+            <!-- Chat column: the toolbar in the caption row, then the reading surface. -->
             <Grid x:Name="ChatColumn" Grid.Column="1">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="40" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- Header: session label, mode toggle, governor pill -->
-                <glass:GlassSlab x:Name="HeaderSlab" Grid.Row="0" Margin="0,0,0,8" SlabCornerRadius="{StaticResource RadiusPanel}">
-                        <Grid x:Name="HeaderGrid" Padding="16,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="SessionLabel" Text="Default Workspace" Style="{StaticResource HeadlineText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                            <Button Grid.Column="1" Margin="0,0,12,0" Padding="10,4" Background="Transparent" BorderThickness="1" CornerRadius="{StaticResource PillCornerRadius}">
-                                <!-- Status is an icon, a word and a colour (UpdateGovernorPill). -->
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon x:Name="GovernorPillIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xEA39;" FontSize="12" Foreground="{ThemeResource StatusErrorBrush}" />
-                                    <TextBlock x:Name="GovernorPillText" Text="Offline" Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusErrorBrush}" />
-                                </StackPanel>
-                                <Button.Flyout>
-                                    <Flyout Placement="Bottom">
-                                        <StackPanel Spacing="8" MinWidth="220">
-                                            <TextBlock x:Name="GovernorBackendRow" Text="Backend: —" Style="{StaticResource BodyText}" />
-                                            <TextBlock x:Name="GovernorModelRow" Text="Model: —" Style="{StaticResource BodyText}" />
-                                            <TextBlock x:Name="GovernorStatusRow" Text="Status: —" Style="{StaticResource BodyText}" />
-                                        </StackPanel>
-                                    </Flyout>
-                                </Button.Flyout>
-                            </Button>
-                            <glass:GlassButton x:Name="HudButton" Grid.Column="2" Text="HUD" MinWidth="72" Margin="0,0,8,0" Click="HudButton_Click" />
-                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-                                <!-- Governor on/off and mic on/off are glass switches (popups can't host glass). The
-                                     captions are the first thing a narrow header sheds (FitHeader);
-                                     the tooltips name the switches then. -->
-                                <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
-                                <TextBlock x:Name="EphemeralLabel" Text="Ephemeral" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
-                                <glass:GlassToggle x:Name="EphemeralToggle" SwitchScale="0.75" ToolTipService.ToolTip="Ephemeral: nothing from this chat is stored" VerticalAlignment="Center" Toggled="EphemeralToggle_Toggled" />
-                                <TextBlock x:Name="GovernorLabel" Text="Governor" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="GovernorToggle" SwitchScale="0.75" ToolTipService.ToolTip="Governor" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
-                                <TextBlock x:Name="MicLabel" Text="Mic" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <glass:GlassToggle x:Name="MicToggle" SwitchScale="0.75" ToolTipService.ToolTip="Microphone" VerticalAlignment="Center" Toggled="MicToggle_Toggled" />
-                                <TextBlock x:Name="VoiceStateText" Text="" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
-                                <glass:GlassButton x:Name="PanelButton" Text="Panel" MinWidth="80" Click="ToggleRightPanel_Click" />
-                            </StackPanel>
-                        </Grid>
-                </glass:GlassSlab>
+                <!--
+                    Toolbar: clear-glass capsules floating in the caption row, no slab behind
+                    them. The right margin leaves the system caption buttons their room; it drops
+                    to 0 while the inspector is docked, when they sit over the inspector's column.
+                -->
+                <Grid x:Name="TitleBarRow" Grid.Row="0" Margin="0,0,138,0" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <!-- Message list -->
-                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" SlabCornerRadius="{StaticResource RadiusPanel}">
-                        <Grid>
+                    <glass:GlassSlab x:Name="SidebarCapsule" Grid.Column="0" Material="Clear" VerticalAlignment="Center"
+                                     SlabCornerRadius="20" Padding="4">
+                        <Button x:Name="SidebarToggleButton" Style="{StaticResource IconButtonStyle}"
+                                ToolTipService.ToolTip="Sidebar" Click="SidebarToggle_Click">
+                            <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE700;" />
+                        </Button>
+                    </glass:GlassSlab>
+
+                    <!-- Status pill: model + VRAM; opens the status popover. Status is always an
+                         icon, a word and a colour (UpdateStatusPill). -->
+                    <glass:GlassSlab x:Name="StatusCapsule" Grid.Column="2" Material="Clear" VerticalAlignment="Center"
+                                     SlabCornerRadius="20" Padding="4">
+                        <Button x:Name="StatusPillButton" Height="32" Padding="10,0,10,0" Background="Transparent" BorderThickness="0"
+                                CornerRadius="16" ToolTipService.ToolTip="Model and hardware" Click="StatusPill_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="GovernorPillIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xEA39;" FontSize="14" Foreground="{ThemeResource StatusErrorBrush}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="GovernorPillText" Text="Offline" Style="{StaticResource FootnoteText}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="StatusVramText" Text="" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE70D;" FontSize="10" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </glass:GlassSlab>
+
+                    <glass:GlassSlab x:Name="ToolsCapsule" Grid.Column="3" Material="Clear" VerticalAlignment="Center"
+                                     SlabCornerRadius="20" Padding="4">
+                        <StackPanel Orientation="Horizontal">
+                            <!-- Ephemeral: an off-the-record scratchpad in either space; nothing is stored. -->
+                            <Button x:Name="EphemeralButton" Style="{StaticResource IconButtonStyle}"
+                                    ToolTipService.ToolTip="Ephemeral chat: nothing is saved" Click="EphemeralButton_Click">
+                                <FontIcon x:Name="EphemeralIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xED1A;" />
+                            </Button>
+                            <Button x:Name="HudButton" Style="{StaticResource IconButtonStyle}"
+                                    ToolTipService.ToolTip="HUD (Ctrl+Shift+J)" Click="HudButton_Click">
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE8A7;" />
+                            </Button>
+                            <Button x:Name="PanelButton" Style="{StaticResource IconButtonStyle}"
+                                    ToolTipService.ToolTip="Inspector" Click="ToggleRightPanel_Click">
+                                <FontIcon x:Name="PanelIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE90D;" />
+                            </Button>
+                        </StackPanel>
+                    </glass:GlassSlab>
+                </Grid>
+
+                <!--
+                    The reading surface: one thick slab. Nothing on it is glass except the
+                    composer's field: no glass on glass behind the text.
+                -->
+                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" Margin="0,8,0,0" Material="Thick" SlabCornerRadius="{StaticResource RadiusPanel}">
+                    <Grid x:Name="SurfaceContent">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <InfoBar
                             x:Name="ErrorBanner"
                             Grid.Row="0"
                             Severity="Error"
                             IsOpen="False"
-                            Margin="12,12,12,0"
+                            MaxWidth="720"
+                            Margin="16,12,16,0"
                             CornerRadius="10" />
+                        <!-- A 720 px reading column, centred; the scroll bar stays at the surface's edge. -->
                         <ListView
                             x:Name="MessageList"
                             Grid.Row="1"
-                            Padding="16"
+                            Padding="24,16,24,8"
                             SelectionMode="None"
                             IsSwipeEnabled="False"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
-                            <!-- No theme transitions: the default entrance slid each bubble's XAML
-                                 on the compositor while its glass sat still. -->
+                            <!-- No theme transitions: the default entrance slid each row's XAML
+                                 on the compositor while any glass sat still. -->
                             <ListView.ItemContainerTransitions>
                                 <TransitionCollection />
                             </ListView.ItemContainerTransitions>
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalAlignment" Value="Center" />
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="MaxWidth" Value="720" />
+                                    <Setter Property="Width" Value="720" />
                                     <Setter Property="Padding" Value="0" />
                                 </Style>
                             </ListView.ItemContainerStyle>
@@ -253,12 +326,10 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        </Grid>
-                </glass:GlassSlab>
 
-                <!-- Composer -->
-                <glass:GlassSlab x:Name="ComposerSlab" Grid.Row="2" Margin="0,8,0,0" SlabCornerRadius="{StaticResource RadiusPanel}">
-                        <StackPanel Padding="12" Spacing="6">
+                        <!-- Composer: one capsule. The glass field is the capsule; attach, mic and
+                             send sit over its ends (InputPadding keeps the text clear of them). -->
+                        <StackPanel x:Name="ComposerArea" Grid.Row="2" MaxWidth="720" Margin="24,8,24,12" Spacing="6">
                             <ItemsControl x:Name="AttachmentChips">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -269,51 +340,57 @@
                             <!-- Only shown while an image is attached: says whether the model will
                                  actually see it, or have it described by the captioner. -->
                             <TextBlock x:Name="VisionHint" Style="{StaticResource SecondaryFootnoteText}" Visibility="Collapsed" TextWrapping="Wrap" />
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Button Padding="8,4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center"
-                                        ToolTipService.ToolTip="Attach a file" Click="AttachFile_Click">
-                                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE723;" FontSize="20" Foreground="{ThemeResource LabelSecondaryBrush}" />
-                                </Button>
+                            <Grid MinHeight="48">
                                 <glass:GlassTextField
                                     x:Name="ComposerBox"
-                                    Grid.Column="1"
-                                    Margin="8,0"
-                                    VerticalAlignment="Center"
-                                    Placeholder="Message Jarvis..."
+                                    MinHeight="48"
+                                    InputPadding="48,8,92,0"
+                                    VerticalAlignment="Stretch"
+                                    Placeholder="Message Jarvis"
                                     AcceptsReturn="True"
                                     InputMaxHeight="160"
                                     InputKeyDown="ComposerBox_KeyDown" />
-                                <glass:GlassButton
-                                    x:Name="SendButton"
-                                    Grid.Column="2"
-                                    VerticalAlignment="Center"
-                                    Text="Send"
-                                    IsAccent="True"
-                                    Click="SendButton_Click" />
+                                <Button Style="{StaticResource IconButtonStyle}" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,8"
+                                        ToolTipService.ToolTip="Attach a file" Click="AttachFile_Click">
+                                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE710;" />
+                                </Button>
+                                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,7,7">
+                                    <Button x:Name="MicButton" Style="{StaticResource IconButtonStyle}" ToolTipService.ToolTip="Talk to Jarvis" Click="MicButton_Click">
+                                        <FontIcon x:Name="MicIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE720;" />
+                                    </Button>
+                                    <Button x:Name="SendButton" Width="34" Height="34" Padding="0" CornerRadius="17" BorderThickness="0"
+                                            Background="{ThemeResource AccentFillBrush}" ToolTipService.ToolTip="Send (Enter)" Click="SendButton_Click">
+                                        <Button.Resources>
+                                            <StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="AccentBrush" />
+                                            <StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="AccentFillBrush" />
+                                            <StaticResource x:Key="ButtonBackgroundDisabled" ResourceKey="FillSecondaryBrush" />
+                                        </Button.Resources>
+                                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE74A;" Foreground="{ThemeResource OnAccentBrush}" />
+                                    </Button>
+                                </StackPanel>
                             </Grid>
+                            <!-- Where the model runs; the voice state while the mic is on. -->
+                            <TextBlock x:Name="ComposerCaption" Text="Runs on this PC · nothing leaves it" Style="{StaticResource CaptionText}"
+                                       Foreground="{ThemeResource LabelTertiaryBrush}" HorizontalAlignment="Center" />
                         </StackPanel>
-                </glass:GlassSlab>
 
-                <!-- Awareness tray: floats above the composer, bottom-right of the chat column -->
-                <ContentControl
-                    x:Name="AwarenessTrayHost"
-                    Grid.Row="1"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Bottom"
-                    Margin="0,0,8,8"
-                    IsTabStop="False" />
+                        <!-- Awareness tray: floats bottom-right of the transcript. -->
+                        <ContentControl
+                            x:Name="AwarenessTrayHost"
+                            Grid.Row="1"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            Margin="0,0,12,8"
+                            IsTabStop="False" />
+                    </Grid>
+                </glass:GlassSlab>
             </Grid>
 
-            <!-- Right panel: overlay sheet with Artifacts + Files tabs -->
+            <!-- Inspector (the old right panel): closed until there is something to show. -->
             <glass:GlassSlab
                 x:Name="RightPanel"
                 Grid.Column="2"
-                Margin="8,0,0,0"
+                Margin="8,48,0,0"
                 SlabCornerRadius="{StaticResource RadiusPanel}"
                 Visibility="Collapsed">
                     <!--
@@ -324,14 +401,21 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <Grid Margin="12,12,12,0">
+                        <Grid Margin="16,10,8,0">
+                            <TextBlock Text="Inspector" Style="{StaticResource HeadlineText}" VerticalAlignment="Center" />
+                            <Button Style="{StaticResource IconButtonStyle}" HorizontalAlignment="Right" ToolTipService.ToolTip="Close" Click="ToggleRightPanel_Click">
+                                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
+                            </Button>
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="12,8,12,0">
                             <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Reasoning|Context|Activity" SelectionChanged="RightPanelTabs_SelectionChanged" />
                             <!-- Reasoning-is-streaming badge, top-right of the tab strip. -->
                             <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="{ThemeResource AccentBrush}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0" Visibility="Collapsed" />
                         </Grid>
-                        <Grid Grid.Row="1">
+                        <Grid Grid.Row="2">
                             <Grid x:Name="ArtifactsPage" Visibility="Visible">
                             <Grid Padding="12">
                                 <Grid.RowDefinitions>
@@ -476,6 +560,92 @@
                 <glass:GlassSegmented x:Name="WorkspaceMenu" Orientation="Vertical" Items="Default Workspace" SelectionChanged="WorkspaceMenu_SelectionChanged" DragPullChanged="WorkspaceMenu_DragPullChanged" />
                 <!-- Not a row of the menu: creating is an action, not a selection the puck should land on. -->
                 <glass:GlassButton x:Name="NewWorkspaceButton" Text="New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
+            </StackPanel>
+        </glass:GlassSlab>
+
+        <!--
+            Status popover: model, VRAM and GPU, the governor switch, the fast model, Free VRAM.
+            Inline glass rather than a Flyout (popups paint above the window, where the glass
+            can't reach). Positioned under the status pill from code; light-dismissed like the
+            workspace dropdown. The transcript's XAML fades while it is open (SetStatusPopoverOpen),
+            since glass can never frost the text beneath it.
+        -->
+        <glass:GlassSlab
+            x:Name="StatusPopover"
+            Grid.Row="0"
+            Grid.RowSpan="2"
+            Visibility="Collapsed"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Width="320"
+            Material="Thick"
+            SlabCornerRadius="{StaticResource RadiusPanel}"
+            Shadow="0.4"
+            ShadowRadius="24"
+            ShadowOffsetY="8"
+            Padding="16">
+            <StackPanel Spacing="4">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon x:Name="PopoverStatusIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xEA39;" Foreground="{ThemeResource StatusErrorBrush}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="PopoverModelName" Grid.Column="1" Text="No model" Style="{StaticResource HeadlineText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock x:Name="PopoverStatusWord" Grid.Column="2" Text="Offline" Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusErrorBrush}" VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock x:Name="PopoverModelDetail" Text="main" Style="{StaticResource SecondaryFootnoteText}" TextTrimming="CharacterEllipsis" />
+
+                <Grid Margin="0,10,0,0">
+                    <TextBlock Text="VRAM" Style="{StaticResource FootnoteText}" />
+                    <TextBlock x:Name="PopoverVramText" Text="—" Style="{StaticResource DataText}" HorizontalAlignment="Right" />
+                </Grid>
+                <Grid Height="6" CornerRadius="3" Background="{ThemeResource MeterTrackBrush}">
+                    <Rectangle x:Name="PopoverVramBar" Fill="{ThemeResource MeterNormalBrush}" RadiusX="3" RadiusY="3" RenderTransformOrigin="0,0.5">
+                        <Rectangle.RenderTransform>
+                            <ScaleTransform x:Name="PopoverVramScale" ScaleX="0" />
+                        </Rectangle.RenderTransform>
+                    </Rectangle>
+                </Grid>
+                <Grid Margin="0,8,0,0">
+                    <TextBlock Text="GPU" Style="{StaticResource FootnoteText}" />
+                    <TextBlock x:Name="PopoverGpuText" Text="—" Style="{StaticResource DataText}" HorizontalAlignment="Right" />
+                </Grid>
+                <Grid Height="6" CornerRadius="3" Background="{ThemeResource MeterTrackBrush}">
+                    <Rectangle x:Name="PopoverGpuBar" Fill="{ThemeResource MeterNormalBrush}" RadiusX="3" RadiusY="3" RenderTransformOrigin="0,0.5">
+                        <Rectangle.RenderTransform>
+                            <ScaleTransform x:Name="PopoverGpuScale" ScaleX="0" />
+                        </Rectangle.RenderTransform>
+                    </Rectangle>
+                </Grid>
+
+                <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource SeparatorBrush}" Margin="0,12,0,0" Padding="0,10,0,0">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Governor" Style="{StaticResource BodyText}" />
+                            <TextBlock Text="Unloads the model when another app needs the GPU" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <glass:GlassToggle x:Name="GovernorToggle" Grid.Column="1" SwitchScale="0.75" IsOn="True" VerticalAlignment="Center" Toggled="GovernorToggle_Toggled" />
+                    </Grid>
+                </Border>
+                <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource SeparatorBrush}" Margin="0,10,0,0" Padding="0,10,0,0">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Answer with" Style="{StaticResource BodyText}" />
+                        <!-- Auto | Main | Fast, sent as the turn's model (ChatViewModel.ModelChoice). -->
+                        <glass:GlassSegmented x:Name="ModelChoiceSwitch" Items="Auto|Main|Fast" HorizontalAlignment="Stretch" Margin="0,4,0,2" SelectionChanged="ModelChoiceSwitch_SelectionChanged" />
+                        <TextBlock x:Name="ModelChoiceNote" Text="Quick turns run on the loaded model, thinking off" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="PopoverFastModel" Text="—" Style="{StaticResource SecondaryFootnoteText}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,14,0,0">
+                    <glass:GlassButton Text="Free VRAM" Click="FreeVram_Click" />
+                    <glass:GlassButton Text="Models…" Click="StatusModels_Click" />
+                </StackPanel>
             </StackPanel>
         </glass:GlassSlab>
 

@@ -50,6 +50,12 @@ public partial class ChatViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsEphemeral { get; private set; }
 
+    /// <summary>The user's model choice for every turn: null = Auto (the backend routes, and a
+    /// quick turn runs on whatever is loaded), "main" or "fast" = that slot, loading it if it
+    /// isn't -- the backend's explicit <c>model</c> skips its routing overrides (except images,
+    /// which still go to a slot that can see them).</summary>
+    public string? ModelChoice { get; set; }
+
     /// <summary>What the backend calls the space.</summary>
     public string ChatMode => Space == ChatSpace.Freeform ? "FREEFORM" : "WORKSPACE";
 
@@ -444,6 +450,7 @@ public partial class ChatViewModel : ObservableObject
                 Message = message,
                 SessionId = ActiveSessionId,
                 ProjectId = TurnProjectId,
+                Model = ModelChoice,
                 ChatMode = ChatMode,
                 Ephemeral = IsEphemeral,
                 ApprovedActionIds = approvedActionIds.Count > 0 ? approvedActionIds : null,

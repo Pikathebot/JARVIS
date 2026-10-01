@@ -78,7 +78,7 @@ public sealed partial class MainWindow
     private Task? _sessionsRefresh;
 
     /// <summary>The panels in the order they materialise.</summary>
-    private UIElement[] StartupPanels => new UIElement[] { SidebarSlab, HeaderSlab, MessagesSlab, ComposerSlab };
+    private UIElement[] StartupPanels => new UIElement[] { SidebarSlab, SidebarCapsule, StatusCapsule, ToolsCapsule, MessagesSlab };
 
     /// <summary>Called from the constructor, before anything has published glass: the panels
     /// start invisible, clear and lowered, and the startup card arrives in their place.</summary>

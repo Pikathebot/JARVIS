@@ -8,6 +8,7 @@ using Microsoft.UI;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Windows.System;
@@ -62,6 +63,7 @@ public sealed partial class MainWindow : Window
         // Layers are named rather than written as integers in XAML -- see GlassLayers for
         // why the sheets' hand-written "2" left them unable to cover the window behind them.
         WorkspaceDropdown.Layer = Jarvis_Glass.GlassLayers.Popover;
+        StatusPopover.Layer = Jarvis_Glass.GlassLayers.Popover;
         // Panels hidden, startup card up, before anything publishes glass (MainWindow.Motion.cs).
         BeginStartup();
 
@@ -81,7 +83,11 @@ public sealed partial class MainWindow : Window
 
 
         GovernorViewModel.PropertyChanged += (_, _) => UpdateGovernorPill();
+        // The popover names the fast model; the catalogue says which that is.
+        ModelsViewModel.PropertyChanged += (_, _) => UpdateGovernorPill();
+        GovernorViewModel.BackendCameOnline += () => _ = ModelsViewModel.RefreshAsync();
         GovernorViewModel.Start();
+        StartTelemetry();
         AwarenessViewModel.Start();
 
         ChatViewModel.PropertyChanged += (_, args) =>
@@ -92,7 +98,11 @@ public sealed partial class MainWindow : Window
             }
             else if (args.PropertyName == nameof(ChatViewModel.LatestRetrieval))
             {
-                DispatcherQueue.TryEnqueue(UpdateContextTab);
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    UpdateContextTab();
+                    if (ChatViewModel.LatestRetrieval?.ChunksUsed.Count > 0) AutoOpenInspector(ContextTab);
+                });
             }
             else if (args.PropertyName == nameof(ChatViewModel.ActiveReasoningMessage))
             {
@@ -143,6 +153,7 @@ public sealed partial class MainWindow : Window
                 {
                     var open = RightPanelViewModel.IsOpen;
                     RightPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+                    PanelIcon.Foreground = Themes.JarvisTheme.Brush(open ? "Accent" : "Label");
                     ApplyResponsiveLayout(RootGrid.ActualWidth); // column vs overlay depends on width
                 });
             }
@@ -177,7 +188,18 @@ public sealed partial class MainWindow : Window
             SessionsViewModel.Space = ChatSpace.Freeform;
             _ = ChatViewModel.SwitchSpaceAsync(ChatSpace.Freeform);
         }
+        RestoreModelChoice();
         ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() => _ = SessionsViewModel.RefreshAsync());
+        // A turn that wrote an artifact brings the inspector up on it (once per chat).
+        ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (completedMessage.ToolSteps.Any(s => s.Status == ToolStatus.Success
+                    && s.Tool.Contains("artifact", StringComparison.OrdinalIgnoreCase)))
+            {
+                AutoOpenInspector(ArtifactsTab);
+            }
+        });
+        SessionsViewModel.Sessions.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RebuildSessionGroups);
         ChatViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModels.ChatViewModel.ActiveSessionId)) DispatcherQueue.TryEnqueue(UpdateSessionHighlight);
@@ -195,7 +217,7 @@ public sealed partial class MainWindow : Window
         SessionsList.ContainerContentChanging += (_, args) =>
         {
             if (!args.InRecycleQueue && args.Item is Session session
-                && args.ItemContainer.ContentTemplateRoot is Jarvis_Glass.GlassSlab row)
+                && args.ItemContainer.ContentTemplateRoot is Grid row)
             {
                 ApplySessionHighlight(row, session);
             }
@@ -240,7 +262,7 @@ public sealed partial class MainWindow : Window
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
             appWindow.TitleBar.ExtendsContentIntoTitleBar = true;
-            appWindow.TitleBar.SetDragRectangles(new[] { new Windows.Graphics.RectInt32(0, 0, 10000, 48) });
+            appWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
             appWindow.TitleBar.ButtonBackgroundColor = Colors.Transparent;
             appWindow.TitleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
         }
@@ -255,48 +277,82 @@ public sealed partial class MainWindow : Window
         }
 
         RootGrid.SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
-        // The floating panel's top offset follows the header's height, which settles after the
-        // first layout pass and changes when captions are shed.
-        HeaderSlab.SizeChanged += (_, _) => ApplyResponsiveLayout(RootGrid.ActualWidth);
+        // The caption row's controls move with the layout (sidebar hidden, inspector docked,
+        // the status text shed), and each move changes which strips of the top edge drag.
+        TitleBarRow.LayoutUpdated += (_, _) => UpdateTitleBarRegions();
+    }
+
+    private Windows.Graphics.RectInt32[] _passthrough = Array.Empty<Windows.Graphics.RectInt32>();
+
+    /// <summary>
+    /// The top 48 px drag the window, except where a control sits: the toolbar's capsules and
+    /// the sidebar's compose button live in the caption row, and a drag region swallows every
+    /// click. Non-client regions are in physical pixels.
+    /// </summary>
+    private void UpdateTitleBarRegions()
+    {
+        if (RootGrid.XamlRoot is null || !AppWindowTitleBar.IsCustomizationSupported()) return;
+        var scale = RootGrid.XamlRoot.RasterizationScale;
+        var rects = new List<Windows.Graphics.RectInt32>();
+        foreach (var element in new FrameworkElement[] { SidebarCapsule, StatusCapsule, ToolsCapsule, ComposeButton })
+        {
+            if (element.Visibility != Visibility.Visible || element.ActualWidth <= 0) continue;
+            var b = element.TransformToVisual(RootGrid).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            rects.Add(new Windows.Graphics.RectInt32(
+                (int)Math.Round(b.X * scale), (int)Math.Round(b.Y * scale),
+                (int)Math.Round(b.Width * scale), (int)Math.Round(b.Height * scale)));
+        }
+        if (rects.SequenceEqual(_passthrough)) return; // LayoutUpdated fires for any layout pass
+        _passthrough = rects.ToArray();
+
+        var source = InputNonClientPointerSource.GetForWindowId(_appWindow?.Id ?? Win32Interop.GetWindowIdFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)));
+        source.SetRegionRects(NonClientRegionKind.Caption, new[]
+        {
+            new Windows.Graphics.RectInt32(0, 0, (int)Math.Round(RootGrid.ActualWidth * scale), (int)Math.Round(48 * scale)),
+        });
+        source.SetRegionRects(NonClientRegionKind.Passthrough, _passthrough);
     }
 
     // ------------------------------------------------------------------ responsive layout
     //
-    // Rule: the sidebar and the right panel push the chat (take their own column) whenever the
+    // Rule: the sidebar and the inspector push the chat (take their own column) whenever the
     // chat keeps at least MinChatWidth; only when it would not do they leave the grid and float
-    // over the chat. So at ordinary sizes nothing ever overlaps, and a very narrow window still
-    // has a usable chat with the sidebar behind ☰. The glass slabs need real layout changes
-    // (they publish their bounds to the scene on LayoutUpdated), so this is code, not visual
-    // states.
+    // over the chat. The toolbar's sidebar button hides a docked sidebar, or opens the floating
+    // one. The glass slabs need real layout changes (they publish their bounds to the scene on
+    // LayoutUpdated), so this is code, not visual states.
     private const double MinChatWidth = 360;
-    private const double SidebarWidth = 240;
+    private const double SidebarWidth = 260;
     private const double SidebarGap = 8;
-    private const double PanelWidth = 368;
+    private const double PanelWidth = 380;
     private const double PanelGap = 8;
+    /// <summary>Room the system caption buttons take at the window's top right.</summary>
+    private const double CaptionButtonsWidth = 138;
+    /// <summary>The caption row (toolbar) plus its gap: where the floating panels start.</summary>
+    private const double ToolbarHeight = 48;
     private bool _compactSidebar;
     private bool _sidebarOverlayOpen;
+    private bool _sidebarHidden;
 
     private void ApplyResponsiveLayout(double width)
     {
         var available = width - BodyGrid.Padding.Left - BodyGrid.Padding.Right;
         var panelOpen = RightPanelViewModel.IsOpen;
 
-        // Sidebar docks if the chat (and an open panel, docked) still fit beside it.
-        var sidebarDocked = available - (SidebarWidth + SidebarGap) >= MinChatWidth;
+        // Sidebar docks if the chat still fits beside it, unless hidden from the toolbar.
+        var sidebarDocked = !_sidebarHidden && available - (SidebarWidth + SidebarGap) >= MinChatWidth;
         var compact = !sidebarDocked;
         if (compact != _compactSidebar)
         {
             _compactSidebar = compact;
             _sidebarOverlayOpen = false;
-            SidebarToggleButton.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
             if (compact)
             {
-                // Out of the column, floating over the chat at the sidebar's natural width.
+                // Out of the column, floating over the chat below the toolbar.
                 SidebarColumn.Width = new GridLength(0);
                 Grid.SetColumn(SidebarSlab, 1);
                 SidebarSlab.HorizontalAlignment = HorizontalAlignment.Left;
                 SidebarSlab.Width = SidebarWidth;
-                SidebarSlab.Margin = new Thickness(0);
+                SidebarSlab.Margin = new Thickness(0, ToolbarHeight, 0, 0);
                 Canvas.SetZIndex(SidebarSlab, 20);
                 SidebarSlab.Layer = 3; // above the chat slab it now overlaps, like the dropdown
                 SidebarSlab.Visibility = Visibility.Collapsed;
@@ -314,7 +370,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        // Right panel docks if the chat still fits beside it and the (docked) sidebar.
+        // The inspector docks if the chat still fits beside it and the (docked) sidebar.
         var usedBySidebar = sidebarDocked ? SidebarWidth + SidebarGap : 0;
         var panelDocked = available - usedBySidebar - (PanelWidth + PanelGap) >= MinChatWidth;
         if (panelDocked)
@@ -323,7 +379,7 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(RightPanel, 2);
             RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
             RightPanel.Width = double.NaN;
-            RightPanel.Margin = new Thickness(PanelGap, 0, 0, 0);
+            RightPanel.Margin = new Thickness(PanelGap, ToolbarHeight, 0, 0);
             Canvas.SetZIndex(RightPanel, 0);
             RightPanel.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
         }
@@ -333,72 +389,32 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(RightPanel, 1);
             RightPanel.HorizontalAlignment = HorizontalAlignment.Right;
             RightPanel.Width = Math.Min(PanelWidth, Math.Max(240, available - 24));
-            // Floating, the sheet shares the chat column's cell and would stretch over the
-            // header too -- covering the very Panel button that closes it. Start below the
-            // header instead (its height varies with width as captions are shed).
-            var headerHeight = HeaderSlab.ActualHeight > 0 ? HeaderSlab.ActualHeight + HeaderSlab.Margin.Bottom : 0;
-            RightPanel.Margin = new Thickness(0, headerHeight, 0, 0);
+            // Floating, it starts below the toolbar so the button that closes it stays reachable.
+            RightPanel.Margin = new Thickness(0, ToolbarHeight, 0, 0);
             Canvas.SetZIndex(RightPanel, 10);
             RightPanel.Layer = 3;
         }
 
-        FitHeader();
-    }
+        // The caption buttons sit over whatever column is rightmost: the toolbar keeps clear of
+        // them unless a docked inspector is there to take them.
+        TitleBarRow.Margin = new Thickness(0, 0, panelDocked && panelOpen ? 0 : CaptionButtonsWidth, 0);
 
-    /// <summary>Room the session title keeps before the header starts shedding things.</summary>
-    private const double HeaderTitleMinWidth = 120;
-
-    /// <summary>
-    /// Sheds the header's least important things until the rest fits: first the toggles'
-    /// captions, then the HUD button and the session title. Decided by what the header's
-    /// contents measure against its own width -- the window's width (what this used to go by)
-    /// doesn't say how much the sidebar and panel leave it, and at the default 1280x800 the
-    /// Panel button was cut off.
-    /// </summary>
-    private void FitHeader()
-    {
-        var available = HeaderGrid.ActualWidth - HeaderGrid.Padding.Left - HeaderGrid.Padding.Right;
-        if (available <= 0) return; // not laid out yet; SizeChanged calls again
-
-        for (var level = 0; level <= 2; level++)
-        {
-            SetHeaderLevel(level);
-            if (level == 2 || HeaderNeeds() <= available) return;
-        }
-    }
-
-    private void SetHeaderLevel(int level)
-    {
-        var captions = level < 1 ? Visibility.Visible : Visibility.Collapsed;
-        GovernorLabel.Visibility = captions;
-        MicLabel.Visibility = captions;
-        EphemeralLabel.Visibility = captions;
-        VoiceStateText.Visibility = captions;
-        var extras = level < 2 ? Visibility.Visible : Visibility.Collapsed;
-        HudButton.Visibility = extras;
-        SessionLabel.Visibility = extras;
-        PanelButton.MinWidth = level < 2 ? 80 : 56;
-    }
-
-    /// <summary>The header's natural width, with the session title (which trims) counted at
-    /// most <see cref="HeaderTitleMinWidth"/>.</summary>
-    private double HeaderNeeds()
-    {
-        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
-        double needed = 0;
-        foreach (var child in HeaderGrid.Children)
-        {
-            if (child is not FrameworkElement element || element.Visibility != Visibility.Visible) continue;
-            element.Measure(infinite);
-            var w = element.DesiredSize.Width; // includes the element's margin
-            needed += element == SessionLabel ? Math.Min(w, HeaderTitleMinWidth) : w;
-        }
-        return needed;
+        // A narrow toolbar sheds the VRAM figure first (the popover still has it).
+        var chatWidth = available - usedBySidebar - (panelDocked && panelOpen ? PanelWidth + PanelGap : 0);
+        StatusVramText.Visibility = chatWidth >= 560 ? Visibility.Visible : Visibility.Collapsed;
+        SetStatusPopoverOpen(false);
     }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (!_compactSidebar) return;
+        var dockable = RootGrid.ActualWidth - BodyGrid.Padding.Left - BodyGrid.Padding.Right - (SidebarWidth + SidebarGap) >= MinChatWidth;
+        if (!_compactSidebar || (_sidebarHidden && dockable))
+        {
+            // Wide enough to dock: the button hides and restores the docked sidebar.
+            _sidebarHidden = !_sidebarHidden;
+            ApplyResponsiveLayout(RootGrid.ActualWidth);
+            return;
+        }
         _sidebarOverlayOpen = !_sidebarOverlayOpen;
         SidebarSlab.Visibility = _sidebarOverlayOpen ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -413,29 +429,167 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ------------------------------------------------------------------ status pill + popover
+
+    /// <summary>The model's short name ("Qwen3.5 9B") from its GGUF path: the file name up to
+    /// the first quant/precision token, dashes as spaces.</summary>
+    internal static string ShortModelName(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var name = System.IO.Path.GetFileNameWithoutExtension(path.Replace('\\', '/'));
+        var kept = new List<string>();
+        foreach (var part in name.Split('-', '_'))
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(part, @"^(UD|I?Q\d.*|BF16|F16|F32|GGUF)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) break;
+            kept.Add(part);
+        }
+        return kept.Count > 0 ? string.Join(' ', kept) : name;
+    }
+
     private void UpdateGovernorPill()
     {
-        GovernorPillText.Text = GovernorViewModel.Status switch
+        var (word, kind) = GovernorViewModel.Status switch
         {
-            "ok" => "Online",
-            "throttled" => "Throttled",
-            "degraded" => "Degraded",
-            _ => "Offline",
+            "ok" => ("Online", Themes.StatusKind.Success),
+            "throttled" => ("Throttled", Themes.StatusKind.Warning),
+            "degraded" => ("Degraded", Themes.StatusKind.Warning),
+            _ => ("Offline", Themes.StatusKind.Error),
         };
-        var pillKind = GovernorViewModel.Status switch
-        {
-            "ok" => Themes.StatusKind.Success,
-            "throttled" or "degraded" => Themes.StatusKind.Warning,
-            _ => Themes.StatusKind.Error,
-        };
-        var pillBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(pillKind));
-        GovernorPillText.Foreground = pillBrush;
-        GovernorPillIcon.Foreground = pillBrush;
-        GovernorPillIcon.Glyph = Themes.StatusStyle.GlyphOf(pillKind);
+        var brush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(kind));
+        var model = ShortModelName(GovernorViewModel.ConfiguredModel);
 
-        GovernorBackendRow.Text = $"Backend: {(string.IsNullOrEmpty(GovernorViewModel.ActiveBackend) ? "—" : GovernorViewModel.ActiveBackend)}";
-        GovernorModelRow.Text = $"Model: {GovernorViewModel.ConfiguredModel}";
-        GovernorStatusRow.Text = $"Status: {GovernorPillText.Text}" + (GovernorViewModel.Throttled ? " (high load)" : "");
+        // Healthy: the pill names the model (the green tick is the word "online"). Anything
+        // else: the status word itself, in its colour, so the change reads without the icon.
+        GovernorPillIcon.Glyph = Themes.StatusStyle.GlyphOf(kind);
+        GovernorPillIcon.Foreground = brush;
+        if (kind == Themes.StatusKind.Success && model.Length > 0)
+        {
+            GovernorPillText.Text = model;
+            GovernorPillText.ClearValue(TextBlock.ForegroundProperty);
+        }
+        else
+        {
+            GovernorPillText.Text = word;
+            GovernorPillText.Foreground = brush;
+        }
+        AutomationProperties.SetName(StatusPillButton, $"{word}, {model}");
+
+        PopoverStatusIcon.Glyph = Themes.StatusStyle.GlyphOf(kind);
+        PopoverStatusIcon.Foreground = brush;
+        PopoverStatusWord.Text = word + (GovernorViewModel.Throttled ? " · high load" : "");
+        PopoverStatusWord.Foreground = brush;
+        PopoverModelName.Text = model.Length > 0 ? model : "No model";
+        PopoverModelDetail.Text = string.IsNullOrEmpty(GovernorViewModel.ConfiguredModel)
+            ? "main"
+            : $"main · {System.IO.Path.GetFileName(GovernorViewModel.ConfiguredModel.Replace('\\', '/'))}";
+
+        var fastId = ModelsViewModel.FastSelection;
+        var fast = ModelsViewModel.Models.FirstOrDefault(m => m.Id == fastId);
+        PopoverFastModel.Text = "Fast: " + (fast is not null ? $"{ShortModelName(fast.Name)} · {fast.SizeDisplay}"
+            : string.IsNullOrEmpty(fastId) ? "none selected" : ShortModelName(fastId));
+    }
+
+    /// <summary>VRAM and GPU for the pill and the popover, polled every few seconds (the
+    /// awareness snapshot is what the HUD's meters read too).</summary>
+    private void StartTelemetry()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(4);
+        timer.Tick += async (_, _) => await PollTelemetryAsync();
+        timer.Start();
+        Closed += (_, _) => timer.Stop();
+    }
+
+    private bool _telemetryBusy;
+
+    private async Task PollTelemetryAsync()
+    {
+        if (_telemetryBusy || GovernorViewModel.Status == "offline") return;
+        _telemetryBusy = true;
+        try
+        {
+            var status = await _api.FetchAwarenessStatusAsync();
+            ApplyTelemetry(status.Snapshot);
+        }
+        catch
+        {
+            // The governor poll already shows the backend as offline.
+        }
+        finally
+        {
+            _telemetryBusy = false;
+        }
+    }
+
+    private void ApplyTelemetry(AwarenessSnapshot snapshot)
+    {
+        if (!snapshot.GpuAvailable || snapshot.VramTotalMb <= 0)
+        {
+            StatusVramText.Text = "";
+            PopoverVramText.Text = "No GPU";
+            PopoverGpuText.Text = "—";
+            PopoverVramScale.ScaleX = 0;
+            PopoverGpuScale.ScaleX = 0;
+            return;
+        }
+        var usedGb = snapshot.VramUsedMb / 1024.0;
+        var totalGb = snapshot.VramTotalMb / 1024.0;
+        StatusVramText.Text = $"{usedGb:0.0} GB";
+        PopoverVramText.Text = $"{usedGb:0.0} / {totalGb:0.0} GB";
+        PopoverGpuText.Text = $"{snapshot.GpuUtilPercent:0}%";
+        PopoverVramScale.ScaleX = Math.Clamp(snapshot.VramUsedMb / snapshot.VramTotalMb, 0, 1);
+        PopoverGpuScale.ScaleX = Math.Clamp(snapshot.GpuUtilPercent / 100.0, 0, 1);
+        // Same soft limits as the HUD's meters.
+        PopoverVramBar.Fill = Themes.JarvisTheme.Brush(snapshot.VramUtilPercent >= 88 ? "MeterHigh" : "MeterNormal");
+        PopoverGpuBar.Fill = Themes.JarvisTheme.Brush(snapshot.GpuUtilPercent >= 90 ? "MeterHigh" : "MeterNormal");
+    }
+
+    private void StatusPill_Click(object sender, RoutedEventArgs e) =>
+        SetStatusPopoverOpen(StatusPopover.Visibility != Visibility.Visible);
+
+    /// <summary>Opens the popover under the pill, right edges aligned. Glass can't frost XAML,
+    /// so the transcript's text fades while it is open, as the window's does under a sheet.</summary>
+    private void SetStatusPopoverOpen(bool open)
+    {
+        if (open == (StatusPopover.Visibility == Visibility.Visible)) return;
+        if (open)
+        {
+            SetWorkspaceDropdownOpen(false);
+            var pill = StatusCapsule.TransformToVisual(RootGrid).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, StatusCapsule.ActualWidth, StatusCapsule.ActualHeight));
+            var left = Math.Max(8, pill.Right - StatusPopover.Width);
+            StatusPopover.Margin = new Thickness(left, pill.Bottom + 8, 0, 0);
+            _ = PollTelemetryAsync();
+        }
+        StatusPopover.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        _ = Motion(SurfaceContent, affectsGlass: false).AnimateTo(0, 0, open ? PopoverBackdropOpacity : 1.0, Backdrop);
+    }
+
+    /// <summary>What the transcript's text fades to under the status popover.</summary>
+    private const double PopoverBackdropOpacity = 0.15;
+
+    private void StatusModels_Click(object sender, RoutedEventArgs e)
+    {
+        SetStatusPopoverOpen(false);
+        Settings_Click(sender, e);
+    }
+
+    // ------------------------------------------------------------------ inspector auto-open
+
+    private const int ArtifactsTab = 0;
+    private const int ContextTab = 3;
+    private string? _inspectorAutoOpenedFor;
+
+    /// <summary>Opens the inspector on <paramref name="tab"/> the first time a chat has
+    /// something for it; after that (or once the user has closed it) it stays their call.</summary>
+    private async void AutoOpenInspector(int tab)
+    {
+        var chat = ChatViewModel.ActiveSessionId ?? "";
+        if (_inspectorAutoOpenedFor == chat) return;
+        _inspectorAutoOpenedFor = chat;
+        RightPanelTabs.SelectedIndex = tab;
+        if (!RightPanelViewModel.IsOpen) RightPanelViewModel.Toggle();
+        if (tab == ArtifactsTab) await RightPanelViewModel.RefreshArtifactsAsync();
     }
 
     private async void GovernorToggle_Toggled(object sender, RoutedEventArgs e)
@@ -599,10 +753,56 @@ public sealed partial class MainWindow : Window
         await SwitchSpaceAnimatedAsync(target);
     }
 
-    private async void EphemeralToggle_Toggled(object sender, RoutedEventArgs e)
+    private async void EphemeralButton_Click(object sender, RoutedEventArgs e) =>
+        await ChatViewModel.SetEphemeralAsync(!ChatViewModel.IsEphemeral);
+
+    private const string ModelChoiceSettingKey = "ModelChoice";
+    private static readonly string?[] ModelChoices = { null, "main", "fast" }; // Auto | Main | Fast
+    private bool _syncingModelChoice;
+
+    /// <summary>Restores the saved Auto | Main | Fast choice into the switch and the chat.</summary>
+    private void RestoreModelChoice()
     {
-        if (ChatViewModel is null || _syncingSpaceChrome) return;
-        await ChatViewModel.SetEphemeralAsync(EphemeralToggle.IsOn);
+        string? saved = null;
+        try
+        {
+            saved = Windows.Storage.ApplicationData.Current.LocalSettings.Values[ModelChoiceSettingKey] as string;
+        }
+        catch (Exception ex)
+        {
+            App.Log($"reading saved model choice failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        var index = Math.Max(0, Array.IndexOf(ModelChoices, saved));
+        _syncingModelChoice = true;
+        ModelChoiceSwitch.SelectedIndex = index;
+        _syncingModelChoice = false;
+        ApplyModelChoice(index);
+    }
+
+    private void ModelChoiceSwitch_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncingModelChoice) return;
+        var index = Math.Clamp(ModelChoiceSwitch.SelectedIndex, 0, ModelChoices.Length - 1);
+        ApplyModelChoice(index);
+        try
+        {
+            Windows.Storage.ApplicationData.Current.LocalSettings.Values[ModelChoiceSettingKey] = ModelChoices[index] ?? "auto";
+        }
+        catch (Exception ex)
+        {
+            App.Log($"saving model choice failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private void ApplyModelChoice(int index)
+    {
+        ChatViewModel.ModelChoice = ModelChoices[index];
+        ModelChoiceNote.Text = index switch
+        {
+            1 => "Every turn on the main model; switching from fast takes a few seconds",
+            2 => "Every turn on the fast model; switching loads it (a few seconds). Images still go to main",
+            _ => "Quick turns run on the loaded model, thinking off",
+        };
     }
 
     private const string SpaceSettingKey = "ChatSpace";
@@ -643,7 +843,6 @@ public sealed partial class MainWindow : Window
         try
         {
             SpaceSwitch.SelectedIndex = freeform ? 0 : 1;
-            EphemeralToggle.IsOn = ChatViewModel.IsEphemeral;
         }
         finally
         {
@@ -651,9 +850,14 @@ public sealed partial class MainWindow : Window
         }
         WorkspaceButton.Visibility = freeform ? Visibility.Collapsed : Visibility.Visible;
         if (freeform) SetWorkspaceDropdownOpen(false);
-        var place = freeform ? "Freeform" : ProjectsViewModel.ActiveProject?.Name ?? "Default Workspace";
-        SessionLabel.Text = ChatViewModel.IsEphemeral ? $"{place} · Ephemeral (not saved)" : place;
-        RecentSessionsHeader.Text = freeform ? "Freeform sessions" : "Recent sessions";
+        // Ephemeral: the toolbar's eye lights up, and the line under the composer says so.
+        EphemeralIcon.Foreground = ChatViewModel.IsEphemeral
+            ? Themes.JarvisTheme.Brush("Accent")
+            : Themes.JarvisTheme.Brush("Label");
+        ToolTipService.SetToolTip(EphemeralButton, ChatViewModel.IsEphemeral
+            ? "Ephemeral chat is on: nothing is saved"
+            : "Ephemeral chat: nothing is saved");
+        UpdateComposerCaption();
         RightPanelViewModel.ProjectId = ChatViewModel.TurnProjectId;
         UpdateSessionHighlight();
     }
@@ -684,16 +888,23 @@ public sealed partial class MainWindow : Window
     {
         WorkspaceDropdown.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         var listVisibility = open ? Visibility.Collapsed : Visibility.Visible;
-        RecentSessionsHeader.Visibility = listVisibility;
         SessionsList.Visibility = listVisibility;
+        SessionSearch.Opacity = open ? 0 : 1; // opacity, so the list doesn't jump under the card
+        SessionSearchIcon.Opacity = open ? 0 : 1;
     }
 
     /// <summary>Light dismiss: any press outside the card (or its button) closes it. Registered
     /// with handledEventsToo so presses swallowed by controls still count.</summary>
     private void RootGrid_PointerPressedForDropdown(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (e.OriginalSource is not DependencyObject source) return;
+        if (StatusPopover.Visibility == Visibility.Visible
+            && !IsInside(source, StatusPopover) && !IsInside(source, StatusCapsule))
+        {
+            SetStatusPopoverOpen(false);
+        }
         if (WorkspaceDropdown.Visibility != Visibility.Visible) return;
-        if (e.OriginalSource is DependencyObject source && (IsInside(source, WorkspaceDropdown) || IsInside(source, WorkspaceButton))) return;
+        if (IsInside(source, WorkspaceDropdown) || IsInside(source, WorkspaceButton)) return;
         SetWorkspaceDropdownOpen(false);
     }
 
@@ -779,46 +990,67 @@ public sealed partial class MainWindow : Window
     public static string SessionRowLabel(string sessionId, string? lastMessage) =>
         SessionsViewModel.DisplayLabel(new Session { SessionId = sessionId, LastMessage = lastMessage });
 
-    private void SessionRow_Loaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is Jarvis_Glass.GlassSlab { Tag: Session session } row) ApplySessionHighlight(row, session);
-    }
-
-    /// <summary>Tints the active session's row accent, the rest neutral. Called whenever the
-    /// active session or the list changes; rows realised later pick it up in SessionRow_Loaded.</summary>
+    /// <summary>The active session's row sits on fill-secondary with its icon in accent;
+    /// called whenever the active session or the list changes, and per realised container.</summary>
     private void UpdateSessionHighlight()
     {
-        foreach (var item in SessionsViewModel.Sessions)
+        foreach (var group in _sessionGroups)
         {
-            if (SessionsList.ContainerFromItem(item) is ListViewItem container
-                && container.ContentTemplateRoot is Jarvis_Glass.GlassSlab row)
+            foreach (var item in group)
             {
-                ApplySessionHighlight(row, item);
+                if (SessionsList.ContainerFromItem(item) is ListViewItem container
+                    && container.ContentTemplateRoot is Grid row)
+                {
+                    ApplySessionHighlight(row, item);
+                }
             }
         }
     }
 
-    private void ApplySessionHighlight(Jarvis_Glass.GlassSlab row, Session session)
+    private void ApplySessionHighlight(Grid row, Session session)
     {
-        // Active: accent glass with on-accent text, like a selected iOS row. Rest: clear glass
-        // over the sidebar, text back to the style's label colour.
         var active = session.SessionId == ChatViewModel.ActiveSessionId;
-        row.Material = active ? Jarvis_Glass.GlassMaterial.Accent : Jarvis_Glass.GlassMaterial.Clear;
-        row.TintAmount = 0.14;
-        foreach (var child in row.Children)
+        row.Background = active ? Themes.JarvisTheme.Brush("FillSecondary") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent);
+        if (row.Children[0] is FontIcon icon)
         {
-            if (child is TextBlock label)
-            {
-                if (active) label.Foreground = Themes.JarvisTheme.Brush("OnAccent");
-                else label.ClearValue(TextBlock.ForegroundProperty);
-            }
-            else if (child is Button { Content: FontIcon icon })
-            {
-                if (active) icon.Foreground = Themes.JarvisTheme.Brush("OnAccent");
-                else icon.Foreground = Themes.JarvisTheme.Brush("LabelSecondary");
-            }
+            icon.Foreground = Themes.JarvisTheme.Brush(active ? "Accent" : "LabelSecondary");
+        }
+        if (row.Children[2] is Button more) more.Opacity = 0;
+    }
+
+    /// <summary>Hover: a faint fill (unless it is the active row) and the "..." button.</summary>
+    private void SessionRow_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not Grid { Tag: Session session } row) return;
+        if (session.SessionId != ChatViewModel.ActiveSessionId) row.Background = Themes.JarvisTheme.Brush("FillTertiary");
+        if (row.Children[2] is Button more) more.Opacity = 1;
+    }
+
+    private void SessionRow_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        // Leave "..." up while its menu is open (the pointer moves onto the menu).
+        if (sender is Grid { Tag: Session session } row
+            && !(row.Children[2] is Button { Flyout: Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase { IsOpen: true } }))
+        {
+            ApplySessionHighlight(row, session);
         }
     }
+
+    private List<SessionGroup> _sessionGroups = new();
+
+    /// <summary>Regroups the session list by date and applies the search; the ListView reads
+    /// the groups through a CollectionViewSource.</summary>
+    private void RebuildSessionGroups()
+    {
+        _sessionGroups = SessionGroup.Build(SessionsViewModel.Sessions, SessionSearch.Text, DateTime.Now);
+        SessionsList.ItemsSource = new Microsoft.UI.Xaml.Data.CollectionViewSource
+        {
+            Source = _sessionGroups,
+            IsSourceGrouped = true,
+        }.View;
+    }
+
+    private void SessionSearch_TextChanged(object sender, TextChangedEventArgs e) => RebuildSessionGroups();
 
     private async void DeleteSession_Click(object sender, RoutedEventArgs e)
     {
@@ -854,44 +1086,45 @@ public sealed partial class MainWindow : Window
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();
 
-    /// <summary>Set while the switch is being synced FROM the view model, so the Toggled it
-    /// raises doesn't start/stop the mic a second time.</summary>
-    private bool _syncingMicToggle;
-
-    private async void MicToggle_Toggled(object sender, RoutedEventArgs e)
+    private async void MicButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_syncingMicToggle) return;
-        if (MicToggle.IsOn && !VoiceViewModel.IsActive)
-        {
-            await VoiceViewModel.StartAsync();
-        }
-        else if (!MicToggle.IsOn && VoiceViewModel.IsActive)
-        {
-            VoiceViewModel.Stop();
-        }
+        if (!VoiceViewModel.IsActive) await VoiceViewModel.StartAsync();
+        else VoiceViewModel.Stop();
         UpdateVoiceStateText();
     }
 
+    /// <summary>The mic button lights while voice is on, and the line under the composer says
+    /// what it is doing (listening, working, speaking).</summary>
     private void UpdateVoiceStateText()
     {
-        if (!VoiceViewModel.IsSupported && !string.IsNullOrEmpty(VoiceViewModel.ErrorMessage))
+        var unavailable = !VoiceViewModel.IsSupported && !string.IsNullOrEmpty(VoiceViewModel.ErrorMessage);
+        MicButton.IsEnabled = !unavailable;
+        ToolTipService.SetToolTip(MicButton, unavailable ? "Mic unavailable" : VoiceViewModel.IsActive ? "Stop talking" : "Talk to Jarvis");
+        MicIcon.Foreground = Themes.JarvisTheme.Brush(VoiceViewModel.IsActive ? "Accent" : unavailable ? "LabelTertiary" : "Label");
+        UpdateComposerCaption();
+    }
+
+    /// <summary>One line under the composer: the voice state while the mic is on, else whether
+    /// this chat is kept, else where the model runs.</summary>
+    private void UpdateComposerCaption()
+    {
+        if (VoiceViewModel.IsActive)
         {
-            VoiceStateText.Text = "Mic unavailable";
-            MicToggle.IsEnabled = false;
+            ComposerCaption.Text = VoiceViewModel.State switch
+            {
+                Jarvis.Core.Models.VoiceState.Listening => "Listening",
+                Jarvis.Core.Models.VoiceState.Armed => "Go ahead",
+                Jarvis.Core.Models.VoiceState.Thinking => "Working",
+                Jarvis.Core.Models.VoiceState.Speaking => "Speaking",
+                _ => "Voice on",
+            };
+            ComposerCaption.Foreground = Themes.JarvisTheme.Brush("Accent");
             return;
         }
-
-        _syncingMicToggle = true;
-        MicToggle.IsOn = VoiceViewModel.IsActive;
-        _syncingMicToggle = false;
-        VoiceStateText.Text = VoiceViewModel.IsActive ? VoiceViewModel.State switch
-        {
-            Jarvis.Core.Models.VoiceState.Listening => "Listening",
-            Jarvis.Core.Models.VoiceState.Armed => "Go ahead",
-            Jarvis.Core.Models.VoiceState.Thinking => "Working",
-            Jarvis.Core.Models.VoiceState.Speaking => "Speaking",
-            _ => "Voice off",
-        } : "";
+        ComposerCaption.Foreground = Themes.JarvisTheme.Brush("LabelTertiary");
+        ComposerCaption.Text = ChatViewModel.IsEphemeral
+            ? "Ephemeral chat · nothing from it is saved"
+            : "Runs on this PC · nothing leaves it";
     }
 
     private async Task HandleVoiceCommandAsync(string query)
@@ -995,7 +1228,7 @@ public sealed partial class MainWindow : Window
                 }
             }
             SendButton.IsEnabled = true;
-            ComposerBox.Placeholder = "Message Jarvis...";
+            ComposerBox.Placeholder = "Message Jarvis";
         }
 
         await ChatViewModel.SendMessageAsync(text, uploaded);

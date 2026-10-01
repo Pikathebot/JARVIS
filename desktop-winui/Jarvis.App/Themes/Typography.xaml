@@ -135,4 +135,5 @@
     <x:Double x:Key="ControlSmall">28</x:Double>
     <x:Double x:Key="ControlMedium">36</x:Double>
     <x:Double x:Key="ControlLarge">44</x:Double>
+
 </ResourceDictionary>

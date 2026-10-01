@@ -6,25 +6,31 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
-    <Expander x:Name="Root" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Padding="0">
-        <Expander.Header>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE90F;" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
-                <TextBlock x:Name="ToolName" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
-                <!-- Status badge: icon, word and colour (the fill is the colour at 14%); set in code. -->
-                <Border x:Name="StatusBadge" CornerRadius="{StaticResource PillCornerRadius}" Padding="6,2,8,2" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <FontIcon x:Name="StatusIcon" Style="{StaticResource JarvisIcon}" FontSize="12" VerticalAlignment="Center" />
-                        <TextBlock x:Name="StatusText" Style="{StaticResource CaptionEmphasisText}" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </Expander.Header>
-        <StackPanel Spacing="6" Padding="4">
+    <!-- One line per tool call: status icon, the tool, the status word, a chevron. Tapping it
+         opens the arguments and result underneath. -->
+    <StackPanel MaxWidth="480" HorizontalAlignment="Left" Spacing="4" Margin="0,0,0,2">
+        <Button x:Name="Row" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                Height="30" Padding="10,0" CornerRadius="{StaticResource RowCornerRadius}" BorderThickness="0"
+                Background="{ThemeResource FillTertiaryBrush}" Click="Row_Click">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon x:Name="StatusIcon" Style="{StaticResource JarvisIcon}" FontSize="14" VerticalAlignment="Center" />
+                <TextBlock x:Name="ToolName" Grid.Column="1" Style="{StaticResource FootnoteText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                <TextBlock x:Name="StatusText" Grid.Column="2" Style="{StaticResource FootnoteText}" VerticalAlignment="Center" />
+                <FontIcon x:Name="Chevron" Grid.Column="3" Style="{StaticResource JarvisIcon}" Glyph="&#xE76C;" FontSize="10"
+                          Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+            </Grid>
+        </Button>
+        <StackPanel x:Name="Detail" Visibility="Collapsed" Spacing="6" Padding="10,4,10,6">
             <TextBlock Text="Arguments" Style="{StaticResource SecondaryFootnoteText}" />
-            <TextBlock x:Name="ArgsText" Style="{StaticResource DataText}" TextWrapping="Wrap" />
+            <TextBlock x:Name="ArgsText" Style="{StaticResource DataText}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
             <TextBlock x:Name="ResultLabel" Text="Result" Style="{StaticResource SecondaryFootnoteText}" />
-            <TextBlock x:Name="ResultText" Style="{StaticResource DataText}" TextWrapping="Wrap" />
+            <TextBlock x:Name="ResultText" Style="{StaticResource DataText}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
         </StackPanel>
-    </Expander>
+    </StackPanel>
 </UserControl>

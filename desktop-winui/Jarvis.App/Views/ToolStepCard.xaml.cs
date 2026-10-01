@@ -6,7 +6,8 @@ using Microsoft.UI.Xaml.Media;
 
 namespace Jarvis_App.Views;
 
-/// <summary>Native port of ToolStepCard.tsx: collapsible inline tool call card with a status badge.</summary>
+/// <summary>One tool call as a single line (status icon, tool, status word) that opens to
+/// its arguments and result.</summary>
 public sealed partial class ToolStepCard : UserControl
 {
     public ToolStepCard(ToolStep step)
@@ -17,7 +18,7 @@ public sealed partial class ToolStepCard : UserControl
         var (label, kind) = step.Status switch
         {
             ToolStatus.Running => ("Running", StatusKind.Warning),
-            ToolStatus.Success => ("Completed", StatusKind.Success),
+            ToolStatus.Success => ("Done", StatusKind.Success),
             ToolStatus.Error => ("Failed", StatusKind.Error),
             _ => ("Unknown", StatusKind.Neutral),
         };
@@ -26,7 +27,6 @@ public sealed partial class ToolStepCard : UserControl
         StatusText.Foreground = new SolidColorBrush(color);
         StatusIcon.Glyph = StatusStyle.GlyphOf(kind, inProgress: step.Status == ToolStatus.Running);
         StatusIcon.Foreground = new SolidColorBrush(color);
-        StatusBadge.Background = JarvisTheme.Tinted(color, 0.14);
 
         try
         {
@@ -55,5 +55,12 @@ public sealed partial class ToolStepCard : UserControl
                 ResultText.Text = step.Result.ToString() ?? "";
             }
         }
+    }
+
+    private void Row_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        var open = Detail.Visibility != Microsoft.UI.Xaml.Visibility.Visible;
+        Detail.Visibility = open ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        Chevron.Glyph = open ? "\uE70D" : "\uE76C"; // chevron down / right
     }
 }
