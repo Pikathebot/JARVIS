@@ -26,6 +26,11 @@
                           Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
             </Grid>
         </Button>
+        <!-- look_at_screen: the screenshot itself, open in the default viewer on click. -->
+        <Button x:Name="ShotButton" Visibility="Collapsed" Padding="0" BorderThickness="0" Background="Transparent"
+                HorizontalAlignment="Left" CornerRadius="{StaticResource RowCornerRadius}" Click="Shot_Click">
+            <Image x:Name="ShotImage" MaxHeight="180" MaxWidth="320" Stretch="Uniform" />
+        </Button>
         <StackPanel x:Name="Detail" Visibility="Collapsed" Spacing="6" Padding="10,4,10,6">
             <TextBlock Text="Arguments" Style="{StaticResource SecondaryFootnoteText}" />
             <TextBlock x:Name="ArgsText" Style="{StaticResource DataText}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />

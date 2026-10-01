@@ -80,12 +80,12 @@ def _same_fact(a: str, b: str) -> bool:
     return len(wa & wb) / len(wa | wb) >= 0.75
 
 
-def _find(db: Session, memory_id: str, project_id: Optional[str]) -> tuple[Optional[Memory], str]:
+def _find(db: Session, memory_id: str, project_id: Optional[str], any_scope: bool = False) -> tuple[Optional[Memory], str]:
     key = (memory_id or "").strip().strip("[]").replace("-", "").lower()
     if len(key) < 4:
         return None, "Error: give the memory's id as shown in the list (8 characters)."
-    rows = [m for m in db.exec(_scope_filter(select(Memory), project_id)).all()
-            if m.id.replace("-", "").lower().startswith(key)]
+    stmt = select(Memory) if any_scope else _scope_filter(select(Memory), project_id)
+    rows = [m for m in db.exec(stmt).all() if m.id.replace("-", "").lower().startswith(key)]
     if not rows:
         return None, f"Error: no memory with id '{memory_id}' here."
     if len(rows) > 1:
@@ -232,3 +232,21 @@ def forget(
     _note_forgotten(session_id, user_message, content)
     logger.info("Memory %s forgotten (kept in the bin for %d days)", sid, memory_bin.KEEP_DAYS)
     return f"Forgot [{sid}]: {content}"
+
+
+def undo_remember(memory_id: str) -> Optional[str]:
+    """The Undo on a "Remembered: ..." chat line: move that memory to the bin (so the undo can
+    itself be undone) by the short id the line shows, in any scope. Returns its content, or
+    None when no single memory matches."""
+    from app.memory import memory_bin
+
+    with session_factory() as db:
+        row, _ = _find(db, memory_id, None, any_scope=True)
+        if row is None:
+            return None
+        content = row.content
+        memory_bin.add(row, reason="Undo in chat")
+        db.delete(row)
+        db.commit()
+    logger.info("Memory %s removed by Undo (kept in the bin)", short_id(memory_id))
+    return content

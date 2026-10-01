@@ -13,7 +13,23 @@ public sealed partial class ToolStepCard : UserControl
     public ToolStepCard(ToolStep step)
     {
         InitializeComponent();
-        ToolName.Text = step.Tool;
+        ToolName.Text = ToolStepText.RowLabel(step);
+        if (ToolName.Text != step.Tool) ToolTipService.SetToolTip(ToolName, ToolName.Text);
+
+        _shotPath = ToolStepText.ScreenshotPath(step);
+        if (_shotPath is not null)
+        {
+            try
+            {
+                ShotImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(_shotPath)) { DecodePixelHeight = 360 };
+                ShotButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                ToolTipService.SetToolTip(ShotButton, "Open the screenshot");
+            }
+            catch
+            {
+                _shotPath = null; // unreadable: the row alone, as before
+            }
+        }
 
         var (label, kind) = step.Status switch
         {
@@ -54,6 +70,21 @@ public sealed partial class ToolStepCard : UserControl
             {
                 ResultText.Text = step.Result.ToString() ?? "";
             }
+        }
+    }
+
+    private readonly string? _shotPath;
+
+    private void Shot_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (_shotPath is null) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_shotPath) { UseShellExecute = true });
+        }
+        catch
+        {
+            // no viewer registered for .png: nothing to do
         }
     }
 

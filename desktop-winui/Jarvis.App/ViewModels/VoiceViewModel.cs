@@ -374,6 +374,7 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
             }
             var wav = WavEncoder.EncodeMono16Bit(samples, _sampleRate);
             using var stream = new MemoryStream(wav);
+            Services.ForegroundGrant.ToBackend();
             var result = await _api.ListenChunkAsync(stream, _sessionId).ConfigureAwait(false);
             App.LogVoice($"listen result: state {result.Session.State}, respond {result.ShouldRespond}, " +
                          $"transcript '{result.Transcript}', query '{result.Query}'");

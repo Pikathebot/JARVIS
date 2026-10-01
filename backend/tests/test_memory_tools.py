@@ -338,3 +338,11 @@ def test_old_bin_entries_expire(bin_file, monkeypatch):
 
     memory_bin.add(Row())
     assert [e["id"] for e in memory_bin.list_entries()] == ["new-1"]
+
+
+def test_undo_on_a_remembered_line_moves_it_to_the_bin_in_any_scope(factory, bin_file):
+    mid = _id_in(remember("Uses tabs, not spaces", kind="project", project_id="p1"))
+    assert memory_tool.undo_remember(mid) == "Uses tabs, not spaces"
+    assert _rows(factory) == []
+    assert memory_bin.restore(mid, factory) == "Uses tabs, not spaces"  # the undo is undoable
+    assert memory_tool.undo_remember("zzzzzzzz") is None

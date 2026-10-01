@@ -28,6 +28,10 @@ public sealed class ToolStep
 
     /// <summary>Raw, not-yet-valid-JSON argument text streamed via tool_draft.</summary>
     public string? RawArgs { get; set; }
+
+    /// <summary>What the chat line says after its Undo was used (remember/forget lines), kept on
+    /// the step so a re-render does not offer the Undo again.</summary>
+    public string? UndoneText { get; set; }
 }
 
 public sealed class PendingConfirmation

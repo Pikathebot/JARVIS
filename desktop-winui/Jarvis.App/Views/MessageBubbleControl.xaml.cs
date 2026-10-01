@@ -22,6 +22,10 @@ public sealed partial class MessageBubbleControl : UserControl
     public event Action<PendingConfirmation>? ApproveRequested;
     public event Action<PendingConfirmation>? DenyRequested;
 
+    /// <summary>The Undo on a "Remembered/Forgot" line; set by the window that hosts the bubble.
+    /// Returns what the line says afterwards, or null when nothing changed.</summary>
+    public Func<ToolStep, MemoryLine, Task<string?>>? UndoMemory { get; set; }
+
     private ChatMessage? _message;
 
     /// <summary>
@@ -224,7 +228,9 @@ public sealed partial class MessageBubbleControl : UserControl
         ToolStepsHost.Items.Clear();
         foreach (var step in message.ToolSteps)
         {
-            ToolStepsHost.Items.Add(new ToolStepCard(step));
+            ToolStepsHost.Items.Add(ToolStepText.Memory(step) is { } line
+                ? new MemoryLineCard(step, line, UndoMemory)
+                : new ToolStepCard(step));
         }
     }
 

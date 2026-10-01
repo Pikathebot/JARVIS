@@ -280,6 +280,20 @@ public sealed class JarvisApiClient
         return response.IsSuccessStatusCode;
     }
 
+    /// <summary>Undo on a "Remembered: ..." line: the memory goes to the bin (by the short id).</summary>
+    public async Task<bool> UndoRememberAsync(string shortId, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync($"/api/memories/{Uri.EscapeDataString(shortId)}/undo-remember", null, ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <summary>Undo on a "Forgot: ..." line: the memory comes back from the bin.</summary>
+    public async Task<bool> RestoreForgottenMemoryAsync(string shortId, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync($"/api/memories/bin/{Uri.EscapeDataString(shortId)}/restore", null, ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode;
+    }
+
     // ==========================================
     // Voice (status/output toggle; hands-free session lives below)
     // ==========================================

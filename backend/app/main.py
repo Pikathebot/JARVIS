@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -571,6 +572,9 @@ class HealthResponse(BaseModel):
     active_mcp_servers_count: int
     available_skills_count: int
     voice_enabled: bool
+    # The client grants this process the right to raise windows (AllowSetForegroundWindow);
+    # without it Windows' foreground lock refuses focus_app.
+    pid: int = 0
 
 
 class GovernorPauseRequest(BaseModel):
@@ -635,7 +639,8 @@ async def health_check():
         active_sessions_count=sessions_count,
         active_mcp_servers_count=len([s for s in mcp_servers if s["connected"]]),
         available_skills_count=len(skills),
-        voice_enabled=wake_detector.is_listening
+        voice_enabled=wake_detector.is_listening,
+        pid=os.getpid(),
     )
 
 

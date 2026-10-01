@@ -40,6 +40,9 @@ public sealed class HealthResponse
     [JsonPropertyName("voice_enabled")]
     public bool? VoiceEnabled { get; set; }
 
+    /// <summary>The backend process, granted the right to raise windows (focus_app).</summary>
+    public int Pid { get; set; }
+
     [JsonPropertyName("ollama_connected")]
     public bool? OllamaConnected { get; set; }
 

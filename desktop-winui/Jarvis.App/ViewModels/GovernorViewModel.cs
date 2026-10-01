@@ -105,6 +105,7 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
     private void Apply(HealthResponse health)
     {
         ActiveBackend = health.ActiveBackend;
+        Services.ForegroundGrant.BackendPid = health.Pid;
         ConfiguredModel = health.ConfiguredModel;
         AvailableModels = health.AvailableModels;
         LlamaConnected = health.LlamaConnected;

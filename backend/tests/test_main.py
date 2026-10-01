@@ -1,3 +1,4 @@
+import os
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -13,6 +14,7 @@ async def test_health_check():
     data = response.json()
     assert "status" in data
     assert "active_backend" in data
+    assert data["pid"] == os.getpid()  # the client grants it the right to raise windows
 
 
 @pytest.mark.anyio

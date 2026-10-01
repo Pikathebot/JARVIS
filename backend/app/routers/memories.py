@@ -125,6 +125,17 @@ def restore_forgotten_memory(memory_id: str):
     return {"restored": memory_id, "content": content}
 
 
+@router.post("/{memory_id}/undo-remember", response_model=dict[str, Any])
+def undo_remembered_memory(memory_id: str):
+    """The Undo on a "Remembered: ..." line: the memory goes to the bin, restorable from there.
+    Takes the short id the line shows."""
+    from app.agent.tools import memory as memory_tools
+    content = memory_tools.undo_remember(memory_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"No memory '{memory_id}' to undo")
+    return {"undone": memory_id, "content": content}
+
+
 @router.get("/{memory_id}", response_model=MemoryRead)
 def get_memory(
     memory_id: str,

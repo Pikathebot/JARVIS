@@ -461,9 +461,17 @@ every fixed drive; list_processes groups per app (`group=false` for PIDs), idle 
 inside a tool result and the 9B read "7351" off a test image -- 1280 px max, saved to
 `backend/data/screenshots` (temp for off-the-record), runs when the message asks to look, says
 "can't see" when no projector is loaded; later turns get text only. A test (test_file_tools)
-had been writing backups into the repo root -- moved to tmp. Still open (all WinUI): the query
-on web_search's collapsed row, the "Remembered/Forgot ... Undo" chat line, AllowSetForegroundWindow
-for focus_app, showing screenshots in the chat history; and PDF text in grep. (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
+had been writing backups into the repo root -- moved to tmp. Batch 5 committed 308016a after the
+user checked it on device. **(6) WinUI side, built 2026-10-01, app builds clean, 690 tests pass,
+unverified on device:** collapsed tool rows say what they did ("Searched: ...", "Read: <url>",
+"Looked at the screen"); look_at_screen's screenshot shows as a thumbnail under its row (click
+opens it); remember/forget that changed something render as a "Remembered: ... / Forgot: ..."
+line with Undo (`MemoryLineCard`; Undo on remembered -> new `POST /api/memories/{id}/undo-remember`,
+which moves it to the bin; on forgotten -> the bin restore); reopened chats rebuild their tool
+rows from the stored tool rows (they were dropped before), so screenshots and memory lines come
+back; `/health` reports the backend `pid` and the client calls `AllowSetForegroundWindow` for it
+when a turn starts (typed or voice) -- `ForegroundGrant`. Still open: PDF text in grep (needs
+pypdf, not installed). (3) behaviour -- fixed tool sets + routing, read/write outside the workspace with
 approval, backups, clipboard tiers; (4) new tools -- remind_me, git push/pull/switch/restore,
 patch_artifact, news search, media session. Earlier notes:
 - `launch_app`: **bug** -- `permissions.py` ~309 checks `"\temp\\"`, `"\tmp\\"`,
@@ -516,7 +524,8 @@ snapshots). Unverified on device: the status popover (meters, Governor, Free VRA
 hover "..." and search, hiding the sidebar, the mic button, the ephemeral eye, tool-step rows,
 inspector auto-open, window drag and caption buttons. The transcript's text fades under the
 popover (glass can't frost XAML). Known: a SystemBackdrop ArgumentException is logged (caught)
-when the appearance changes.
+when the appearance changes. **Confirmed on device by the user 2026-10-01 ("worked great"),
+committed 2242c90** together with the model choice below.
 
 **Model choice (2026-09-28, the user: "works good" on device):** the status popover's "Answer with" switch --
 Auto | Main | Fast -- sent as the turn's `model` (`ChatViewModel.ModelChoice`), saved in

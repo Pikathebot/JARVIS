@@ -1355,5 +1355,6 @@ public sealed partial class MainWindow : Window
         bubble.Tag = true;
         bubble.ApproveRequested += async confirmation => await ChatViewModel.ConfirmActionAsync(confirmation);
         bubble.DenyRequested += confirmation => ChatViewModel.DenyAction(confirmation);
+        bubble.UndoMemory = ChatViewModel.UndoMemoryAsync;
     }
 }

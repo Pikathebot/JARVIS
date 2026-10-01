@@ -362,17 +362,42 @@ public partial class ChatViewModel : ObservableObject
             Post(() =>
             {
                 if (ActiveSessionId != sessionId) return; // user already switched again
+                // Stored tool rows come before the answer they led to: they go back on it as
+                // its tool steps, so a reopened chat shows its tool rows, "Remembered: ..."
+                // lines and screenshots as they were.
+                var steps = new List<ToolStep>();
                 foreach (var entry in raw)
                 {
                     var msg = MapRawMessage(entry);
-                    // Stored tool results are the model's memory of what a tool returned, not
-                    // part of the transcript the user saw.
-                    if (msg.Role == MessageRole.Tool) continue;
+                    if (msg.Role == MessageRole.Tool)
+                    {
+                        steps.Add(MapToolStep(entry));
+                        continue;
+                    }
+                    if (steps.Count > 0)
+                    {
+                        if (msg.Role != MessageRole.Assistant)
+                        {
+                            // tools that ran in a turn which ended without an answer (a confirmation)
+                            Messages.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
+                            Messages[^1].ToolSteps.AddRange(steps);
+                        }
+                        else
+                        {
+                            msg.ToolSteps.AddRange(steps);
+                        }
+                        steps.Clear();
+                    }
                     Messages.Add(msg);
                     if (msg.Role == MessageRole.Assistant)
                     {
                         ActiveReasoningMessage = msg;
                     }
+                }
+                if (steps.Count > 0)
+                {
+                    Messages.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
+                    Messages[^1].ToolSteps.AddRange(steps);
                 }
             });
         }
@@ -406,6 +431,56 @@ public partial class ChatViewModel : ObservableObject
         };
     }
 
+    /// <summary>A stored tool row (its result, and the call it carries) as a finished tool step.</summary>
+    private static ToolStep MapToolStep(Dictionary<string, object?> entry)
+    {
+        var result = ReadString(entry, "content") ?? "";
+        var step = new ToolStep
+        {
+            Tool = ReadString(entry, "name") ?? "tool",
+            Result = result,
+            Status = result.StartsWith("Error", StringComparison.Ordinal) ? ToolStatus.Error : ToolStatus.Success,
+        };
+        try
+        {
+            if (entry.TryGetValue("tool_calls", out var calls) && calls is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } list
+                && list.GetArrayLength() > 0
+                && list[0].TryGetProperty("function", out var function)
+                && function.TryGetProperty("arguments", out var args))
+            {
+                var json = args.ValueKind == System.Text.Json.JsonValueKind.String ? args.GetString() ?? "{}" : args.GetRawText();
+                step.Args = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(json) ?? new();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // malformed stored arguments: the row shows without them
+        }
+        return step;
+    }
+
+    /// <summary>The Undo on a "Remembered: ..." / "Forgot: ..." line. Returns what the line says
+    /// afterwards, or null (and the error bar says why) when nothing changed.</summary>
+    public async Task<string?> UndoMemoryAsync(ToolStep step, Views.MemoryLine line)
+    {
+        if (line.ShortId is null) return null;
+        try
+        {
+            var ok = line.IsForget
+                ? await _api.RestoreForgottenMemoryAsync(line.ShortId)
+                : await _api.UndoRememberAsync(line.ShortId);
+            if (ok) return line.IsForget ? $"Restored: {line.Content}" : $"Removed (kept in the bin): {line.Content}";
+            Error = line.IsForget
+                ? "That memory isn't in the bin any more (already restored, or older than 30 days)."
+                : "That memory is already gone.";
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        return null;
+    }
+
     private static string? ReadString(Dictionary<string, object?> entry, string key)
     {
         if (!entry.TryGetValue(key, out var value) || value is null) return null;
@@ -425,6 +500,8 @@ public partial class ChatViewModel : ObservableObject
 
         IsLoading = true;
         Error = null;
+        // The user just acted in this window, so it may pass on the right to raise windows.
+        Services.ForegroundGrant.ToBackend();
 
         _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
         Messages.Add(_streamingMessage);
