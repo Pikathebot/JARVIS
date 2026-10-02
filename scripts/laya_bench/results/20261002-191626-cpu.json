@@ -1,0 +1,3239 @@
+{
+ "summary": {
+  "device": "cpu",
+  "model": "convaiinnovations/laya",
+  "subfolder": null,
+  "head_max_len": 320,
+  "max_len": 512,
+  "cases": 92,
+  "load_s": 19.8,
+  "action_acc": 0.717,
+  "full_acc": 0.598,
+  "compound_acc": 0.946,
+  "per_action_full": {
+   "compose": "3/4",
+   "media": "1/5",
+   "none": "4/4",
+   "open_app": "11/14",
+   "open_folder": "3/3",
+   "open_website": "1/7",
+   "question": "4/6",
+   "reminder": "2/4",
+   "scroll": "3/5",
+   "shortcut": "10/14",
+   "stop": "3/3",
+   "system": "4/4",
+   "type_text": "1/6",
+   "volume": "3/6",
+   "web_search": "2/7"
+  },
+  "per_arg": {
+   "compose.submit": "3/4",
+   "media.op": "1/5",
+   "open_app.app": "11/14",
+   "open_folder.folder": "3/3",
+   "open_website.site": "1/7",
+   "reminder.text": "2/3",
+   "reminder.when": "3/4",
+   "scroll.amount": "2/3",
+   "scroll.direction": "4/5",
+   "shortcut.shortcut": "10/14",
+   "system.op": "4/4",
+   "type_text.submit": "1/6",
+   "type_text.text": "2/6",
+   "volume.level": "1/1",
+   "volume.op": "3/6",
+   "web_search.engine": "4/7",
+   "web_search.query": "2/7"
+  },
+  "ms_stage1_p50": 2587,
+  "ms_stage1_p90": 2730,
+  "ms_stage2_p50": 426,
+  "ms_stage2_p90": 891,
+  "ms_total_p50": 3041.7,
+  "ms_total_p90": 3527.9,
+  "ms_total_mean": 3058.2
+ },
+ "rows": [
+  {
+   "u": "open chrome",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Google Chrome"
+   },
+   "got_args": {
+    "app": "Google Chrome"
+   },
+   "compound": false,
+   "confidence": 0.849,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9951,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0001,
+    "compose": 0.0001,
+    "shortcut": 0.0016,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.003,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0001
+   },
+   "ms": {
+    "stage1": 2632,
+    "stage2": 389
+   }
+  },
+  {
+   "u": "Jarvis, launch spotify",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Spotify"
+   },
+   "got_args": {
+    "app": "Spotify"
+   },
+   "compound": false,
+   "confidence": 0.974,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9987,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0001,
+    "compose": 0.0002,
+    "shortcut": 0.0003,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0005,
+    "open_folder": 0.0,
+    "system": 0.0002,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0001
+   },
+   "ms": {
+    "stage1": 2817,
+    "stage2": 358
+   }
+  },
+  {
+   "u": "can you open visual studio code",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Visual Studio Code"
+   },
+   "got_args": {
+    "app": "Visual Studio Code"
+   },
+   "compound": false,
+   "confidence": 0.951,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9522,
+    "open_website": 0.0001,
+    "web_search": 0.0001,
+    "type_text": 0.0008,
+    "compose": 0.0015,
+    "shortcut": 0.0092,
+    "scroll": 0.0001,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0281,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0011,
+    "none": 0.0067
+   },
+   "ms": {
+    "stage1": 2655,
+    "stage2": 831
+   }
+  },
+  {
+   "u": "switch to discord",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Discord"
+   },
+   "got_args": {
+    "app": "Discord"
+   },
+   "compound": false,
+   "confidence": 0.995,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9951,
+    "open_website": 0.0001,
+    "web_search": 0.0001,
+    "type_text": 0.0003,
+    "compose": 0.0011,
+    "shortcut": 0.0018,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0001,
+    "open_folder": 0.0,
+    "system": 0.0002,
+    "reminder": 0.0001,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.001
+   },
+   "ms": {
+    "stage1": 2869,
+    "stage2": 346
+   }
+  },
+  {
+   "u": "bring up steam",
+   "want_action": "open_app",
+   "got_action": "compose",
+   "want_args": {
+    "app": "Steam"
+   },
+   "got_args": {
+    "instruction": "bring up steam",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 0.278,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0727,
+    "open_website": 0.0213,
+    "web_search": 0.0076,
+    "type_text": 0.1035,
+    "compose": 0.2781,
+    "shortcut": 0.0936,
+    "scroll": 0.0005,
+    "volume": 0.1721,
+    "media": 0.1056,
+    "open_folder": 0.0002,
+    "system": 0.0102,
+    "reminder": 0.0007,
+    "question": 0.0024,
+    "stop": 0.0456,
+    "none": 0.0859
+   },
+   "ms": {
+    "stage1": 2781,
+    "stage2": 278
+   }
+  },
+  {
+   "u": "start blender for me",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Blender"
+   },
+   "got_args": {
+    "app": "Blender"
+   },
+   "compound": false,
+   "confidence": 0.636,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9995,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0001,
+    "shortcut": 0.0001,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0002,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2588,
+    "stage2": 834
+   }
+  },
+  {
+   "u": "open file explorer",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "File Explorer"
+   },
+   "got_args": {
+    "app": "File Explorer"
+   },
+   "compound": false,
+   "confidence": 0.747,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.7474,
+    "open_website": 0.0156,
+    "web_search": 0.0084,
+    "type_text": 0.0161,
+    "compose": 0.0239,
+    "shortcut": 0.0702,
+    "scroll": 0.0005,
+    "volume": 0.0003,
+    "media": 0.0006,
+    "open_folder": 0.0577,
+    "system": 0.0398,
+    "reminder": 0.0003,
+    "question": 0.0001,
+    "stop": 0.0012,
+    "none": 0.0178
+   },
+   "ms": {
+    "stage1": 2609,
+    "stage2": 568
+   }
+  },
+  {
+   "u": "fire up obs",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "OBS Studio (64bit)"
+   },
+   "got_args": {
+    "app": "OBS Studio (64bit)"
+   },
+   "compound": false,
+   "confidence": 0.929,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9577,
+    "open_website": 0.0006,
+    "web_search": 0.0006,
+    "type_text": 0.0023,
+    "compose": 0.0049,
+    "shortcut": 0.0162,
+    "scroll": 0.0001,
+    "volume": 0.0003,
+    "media": 0.0011,
+    "open_folder": 0.0,
+    "system": 0.0053,
+    "reminder": 0.0001,
+    "question": 0.0001,
+    "stop": 0.0008,
+    "none": 0.0099
+   },
+   "ms": {
+    "stage1": 2696,
+    "stage2": 364
+   }
+  },
+  {
+   "u": "open the settings",
+   "want_action": "open_app",
+   "got_action": "none",
+   "want_args": {
+    "app": "Settings"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.441,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0513,
+    "open_website": 0.0421,
+    "web_search": 0.0085,
+    "type_text": 0.1271,
+    "compose": 0.1325,
+    "shortcut": 0.0923,
+    "scroll": 0.001,
+    "volume": 0.0089,
+    "media": 0.0041,
+    "open_folder": 0.0004,
+    "system": 0.0611,
+    "reminder": 0.0013,
+    "question": 0.0047,
+    "stop": 0.0236,
+    "none": 0.441
+   },
+   "ms": {
+    "stage1": 2606
+   }
+  },
+  {
+   "u": "open task manager",
+   "want_action": "open_app",
+   "got_action": "system",
+   "want_args": {
+    "app": "Task Manager"
+   },
+   "got_args": {
+    "op": "show_desktop"
+   },
+   "compound": false,
+   "confidence": 0.519,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0216,
+    "open_website": 0.0003,
+    "web_search": 0.0002,
+    "type_text": 0.0003,
+    "compose": 0.0006,
+    "shortcut": 0.0036,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.9724,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0002,
+    "none": 0.0007
+   },
+   "ms": {
+    "stage1": 2667,
+    "stage2": 311
+   }
+  },
+  {
+   "u": "launch word",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Word"
+   },
+   "got_args": {
+    "app": "Word"
+   },
+   "compound": false,
+   "confidence": 0.677,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9935,
+    "open_website": 0.0001,
+    "web_search": 0.0001,
+    "type_text": 0.0003,
+    "compose": 0.0009,
+    "shortcut": 0.0038,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0001,
+    "open_folder": 0.0,
+    "system": 0.0005,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0006
+   },
+   "ms": {
+    "stage1": 2702,
+    "stage2": 318
+   }
+  },
+  {
+   "u": "open unity hub",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Unity Hub"
+   },
+   "got_args": {
+    "app": "Unity Hub"
+   },
+   "compound": false,
+   "confidence": 0.865,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9954,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0002,
+    "compose": 0.0004,
+    "shortcut": 0.0018,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0012,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0008
+   },
+   "ms": {
+    "stage1": 2472,
+    "stage2": 387
+   }
+  },
+  {
+   "u": "go to youtube",
+   "want_action": "open_website",
+   "got_action": "web_search",
+   "want_args": {
+    "site": "youtube"
+   },
+   "got_args": {
+    "engine": "youtube",
+    "query": "go to youtube"
+   },
+   "compound": false,
+   "confidence": 0.202,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.1558,
+    "open_website": 0.0812,
+    "web_search": 0.2021,
+    "type_text": 0.0366,
+    "compose": 0.1071,
+    "shortcut": 0.161,
+    "scroll": 0.0013,
+    "volume": 0.0039,
+    "media": 0.0574,
+    "open_folder": 0.0003,
+    "system": 0.0568,
+    "reminder": 0.0004,
+    "question": 0.0002,
+    "stop": 0.0072,
+    "none": 0.1285
+   },
+   "ms": {
+    "stage1": 2494,
+    "stage2": 545
+   }
+  },
+  {
+   "u": "open gmail",
+   "want_action": "open_website",
+   "got_action": "open_app",
+   "want_args": {
+    "site": "gmail"
+   },
+   "got_args": {
+    "app": null
+   },
+   "compound": false,
+   "confidence": 0.996,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.996,
+    "open_website": 0.0011,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0001,
+    "shortcut": 0.0007,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0019,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0002
+   },
+   "ms": {
+    "stage1": 2611,
+    "stage2": 315
+   }
+  },
+  {
+   "u": "pull up github",
+   "want_action": "open_website",
+   "got_action": "open_website",
+   "want_args": {
+    "site": "github"
+   },
+   "got_args": {
+    "url": "https://github.com",
+    "site": "github"
+   },
+   "compound": false,
+   "confidence": 0.755,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.1174,
+    "open_website": 0.7552,
+    "web_search": 0.0091,
+    "type_text": 0.0112,
+    "compose": 0.0157,
+    "shortcut": 0.0298,
+    "scroll": 0.0003,
+    "volume": 0.0002,
+    "media": 0.0006,
+    "open_folder": 0.0202,
+    "system": 0.0302,
+    "reminder": 0.0003,
+    "question": 0.0003,
+    "stop": 0.0013,
+    "none": 0.0083
+   },
+   "ms": {
+    "stage1": 2657,
+    "stage2": 355
+   }
+  },
+  {
+   "u": "take me to reddit",
+   "want_action": "open_website",
+   "got_action": "open_app",
+   "want_args": {
+    "site": "reddit"
+   },
+   "got_args": {
+    "app": "SEKIRO (me3)"
+   },
+   "compound": false,
+   "confidence": 0.852,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.8515,
+    "open_website": 0.022,
+    "web_search": 0.0058,
+    "type_text": 0.0146,
+    "compose": 0.0385,
+    "shortcut": 0.0202,
+    "scroll": 0.0008,
+    "volume": 0.0007,
+    "media": 0.0024,
+    "open_folder": 0.0001,
+    "system": 0.0098,
+    "reminder": 0.0003,
+    "question": 0.0004,
+    "stop": 0.004,
+    "none": 0.029
+   },
+   "ms": {
+    "stage1": 2276,
+    "stage2": 645
+   }
+  },
+  {
+   "u": "go to stackoverflow dot com",
+   "want_action": "open_website",
+   "got_action": "open_website",
+   "want_args": {
+    "site": "stackoverflow.com"
+   },
+   "got_args": {
+    "url": "https://www.google.com",
+    "site": "google"
+   },
+   "compound": false,
+   "confidence": 0.371,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0518,
+    "open_website": 0.3712,
+    "web_search": 0.1217,
+    "type_text": 0.0436,
+    "compose": 0.1026,
+    "shortcut": 0.0821,
+    "scroll": 0.0006,
+    "volume": 0.0007,
+    "media": 0.0009,
+    "open_folder": 0.0001,
+    "system": 0.1276,
+    "reminder": 0.0004,
+    "question": 0.0002,
+    "stop": 0.0153,
+    "none": 0.0812
+   },
+   "ms": {
+    "stage1": 2356,
+    "stage2": 354
+   }
+  },
+  {
+   "u": "open hugging face",
+   "want_action": "open_website",
+   "got_action": "none",
+   "want_args": {
+    "site": "huggingface"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.922,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0315,
+    "open_website": 0.0084,
+    "web_search": 0.0013,
+    "type_text": 0.008,
+    "compose": 0.0121,
+    "shortcut": 0.0084,
+    "scroll": 0.0001,
+    "volume": 0.0003,
+    "media": 0.0023,
+    "open_folder": 0.0,
+    "system": 0.0015,
+    "reminder": 0.0003,
+    "question": 0.0003,
+    "stop": 0.0029,
+    "none": 0.9225
+   },
+   "ms": {
+    "stage1": 2554
+   }
+  },
+  {
+   "u": "visit nvidia.com",
+   "want_action": "open_website",
+   "got_action": "open_website",
+   "want_args": {
+    "site": "nvidia.com"
+   },
+   "got_args": {
+    "url": "https://www.youtube.com",
+    "site": "youtube"
+   },
+   "compound": false,
+   "confidence": 0.524,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0113,
+    "open_website": 0.9619,
+    "web_search": 0.0034,
+    "type_text": 0.0003,
+    "compose": 0.0007,
+    "shortcut": 0.0021,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0009,
+    "reminder": 0.0178,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0015
+   },
+   "ms": {
+    "stage1": 2338,
+    "stage2": 341
+   }
+  },
+  {
+   "u": "search youtube for lofi hip hop",
+   "want_action": "web_search",
+   "got_action": "web_search",
+   "want_args": {
+    "engine": "youtube",
+    "query": "lofi hip hop"
+   },
+   "got_args": {
+    "engine": "youtube",
+    "query": "search youtube for lofi hip hop"
+   },
+   "compound": false,
+   "confidence": 0.464,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0002,
+    "open_website": 0.0001,
+    "web_search": 0.9913,
+    "type_text": 0.0004,
+    "compose": 0.0007,
+    "shortcut": 0.0004,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0001,
+    "open_folder": 0.0,
+    "system": 0.0003,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0004,
+    "none": 0.0061
+   },
+   "ms": {
+    "stage1": 2443,
+    "stage2": 971
+   }
+  },
+  {
+   "u": "google best ramen near me",
+   "want_action": "web_search",
+   "got_action": "web_search",
+   "want_args": {
+    "engine": "google",
+    "query": "best ramen near me"
+   },
+   "got_args": {
+    "engine": "google",
+    "query": "best ramen near me"
+   },
+   "compound": false,
+   "confidence": 0.734,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0071,
+    "open_website": 0.0186,
+    "web_search": 0.7678,
+    "type_text": 0.0261,
+    "compose": 0.0358,
+    "shortcut": 0.0103,
+    "scroll": 0.0005,
+    "volume": 0.0005,
+    "media": 0.0008,
+    "open_folder": 0.0001,
+    "system": 0.0127,
+    "reminder": 0.0002,
+    "question": 0.0004,
+    "stop": 0.007,
+    "none": 0.1121
+   },
+   "ms": {
+    "stage1": 2428,
+    "stage2": 822
+   }
+  },
+  {
+   "u": "look up rtx 5070 laptop price on amazon",
+   "want_action": "web_search",
+   "got_action": "none",
+   "want_args": {
+    "engine": "amazon",
+    "query": "rtx 5070 laptop price"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.514,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.1831,
+    "open_website": 0.0162,
+    "web_search": 0.0068,
+    "type_text": 0.0322,
+    "compose": 0.0469,
+    "shortcut": 0.0603,
+    "scroll": 0.0003,
+    "volume": 0.0002,
+    "media": 0.0002,
+    "open_folder": 0.0001,
+    "system": 0.1329,
+    "reminder": 0.0007,
+    "question": 0.0002,
+    "stop": 0.006,
+    "none": 0.5138
+   },
+   "ms": {
+    "stage1": 2800
+   }
+  },
+  {
+   "u": "search for elden ring boss guide",
+   "want_action": "web_search",
+   "got_action": "web_search",
+   "want_args": {
+    "engine": "google",
+    "query": "elden ring boss guide"
+   },
+   "got_args": {
+    "engine": "google",
+    "query": "elden ring boss guide"
+   },
+   "compound": false,
+   "confidence": 0.722,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0164,
+    "open_website": 0.0236,
+    "web_search": 0.7223,
+    "type_text": 0.0237,
+    "compose": 0.0582,
+    "shortcut": 0.0185,
+    "scroll": 0.0005,
+    "volume": 0.0004,
+    "media": 0.0013,
+    "open_folder": 0.0005,
+    "system": 0.0121,
+    "reminder": 0.0004,
+    "question": 0.0005,
+    "stop": 0.0062,
+    "none": 0.1156
+   },
+   "ms": {
+    "stage1": 2553,
+    "stage2": 869
+   }
+  },
+  {
+   "u": "find llama.cpp on github",
+   "want_action": "web_search",
+   "got_action": "none",
+   "want_args": {
+    "engine": "github",
+    "query": "llama.cpp"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.36,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0696,
+    "open_website": 0.1723,
+    "web_search": 0.0565,
+    "type_text": 0.061,
+    "compose": 0.0577,
+    "shortcut": 0.1833,
+    "scroll": 0.001,
+    "volume": 0.0002,
+    "media": 0.0007,
+    "open_folder": 0.011,
+    "system": 0.0183,
+    "reminder": 0.0005,
+    "question": 0.0005,
+    "stop": 0.0075,
+    "none": 0.3598
+   },
+   "ms": {
+    "stage1": 2425
+   }
+  },
+  {
+   "u": "search wikipedia for the roman empire",
+   "want_action": "web_search",
+   "got_action": "web_search",
+   "want_args": {
+    "engine": "wikipedia",
+    "query": "the roman empire"
+   },
+   "got_args": {
+    "engine": "wikipedia",
+    "query": "wikipedia for the roman empire"
+   },
+   "compound": false,
+   "confidence": 0.385,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0278,
+    "open_website": 0.0241,
+    "web_search": 0.3852,
+    "type_text": 0.051,
+    "compose": 0.0767,
+    "shortcut": 0.038,
+    "scroll": 0.0008,
+    "volume": 0.0009,
+    "media": 0.004,
+    "open_folder": 0.0002,
+    "system": 0.024,
+    "reminder": 0.0002,
+    "question": 0.0029,
+    "stop": 0.0111,
+    "none": 0.3532
+   },
+   "ms": {
+    "stage1": 2637,
+    "stage2": 878
+   }
+  },
+  {
+   "u": "show me pictures of red pandas",
+   "want_action": "web_search",
+   "got_action": "compose",
+   "want_args": {
+    "engine": "google images",
+    "query": "red pandas"
+   },
+   "got_args": {
+    "instruction": "show me pictures of red pandas",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 0.283,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0828,
+    "open_website": 0.0387,
+    "web_search": 0.0186,
+    "type_text": 0.1558,
+    "compose": 0.2829,
+    "shortcut": 0.0559,
+    "scroll": 0.0014,
+    "volume": 0.004,
+    "media": 0.0456,
+    "open_folder": 0.0002,
+    "system": 0.0189,
+    "reminder": 0.0005,
+    "question": 0.0337,
+    "stop": 0.0231,
+    "none": 0.2379
+   },
+   "ms": {
+    "stage1": 2515,
+    "stage2": 261
+   }
+  },
+  {
+   "u": "type hello world",
+   "want_action": "type_text",
+   "got_action": "compose",
+   "want_args": {
+    "text": "hello world",
+    "submit": false
+   },
+   "got_args": {
+    "instruction": "type hello world",
+    "submit": true
+   },
+   "compound": true,
+   "confidence": 1.0,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 1.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2312,
+    "stage2": 266
+   }
+  },
+  {
+   "u": "type see you at five and hit enter",
+   "want_action": "type_text",
+   "got_action": "type_text",
+   "want_args": {
+    "text": "see you at five",
+    "submit": true
+   },
+   "got_args": {
+    "text": "see you at five",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 0.767,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.9647,
+    "compose": 0.033,
+    "shortcut": 0.0016,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0003,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0003
+   },
+   "ms": {
+    "stage1": 2611,
+    "stage2": 754
+   }
+  },
+  {
+   "u": "write meeting moved to thursday",
+   "want_action": "type_text",
+   "got_action": "compose",
+   "want_args": {
+    "text": "meeting moved to thursday",
+    "submit": false
+   },
+   "got_args": {
+    "instruction": "write meeting moved to thursday",
+    "submit": false
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.9998,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0002
+   },
+   "ms": {
+    "stage1": 2370,
+    "stage2": 253
+   }
+  },
+  {
+   "u": "dictate the build passed on all platforms",
+   "want_action": "type_text",
+   "got_action": "type_text",
+   "want_args": {
+    "text": "the build passed on all platforms",
+    "submit": false
+   },
+   "got_args": {
+    "text": "the build passed on all platforms",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 0.633,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0045,
+    "open_website": 0.0023,
+    "web_search": 0.0009,
+    "type_text": 0.745,
+    "compose": 0.0612,
+    "shortcut": 0.0015,
+    "scroll": 0.0002,
+    "volume": 0.0033,
+    "media": 0.0041,
+    "open_folder": 0.0001,
+    "system": 0.0047,
+    "reminder": 0.0009,
+    "question": 0.0023,
+    "stop": 0.0156,
+    "none": 0.1532
+   },
+   "ms": {
+    "stage1": 2365,
+    "stage2": 822
+   }
+  },
+  {
+   "u": "type git status and press enter",
+   "want_action": "type_text",
+   "got_action": "shortcut",
+   "want_args": {
+    "text": "git status",
+    "submit": true
+   },
+   "got_args": {
+    "shortcut": "enter"
+   },
+   "compound": false,
+   "confidence": 0.876,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0017,
+    "open_website": 0.0002,
+    "web_search": 0.0002,
+    "type_text": 0.0351,
+    "compose": 0.0815,
+    "shortcut": 0.8762,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0024,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0025
+   },
+   "ms": {
+    "stage1": 2660,
+    "stage2": 851
+   }
+  },
+  {
+   "u": "enter my email is ready",
+   "want_action": "type_text",
+   "got_action": "shortcut",
+   "want_args": {
+    "text": "my email is ready",
+    "submit": false
+   },
+   "got_args": {
+    "shortcut": "enter"
+   },
+   "compound": false,
+   "confidence": 0.981,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0099,
+    "open_website": 0.0004,
+    "web_search": 0.0001,
+    "type_text": 0.0031,
+    "compose": 0.001,
+    "shortcut": 0.9812,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0019,
+    "reminder": 0.0003,
+    "question": 0.0002,
+    "stop": 0.0002,
+    "none": 0.0017
+   },
+   "ms": {
+    "stage1": 2690,
+    "stage2": 919
+   }
+  },
+  {
+   "u": "reply saying I'll be a bit late, but politely",
+   "want_action": "compose",
+   "got_action": "compose",
+   "want_args": {
+    "submit": false
+   },
+   "got_args": {
+    "instruction": "reply saying I'll be a bit late, but politely",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 1.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2630,
+    "stage2": 308
+   }
+  },
+  {
+   "u": "write a short thank you note to the team for shipping the release",
+   "want_action": "compose",
+   "got_action": "compose",
+   "want_args": {
+    "submit": false
+   },
+   "got_args": {
+    "instruction": "write a short thank you note to the team for shipping the release",
+    "submit": false
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.9998,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0002
+   },
+   "ms": {
+    "stage1": 2560,
+    "stage2": 306
+   }
+  },
+  {
+   "u": "answer this email saying yes and send it",
+   "want_action": "compose",
+   "got_action": "compose",
+   "want_args": {
+    "submit": true
+   },
+   "got_args": {
+    "instruction": "answer this email saying yes and send it",
+    "submit": true
+   },
+   "compound": false,
+   "confidence": 0.419,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.1122,
+    "open_website": 0.0293,
+    "web_search": 0.0098,
+    "type_text": 0.1812,
+    "compose": 0.4195,
+    "shortcut": 0.006,
+    "scroll": 0.0005,
+    "volume": 0.0022,
+    "media": 0.0059,
+    "open_folder": 0.0003,
+    "system": 0.0108,
+    "reminder": 0.0056,
+    "question": 0.005,
+    "stop": 0.0211,
+    "none": 0.1907
+   },
+   "ms": {
+    "stage1": 2562,
+    "stage2": 292
+   }
+  },
+  {
+   "u": "draft a polite message declining the invite",
+   "want_action": "compose",
+   "got_action": "compose",
+   "want_args": {
+    "submit": false
+   },
+   "got_args": {
+    "instruction": "draft a polite message declining the invite",
+    "submit": false
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 1.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2691,
+    "stage2": 292
+   }
+  },
+  {
+   "u": "press enter",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "enter"
+   },
+   "got_args": {
+    "shortcut": "enter"
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 1.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2587,
+    "stage2": 891
+   }
+  },
+  {
+   "u": "copy that",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "copy"
+   },
+   "got_args": {
+    "shortcut": "copy"
+   },
+   "compound": false,
+   "confidence": 0.455,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0048,
+    "open_website": 0.0028,
+    "web_search": 0.0011,
+    "type_text": 0.2006,
+    "compose": 0.2944,
+    "shortcut": 0.4546,
+    "scroll": 0.0002,
+    "volume": 0.0002,
+    "media": 0.002,
+    "open_folder": 0.0001,
+    "system": 0.0029,
+    "reminder": 0.0004,
+    "question": 0.0001,
+    "stop": 0.0075,
+    "none": 0.0285
+   },
+   "ms": {
+    "stage1": 2543,
+    "stage2": 889
+   }
+  },
+  {
+   "u": "paste it",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "paste"
+   },
+   "got_args": {
+    "shortcut": "paste"
+   },
+   "compound": true,
+   "confidence": 0.986,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0026,
+    "open_website": 0.0008,
+    "web_search": 0.0003,
+    "type_text": 0.0026,
+    "compose": 0.0043,
+    "shortcut": 0.9862,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0002,
+    "open_folder": 0.0,
+    "system": 0.0008,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0003,
+    "none": 0.002
+   },
+   "ms": {
+    "stage1": 2614,
+    "stage2": 802
+   }
+  },
+  {
+   "u": "undo",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "undo"
+   },
+   "got_args": {
+    "shortcut": "undo"
+   },
+   "compound": false,
+   "confidence": 0.866,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0265,
+    "open_website": 0.0071,
+    "web_search": 0.0035,
+    "type_text": 0.0064,
+    "compose": 0.0088,
+    "shortcut": 0.8657,
+    "scroll": 0.0001,
+    "volume": 0.0003,
+    "media": 0.0009,
+    "open_folder": 0.0,
+    "system": 0.0059,
+    "reminder": 0.0002,
+    "question": 0.0003,
+    "stop": 0.0354,
+    "none": 0.0388
+   },
+   "ms": {
+    "stage1": 2438,
+    "stage2": 801
+   }
+  },
+  {
+   "u": "select everything",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "select_all"
+   },
+   "got_args": {
+    "shortcut": "select_all"
+   },
+   "compound": false,
+   "confidence": 0.416,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0987,
+    "open_website": 0.013,
+    "web_search": 0.006,
+    "type_text": 0.0573,
+    "compose": 0.121,
+    "shortcut": 0.4157,
+    "scroll": 0.0131,
+    "volume": 0.1198,
+    "media": 0.0062,
+    "open_folder": 0.0067,
+    "system": 0.0846,
+    "reminder": 0.0003,
+    "question": 0.0004,
+    "stop": 0.0235,
+    "none": 0.0339
+   },
+   "ms": {
+    "stage1": 2453,
+    "stage2": 872
+   }
+  },
+  {
+   "u": "save the file",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "save"
+   },
+   "got_args": {
+    "shortcut": "save"
+   },
+   "compound": false,
+   "confidence": 0.65,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0637,
+    "open_website": 0.0154,
+    "web_search": 0.0061,
+    "type_text": 0.0831,
+    "compose": 0.0767,
+    "shortcut": 0.6502,
+    "scroll": 0.0003,
+    "volume": 0.0007,
+    "media": 0.0015,
+    "open_folder": 0.0002,
+    "system": 0.0198,
+    "reminder": 0.0029,
+    "question": 0.0005,
+    "stop": 0.006,
+    "none": 0.0729
+   },
+   "ms": {
+    "stage1": 2545,
+    "stage2": 872
+   }
+  },
+  {
+   "u": "open a new tab",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "new_tab"
+   },
+   "got_args": {
+    "shortcut": "new_tab"
+   },
+   "compound": false,
+   "confidence": 0.657,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.3369,
+    "open_website": 0.0011,
+    "web_search": 0.0004,
+    "type_text": 0.0007,
+    "compose": 0.0014,
+    "shortcut": 0.6568,
+    "scroll": 0.0003,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0007,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0015
+   },
+   "ms": {
+    "stage1": 2529,
+    "stage2": 917
+   }
+  },
+  {
+   "u": "close this tab",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "close_tab"
+   },
+   "got_args": {
+    "shortcut": "close_tab"
+   },
+   "compound": false,
+   "confidence": 0.928,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0505,
+    "open_website": 0.0031,
+    "web_search": 0.001,
+    "type_text": 0.0007,
+    "compose": 0.0014,
+    "shortcut": 0.9279,
+    "scroll": 0.0003,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0103,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.003,
+    "none": 0.0019
+   },
+   "ms": {
+    "stage1": 2637,
+    "stage2": 856
+   }
+  },
+  {
+   "u": "go back",
+   "want_action": "shortcut",
+   "got_action": "compose",
+   "want_args": {
+    "shortcut": "back"
+   },
+   "got_args": {
+    "instruction": "go back",
+    "submit": false
+   },
+   "compound": false,
+   "confidence": 0.239,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0826,
+    "open_website": 0.0533,
+    "web_search": 0.0428,
+    "type_text": 0.1273,
+    "compose": 0.2387,
+    "shortcut": 0.1355,
+    "scroll": 0.0005,
+    "volume": 0.0013,
+    "media": 0.0302,
+    "open_folder": 0.0005,
+    "system": 0.0242,
+    "reminder": 0.001,
+    "question": 0.002,
+    "stop": 0.1043,
+    "none": 0.1559
+   },
+   "ms": {
+    "stage1": 2537,
+    "stage2": 252
+   }
+  },
+  {
+   "u": "refresh the page",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "reload"
+   },
+   "got_args": {
+    "shortcut": "reload"
+   },
+   "compound": false,
+   "confidence": 0.689,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0806,
+    "open_website": 0.0631,
+    "web_search": 0.0278,
+    "type_text": 0.0106,
+    "compose": 0.0123,
+    "shortcut": 0.6886,
+    "scroll": 0.0326,
+    "volume": 0.0002,
+    "media": 0.0016,
+    "open_folder": 0.0001,
+    "system": 0.0154,
+    "reminder": 0.0006,
+    "question": 0.0002,
+    "stop": 0.0019,
+    "none": 0.0645
+   },
+   "ms": {
+    "stage1": 2526,
+    "stage2": 896
+   }
+  },
+  {
+   "u": "minimize this window",
+   "want_action": "shortcut",
+   "got_action": "stop",
+   "want_args": {
+    "shortcut": "minimize"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.337,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.1502,
+    "open_website": 0.0113,
+    "web_search": 0.0078,
+    "type_text": 0.0372,
+    "compose": 0.0803,
+    "shortcut": 0.1179,
+    "scroll": 0.0006,
+    "volume": 0.0041,
+    "media": 0.004,
+    "open_folder": 0.0001,
+    "system": 0.2042,
+    "reminder": 0.0012,
+    "question": 0.0004,
+    "stop": 0.3368,
+    "none": 0.0438
+   },
+   "ms": {
+    "stage1": 2556
+   }
+  },
+  {
+   "u": "zoom in",
+   "want_action": "shortcut",
+   "got_action": "scroll",
+   "want_args": {
+    "shortcut": "zoom_in"
+   },
+   "got_args": {
+    "direction": "down",
+    "amount": "a_lot"
+   },
+   "compound": false,
+   "confidence": 0.352,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.029,
+    "open_website": 0.0043,
+    "web_search": 0.0029,
+    "type_text": 0.0058,
+    "compose": 0.007,
+    "shortcut": 0.415,
+    "scroll": 0.5007,
+    "volume": 0.0043,
+    "media": 0.0013,
+    "open_folder": 0.0001,
+    "system": 0.0036,
+    "reminder": 0.0002,
+    "question": 0.0004,
+    "stop": 0.0092,
+    "none": 0.0162
+   },
+   "ms": {
+    "stage1": 2450,
+    "stage2": 397
+   }
+  },
+  {
+   "u": "alt tab",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "switch_app"
+   },
+   "got_args": {
+    "shortcut": "tab"
+   },
+   "compound": false,
+   "confidence": 0.539,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 1.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2819,
+    "stage2": 963
+   }
+  },
+  {
+   "u": "scroll down",
+   "want_action": "scroll",
+   "got_action": "scroll",
+   "want_args": {
+    "direction": "down",
+    "amount": "page"
+   },
+   "got_args": {
+    "direction": "down",
+    "amount": "page"
+   },
+   "compound": false,
+   "confidence": 0.965,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 1.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2611,
+    "stage2": 447
+   }
+  },
+  {
+   "u": "scroll up a little",
+   "want_action": "scroll",
+   "got_action": "scroll",
+   "want_args": {
+    "direction": "up",
+    "amount": "little"
+   },
+   "got_args": {
+    "direction": "up",
+    "amount": "little"
+   },
+   "compound": false,
+   "confidence": 0.958,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 1.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2715,
+    "stage2": 497
+   }
+  },
+  {
+   "u": "scroll way down",
+   "want_action": "scroll",
+   "got_action": "scroll",
+   "want_args": {
+    "direction": "down",
+    "amount": "a_lot"
+   },
+   "got_args": {
+    "direction": "down",
+    "amount": "page"
+   },
+   "compound": false,
+   "confidence": 0.948,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 1.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2722,
+    "stage2": 449
+   }
+  },
+  {
+   "u": "go to the top of the page",
+   "want_action": "scroll",
+   "got_action": "scroll",
+   "want_args": {
+    "direction": "top"
+   },
+   "got_args": {
+    "direction": "top",
+    "amount": "page"
+   },
+   "compound": false,
+   "confidence": 0.979,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0001,
+    "compose": 0.0001,
+    "shortcut": 0.0007,
+    "scroll": 0.999,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0001
+   },
+   "ms": {
+    "stage1": 2680,
+    "stage2": 426
+   }
+  },
+  {
+   "u": "jump to the bottom",
+   "want_action": "scroll",
+   "got_action": "shortcut",
+   "want_args": {
+    "direction": "bottom"
+   },
+   "got_args": {
+    "shortcut": "previous_tab"
+   },
+   "compound": false,
+   "confidence": 0.655,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0024,
+    "open_website": 0.0022,
+    "web_search": 0.0009,
+    "type_text": 0.0068,
+    "compose": 0.0054,
+    "shortcut": 0.6554,
+    "scroll": 0.297,
+    "volume": 0.0001,
+    "media": 0.0002,
+    "open_folder": 0.0,
+    "system": 0.0035,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0126,
+    "none": 0.0134
+   },
+   "ms": {
+    "stage1": 2526,
+    "stage2": 840
+   }
+  },
+  {
+   "u": "turn it up",
+   "want_action": "volume",
+   "got_action": "volume",
+   "want_args": {
+    "op": "up"
+   },
+   "got_args": {
+    "op": "up"
+   },
+   "compound": false,
+   "confidence": 0.373,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 1.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2506,
+    "stage2": 415
+   }
+  },
+  {
+   "u": "volume down a bit",
+   "want_action": "volume",
+   "got_action": "volume",
+   "want_args": {
+    "op": "down"
+   },
+   "got_args": {
+    "op": "down"
+   },
+   "compound": false,
+   "confidence": 0.35,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 1.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2930,
+    "stage2": 445
+   }
+  },
+  {
+   "u": "mute",
+   "want_action": "volume",
+   "got_action": "stop",
+   "want_args": {
+    "op": "mute"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 1.0,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 1.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2848
+   }
+  },
+  {
+   "u": "unmute the sound",
+   "want_action": "volume",
+   "got_action": "stop",
+   "want_args": {
+    "op": "unmute"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 1.0,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0002,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.9998,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2503
+   }
+  },
+  {
+   "u": "set the volume to 30",
+   "want_action": "volume",
+   "got_action": "volume",
+   "want_args": {
+    "op": "set_level",
+    "level": 30
+   },
+   "got_args": {
+    "op": "set_level",
+    "level": 30
+   },
+   "compound": false,
+   "confidence": 0.967,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 1.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2707,
+    "stage2": 757
+   }
+  },
+  {
+   "u": "make it way louder",
+   "want_action": "volume",
+   "got_action": "volume",
+   "want_args": {
+    "op": "up_a_lot"
+   },
+   "got_args": {
+    "op": "up"
+   },
+   "compound": false,
+   "confidence": 0.464,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.9999,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2581,
+    "stage2": 475
+   }
+  },
+  {
+   "u": "pause the music",
+   "want_action": "media",
+   "got_action": "stop",
+   "want_args": {
+    "op": "pause"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.649,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0007,
+    "open_website": 0.0002,
+    "web_search": 0.0001,
+    "type_text": 0.0009,
+    "compose": 0.0014,
+    "shortcut": 0.0003,
+    "scroll": 0.0,
+    "volume": 0.2958,
+    "media": 0.0514,
+    "open_folder": 0.0,
+    "system": 0.0002,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.6487,
+    "none": 0.0002
+   },
+   "ms": {
+    "stage1": 2459
+   }
+  },
+  {
+   "u": "play",
+   "want_action": "media",
+   "got_action": "open_app",
+   "want_args": {
+    "op": "play"
+   },
+   "got_args": {
+    "app": "VLC media player"
+   },
+   "compound": false,
+   "confidence": 0.238,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.2381,
+    "open_website": 0.0092,
+    "web_search": 0.0052,
+    "type_text": 0.0217,
+    "compose": 0.0525,
+    "shortcut": 0.179,
+    "scroll": 0.0004,
+    "volume": 0.0621,
+    "media": 0.0751,
+    "open_folder": 0.0001,
+    "system": 0.0137,
+    "reminder": 0.0006,
+    "question": 0.0006,
+    "stop": 0.2207,
+    "none": 0.121
+   },
+   "ms": {
+    "stage1": 2458,
+    "stage2": 495
+   }
+  },
+  {
+   "u": "skip this song",
+   "want_action": "media",
+   "got_action": "stop",
+   "want_args": {
+    "op": "next"
+   },
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.994,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0004,
+    "media": 0.0056,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.9939,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2606
+   }
+  },
+  {
+   "u": "previous track",
+   "want_action": "media",
+   "got_action": "media",
+   "want_args": {
+    "op": "previous"
+   },
+   "got_args": {
+    "op": "previous"
+   },
+   "compound": false,
+   "confidence": 0.986,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0001,
+    "open_website": 0.0001,
+    "web_search": 0.0001,
+    "type_text": 0.0006,
+    "compose": 0.0022,
+    "shortcut": 0.0002,
+    "scroll": 0.0,
+    "volume": 0.0001,
+    "media": 0.986,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0001,
+    "stop": 0.009,
+    "none": 0.0016
+   },
+   "ms": {
+    "stage1": 2444,
+    "stage2": 252
+   }
+  },
+  {
+   "u": "resume the video",
+   "want_action": "media",
+   "got_action": "media",
+   "want_args": {
+    "op": "play"
+   },
+   "got_args": {
+    "op": "pause"
+   },
+   "compound": false,
+   "confidence": 0.351,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0506,
+    "open_website": 0.0068,
+    "web_search": 0.0056,
+    "type_text": 0.018,
+    "compose": 0.0202,
+    "shortcut": 0.0083,
+    "scroll": 0.0001,
+    "volume": 0.0052,
+    "media": 0.7242,
+    "open_folder": 0.0,
+    "system": 0.0022,
+    "reminder": 0.0002,
+    "question": 0.001,
+    "stop": 0.1449,
+    "none": 0.0125
+   },
+   "ms": {
+    "stage1": 2408,
+    "stage2": 274
+   }
+  },
+  {
+   "u": "open my downloads",
+   "want_action": "open_folder",
+   "got_action": "open_folder",
+   "want_args": {
+    "folder": "downloads"
+   },
+   "got_args": {
+    "folder": "downloads"
+   },
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 1.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2524,
+    "stage2": 225
+   }
+  },
+  {
+   "u": "show me the documents folder",
+   "want_action": "open_folder",
+   "got_action": "open_folder",
+   "want_args": {
+    "folder": "documents"
+   },
+   "got_args": {
+    "folder": "documents"
+   },
+   "compound": false,
+   "confidence": 0.994,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 1.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2456,
+    "stage2": 232
+   }
+  },
+  {
+   "u": "open pictures",
+   "want_action": "open_folder",
+   "got_action": "open_folder",
+   "want_args": {
+    "folder": "pictures"
+   },
+   "got_args": {
+    "folder": "pictures"
+   },
+   "compound": false,
+   "confidence": 0.556,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.2206,
+    "open_website": 0.0276,
+    "web_search": 0.0051,
+    "type_text": 0.0082,
+    "compose": 0.0199,
+    "shortcut": 0.1298,
+    "scroll": 0.0004,
+    "volume": 0.0002,
+    "media": 0.0007,
+    "open_folder": 0.556,
+    "system": 0.0019,
+    "reminder": 0.0001,
+    "question": 0.0001,
+    "stop": 0.0004,
+    "none": 0.0289
+   },
+   "ms": {
+    "stage1": 2651,
+    "stage2": 213
+   }
+  },
+  {
+   "u": "lock the computer",
+   "want_action": "system",
+   "got_action": "system",
+   "want_args": {
+    "op": "lock"
+   },
+   "got_args": {
+    "op": "lock"
+   },
+   "compound": false,
+   "confidence": 0.999,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0003,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0001,
+    "compose": 0.0001,
+    "shortcut": 0.0002,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.9992,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2653,
+    "stage2": 277
+   }
+  },
+  {
+   "u": "show the desktop",
+   "want_action": "system",
+   "got_action": "system",
+   "want_args": {
+    "op": "show_desktop"
+   },
+   "got_args": {
+    "op": "show_desktop"
+   },
+   "compound": false,
+   "confidence": 0.929,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0607,
+    "open_website": 0.0008,
+    "web_search": 0.0003,
+    "type_text": 0.0009,
+    "compose": 0.0014,
+    "shortcut": 0.0057,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.9295,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0004
+   },
+   "ms": {
+    "stage1": 2495,
+    "stage2": 326
+   }
+  },
+  {
+   "u": "take a screenshot",
+   "want_action": "system",
+   "got_action": "system",
+   "want_args": {
+    "op": "screenshot"
+   },
+   "got_args": {
+    "op": "screenshot"
+   },
+   "compound": false,
+   "confidence": 0.423,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0162,
+    "open_website": 0.0137,
+    "web_search": 0.0059,
+    "type_text": 0.0626,
+    "compose": 0.051,
+    "shortcut": 0.4051,
+    "scroll": 0.0001,
+    "volume": 0.0004,
+    "media": 0.0008,
+    "open_folder": 0.0001,
+    "system": 0.4235,
+    "reminder": 0.0001,
+    "question": 0.0001,
+    "stop": 0.001,
+    "none": 0.0193
+   },
+   "ms": {
+    "stage1": 2672,
+    "stage2": 279
+   }
+  },
+  {
+   "u": "turn off the screen",
+   "want_action": "system",
+   "got_action": "system",
+   "want_args": {
+    "op": "screen_off"
+   },
+   "got_args": {
+    "op": "screen_off"
+   },
+   "compound": false,
+   "confidence": 0.542,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.1103,
+    "open_website": 0.0197,
+    "web_search": 0.0094,
+    "type_text": 0.081,
+    "compose": 0.0646,
+    "shortcut": 0.1188,
+    "scroll": 0.0003,
+    "volume": 0.0231,
+    "media": 0.0028,
+    "open_folder": 0.0001,
+    "system": 0.5421,
+    "reminder": 0.0002,
+    "question": 0.0003,
+    "stop": 0.0171,
+    "none": 0.0104
+   },
+   "ms": {
+    "stage1": 2656,
+    "stage2": 306
+   }
+  },
+  {
+   "u": "remind me to stretch in 20 minutes",
+   "want_action": "reminder",
+   "got_action": "reminder",
+   "want_args": {
+    "text": "stretch",
+    "when": "in 20 minutes"
+   },
+   "got_args": {
+    "text": "stretch",
+    "when": "in 20 minutes"
+   },
+   "compound": false,
+   "confidence": 0.852,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 1.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2642,
+    "stage2": 839
+   }
+  },
+  {
+   "u": "set a reminder to call mom at 6pm",
+   "want_action": "reminder",
+   "got_action": "reminder",
+   "want_args": {
+    "text": "call mom",
+    "when": "at 6pm"
+   },
+   "got_args": {
+    "text": "call mom",
+    "when": "at 6pm"
+   },
+   "compound": false,
+   "confidence": 0.907,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 1.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2557,
+    "stage2": 846
+   }
+  },
+  {
+   "u": "remind me about the dentist tomorrow 9am",
+   "want_action": "reminder",
+   "got_action": "reminder",
+   "want_args": {
+    "text": "the dentist",
+    "when": "tomorrow 9am"
+   },
+   "got_args": {
+    "text": "about the dentist tomorrow",
+    "when": "tomorrow 9am"
+   },
+   "compound": false,
+   "confidence": 0.515,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 1.0,
+    "question": 0.0,
+    "stop": 0.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2642,
+    "stage2": 985
+   }
+  },
+  {
+   "u": "set a timer for 10 minutes",
+   "want_action": "reminder",
+   "got_action": "compose",
+   "want_args": {
+    "when": "for 10 minutes"
+   },
+   "got_args": {
+    "instruction": "set a timer for 10 minutes",
+    "submit": false
+   },
+   "compound": false,
+   "confidence": 0.406,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.057,
+    "open_website": 0.0222,
+    "web_search": 0.0122,
+    "type_text": 0.2965,
+    "compose": 0.4061,
+    "shortcut": 0.0332,
+    "scroll": 0.0004,
+    "volume": 0.0185,
+    "media": 0.0021,
+    "open_folder": 0.0001,
+    "system": 0.0712,
+    "reminder": 0.0362,
+    "question": 0.0002,
+    "stop": 0.0045,
+    "none": 0.0395
+   },
+   "ms": {
+    "stage1": 2514,
+    "stage2": 271
+   }
+  },
+  {
+   "u": "what's the weather like today",
+   "want_action": "question",
+   "got_action": "question",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.99,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0012,
+    "open_website": 0.0013,
+    "web_search": 0.0007,
+    "type_text": 0.0014,
+    "compose": 0.0017,
+    "shortcut": 0.0005,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0001,
+    "reminder": 0.0,
+    "question": 0.9903,
+    "stop": 0.0,
+    "none": 0.0027
+   },
+   "ms": {
+    "stage1": 2526
+   }
+  },
+  {
+   "u": "what's on my screen",
+   "want_action": "question",
+   "got_action": "question",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.647,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.1041,
+    "open_website": 0.0411,
+    "web_search": 0.0146,
+    "type_text": 0.0597,
+    "compose": 0.0226,
+    "shortcut": 0.043,
+    "scroll": 0.0112,
+    "volume": 0.0003,
+    "media": 0.0033,
+    "open_folder": 0.0007,
+    "system": 0.0107,
+    "reminder": 0.0002,
+    "question": 0.6471,
+    "stop": 0.0007,
+    "none": 0.0406
+   },
+   "ms": {
+    "stage1": 2485
+   }
+  },
+  {
+   "u": "what song is this",
+   "want_action": "question",
+   "got_action": "media",
+   "want_args": {},
+   "got_args": {
+    "op": "play"
+   },
+   "compound": false,
+   "confidence": 0.316,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0203,
+    "open_website": 0.0019,
+    "web_search": 0.0003,
+    "type_text": 0.0043,
+    "compose": 0.003,
+    "shortcut": 0.0004,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.9499,
+    "open_folder": 0.0,
+    "system": 0.0002,
+    "reminder": 0.0,
+    "question": 0.0094,
+    "stop": 0.0003,
+    "none": 0.0099
+   },
+   "ms": {
+    "stage1": 2806,
+    "stage2": 279
+   }
+  },
+  {
+   "u": "how hot is my gpu right now",
+   "want_action": "question",
+   "got_action": "question",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.495,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0394,
+    "open_website": 0.0049,
+    "web_search": 0.0021,
+    "type_text": 0.0072,
+    "compose": 0.0117,
+    "shortcut": 0.0146,
+    "scroll": 0.0002,
+    "volume": 0.0001,
+    "media": 0.0002,
+    "open_folder": 0.0,
+    "system": 0.0066,
+    "reminder": 0.0,
+    "question": 0.4947,
+    "stop": 0.0019,
+    "none": 0.4164
+   },
+   "ms": {
+    "stage1": 2581
+   }
+  },
+  {
+   "u": "who won the champions league final",
+   "want_action": "question",
+   "got_action": "none",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.872,
+   "ok": false,
+   "action_probs": {
+    "open_app": 0.0403,
+    "open_website": 0.0051,
+    "web_search": 0.0026,
+    "type_text": 0.0207,
+    "compose": 0.0264,
+    "shortcut": 0.019,
+    "scroll": 0.0002,
+    "volume": 0.0008,
+    "media": 0.0037,
+    "open_folder": 0.0,
+    "system": 0.0027,
+    "reminder": 0.0001,
+    "question": 0.0017,
+    "stop": 0.0043,
+    "none": 0.8724
+   },
+   "ms": {
+    "stage1": 2419
+   }
+  },
+  {
+   "u": "what time is it",
+   "want_action": "question",
+   "got_action": "question",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.915,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0134,
+    "open_website": 0.0018,
+    "web_search": 0.0007,
+    "type_text": 0.0072,
+    "compose": 0.0013,
+    "shortcut": 0.0045,
+    "scroll": 0.0001,
+    "volume": 0.0001,
+    "media": 0.0001,
+    "open_folder": 0.0,
+    "system": 0.0016,
+    "reminder": 0.0002,
+    "question": 0.9153,
+    "stop": 0.0002,
+    "none": 0.0535
+   },
+   "ms": {
+    "stage1": 2617
+   }
+  },
+  {
+   "u": "stop listening",
+   "want_action": "stop",
+   "got_action": "stop",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 1.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2683
+   }
+  },
+  {
+   "u": "turn off voice mode",
+   "want_action": "stop",
+   "got_action": "stop",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 1.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2534
+   }
+  },
+  {
+   "u": "that's all for now jarvis, go to sleep",
+   "want_action": "stop",
+   "got_action": "stop",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 1.0,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0,
+    "open_website": 0.0,
+    "web_search": 0.0,
+    "type_text": 0.0,
+    "compose": 0.0,
+    "shortcut": 0.0,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 1.0,
+    "none": 0.0
+   },
+   "ms": {
+    "stage1": 2605
+   }
+  },
+  {
+   "u": "thanks jarvis",
+   "want_action": "none",
+   "got_action": "none",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.862,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0153,
+    "open_website": 0.0203,
+    "web_search": 0.0069,
+    "type_text": 0.0247,
+    "compose": 0.0589,
+    "shortcut": 0.0056,
+    "scroll": 0.0003,
+    "volume": 0.0003,
+    "media": 0.0041,
+    "open_folder": 0.0002,
+    "system": 0.0008,
+    "reminder": 0.0002,
+    "question": 0.0001,
+    "stop": 0.0007,
+    "none": 0.8618
+   },
+   "ms": {
+    "stage1": 2688
+   }
+  },
+  {
+   "u": "haha that's funny",
+   "want_action": "none",
+   "got_action": "none",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.727,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0447,
+    "open_website": 0.0097,
+    "web_search": 0.004,
+    "type_text": 0.0584,
+    "compose": 0.0931,
+    "shortcut": 0.0346,
+    "scroll": 0.0004,
+    "volume": 0.0016,
+    "media": 0.0077,
+    "open_folder": 0.0001,
+    "system": 0.0078,
+    "reminder": 0.0001,
+    "question": 0.0002,
+    "stop": 0.0104,
+    "none": 0.7273
+   },
+   "ms": {
+    "stage1": 2503
+   }
+  },
+  {
+   "u": "yeah I'll call you back later, bye",
+   "want_action": "none",
+   "got_action": "none",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.902,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0005,
+    "open_website": 0.0031,
+    "web_search": 0.0008,
+    "type_text": 0.0532,
+    "compose": 0.0273,
+    "shortcut": 0.002,
+    "scroll": 0.0001,
+    "volume": 0.0006,
+    "media": 0.0023,
+    "open_folder": 0.0,
+    "system": 0.0017,
+    "reminder": 0.0024,
+    "question": 0.0002,
+    "stop": 0.004,
+    "none": 0.9018
+   },
+   "ms": {
+    "stage1": 2585
+   }
+  },
+  {
+   "u": "how are you doing today",
+   "want_action": "none",
+   "got_action": "none",
+   "want_args": {},
+   "got_args": {},
+   "compound": false,
+   "confidence": 0.994,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.002,
+    "open_website": 0.001,
+    "web_search": 0.0001,
+    "type_text": 0.0011,
+    "compose": 0.0007,
+    "shortcut": 0.0002,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0001,
+    "open_folder": 0.0,
+    "system": 0.0,
+    "reminder": 0.0,
+    "question": 0.0008,
+    "stop": 0.0,
+    "none": 0.9939
+   },
+   "ms": {
+    "stage1": 2485
+   }
+  },
+  {
+   "u": "open notepad and type buy milk",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Notepad"
+   },
+   "got_args": {
+    "app": "Notepad"
+   },
+   "compound": false,
+   "confidence": 0.416,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.416,
+    "open_website": 0.0006,
+    "web_search": 0.0002,
+    "type_text": 0.1777,
+    "compose": 0.3872,
+    "shortcut": 0.0051,
+    "scroll": 0.0,
+    "volume": 0.0,
+    "media": 0.0,
+    "open_folder": 0.0,
+    "system": 0.0044,
+    "reminder": 0.0006,
+    "question": 0.0,
+    "stop": 0.0004,
+    "none": 0.0076
+   },
+   "ms": {
+    "stage1": 2730,
+    "stage2": 374
+   }
+  },
+  {
+   "u": "open chrome and go to youtube",
+   "want_action": "open_app",
+   "got_action": "open_app",
+   "want_args": {
+    "app": "Google Chrome"
+   },
+   "got_args": {
+    "app": "Google Chrome"
+   },
+   "compound": false,
+   "confidence": 0.846,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.9881,
+    "open_website": 0.0018,
+    "web_search": 0.001,
+    "type_text": 0.0004,
+    "compose": 0.0009,
+    "shortcut": 0.0053,
+    "scroll": 0.0001,
+    "volume": 0.0,
+    "media": 0.0002,
+    "open_folder": 0.0,
+    "system": 0.0004,
+    "reminder": 0.0,
+    "question": 0.0,
+    "stop": 0.0001,
+    "none": 0.0016
+   },
+   "ms": {
+    "stage1": 2760,
+    "stage2": 424
+   }
+  },
+  {
+   "u": "copy this and paste it into discord",
+   "want_action": "shortcut",
+   "got_action": "shortcut",
+   "want_args": {
+    "shortcut": "copy"
+   },
+   "got_args": {
+    "shortcut": "copy"
+   },
+   "compound": false,
+   "confidence": 0.477,
+   "ok": true,
+   "action_probs": {
+    "open_app": 0.0781,
+    "open_website": 0.0111,
+    "web_search": 0.0062,
+    "type_text": 0.0919,
+    "compose": 0.2322,
+    "shortcut": 0.4775,
+    "scroll": 0.0004,
+    "volume": 0.0004,
+    "media": 0.0025,
+    "open_folder": 0.0002,
+    "system": 0.0119,
+    "reminder": 0.0003,
+    "question": 0.0003,
+    "stop": 0.006,
+    "none": 0.0811
+   },
+   "ms": {
+    "stage1": 2693,
+    "stage2": 947
+   }
+  }
+ ]
+}

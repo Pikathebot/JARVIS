@@ -1,0 +1,92 @@
+{"u": "open chrome", "action": "open_app", "args": {"app": "Google Chrome"}}
+{"u": "Jarvis, launch spotify", "action": "open_app", "args": {"app": "Spotify"}}
+{"u": "can you open visual studio code", "action": "open_app", "args": {"app": "Visual Studio Code"}}
+{"u": "switch to discord", "action": "open_app", "args": {"app": "Discord"}}
+{"u": "bring up steam", "action": "open_app", "args": {"app": "Steam"}}
+{"u": "start blender for me", "action": "open_app", "args": {"app": "Blender"}}
+{"u": "open file explorer", "action": "open_app", "args": {"app": "File Explorer"}}
+{"u": "fire up obs", "action": "open_app", "args": {"app": "OBS Studio (64bit)"}}
+{"u": "open the settings", "action": "open_app", "args": {"app": "Settings"}}
+{"u": "open task manager", "action": "open_app", "args": {"app": "Task Manager"}}
+{"u": "launch word", "action": "open_app", "args": {"app": "Word"}}
+{"u": "open unity hub", "action": "open_app", "args": {"app": "Unity Hub"}}
+{"u": "go to youtube", "action": "open_website", "args": {"site": "youtube"}}
+{"u": "open gmail", "action": "open_website", "args": {"site": "gmail"}}
+{"u": "pull up github", "action": "open_website", "args": {"site": "github"}}
+{"u": "take me to reddit", "action": "open_website", "args": {"site": "reddit"}}
+{"u": "go to stackoverflow dot com", "action": "open_website", "args": {"site": "stackoverflow.com"}}
+{"u": "open hugging face", "action": "open_website", "args": {"site": "huggingface"}}
+{"u": "visit nvidia.com", "action": "open_website", "args": {"site": "nvidia.com"}}
+{"u": "search youtube for lofi hip hop", "action": "web_search", "args": {"engine": "youtube", "query": "lofi hip hop"}}
+{"u": "google best ramen near me", "action": "web_search", "args": {"engine": "google", "query": "best ramen near me"}}
+{"u": "look up rtx 5070 laptop price on amazon", "action": "web_search", "args": {"engine": "amazon", "query": "rtx 5070 laptop price"}}
+{"u": "search for elden ring boss guide", "action": "web_search", "args": {"engine": "google", "query": "elden ring boss guide"}}
+{"u": "find llama.cpp on github", "action": "web_search", "args": {"engine": "github", "query": "llama.cpp"}}
+{"u": "search wikipedia for the roman empire", "action": "web_search", "args": {"engine": "wikipedia", "query": "the roman empire"}}
+{"u": "show me pictures of red pandas", "action": "web_search", "args": {"engine": "google images", "query": "red pandas"}}
+{"u": "type hello world", "action": "type_text", "args": {"text": "hello world", "submit": false}}
+{"u": "type see you at five and hit enter", "action": "type_text", "args": {"text": "see you at five", "submit": true}}
+{"u": "write meeting moved to thursday", "action": "type_text", "args": {"text": "meeting moved to thursday", "submit": false}}
+{"u": "dictate the build passed on all platforms", "action": "type_text", "args": {"text": "the build passed on all platforms", "submit": false}}
+{"u": "type git status and press enter", "action": "type_text", "args": {"text": "git status", "submit": true}}
+{"u": "enter my email is ready", "action": "type_text", "args": {"text": "my email is ready", "submit": false}}
+{"u": "reply saying I'll be a bit late, but politely", "action": "compose", "args": {"submit": false}}
+{"u": "write a short thank you note to the team for shipping the release", "action": "compose", "args": {"submit": false}}
+{"u": "answer this email saying yes and send it", "action": "compose", "args": {"submit": true}}
+{"u": "draft a polite message declining the invite", "action": "compose", "args": {"submit": false}}
+{"u": "press enter", "action": "shortcut", "args": {"shortcut": "enter"}}
+{"u": "copy that", "action": "shortcut", "args": {"shortcut": "copy"}}
+{"u": "paste it", "action": "shortcut", "args": {"shortcut": "paste"}}
+{"u": "undo", "action": "shortcut", "args": {"shortcut": "undo"}}
+{"u": "select everything", "action": "shortcut", "args": {"shortcut": "select_all"}}
+{"u": "save the file", "action": "shortcut", "args": {"shortcut": "save"}}
+{"u": "open a new tab", "action": "shortcut", "args": {"shortcut": "new_tab"}}
+{"u": "close this tab", "action": "shortcut", "args": {"shortcut": "close_tab"}}
+{"u": "go back", "action": "shortcut", "args": {"shortcut": "back"}}
+{"u": "refresh the page", "action": "shortcut", "args": {"shortcut": "reload"}}
+{"u": "minimize this window", "action": "shortcut", "args": {"shortcut": "minimize"}}
+{"u": "zoom in", "action": "shortcut", "args": {"shortcut": "zoom_in"}}
+{"u": "alt tab", "action": "shortcut", "args": {"shortcut": "switch_app"}}
+{"u": "scroll down", "action": "scroll", "args": {"direction": "down", "amount": "page"}}
+{"u": "scroll up a little", "action": "scroll", "args": {"direction": "up", "amount": "little"}}
+{"u": "scroll way down", "action": "scroll", "args": {"direction": "down", "amount": "a_lot"}}
+{"u": "go to the top of the page", "action": "scroll", "args": {"direction": "top"}}
+{"u": "jump to the bottom", "action": "scroll", "args": {"direction": "bottom"}}
+{"u": "turn it up", "action": "volume", "args": {"op": "up"}}
+{"u": "volume down a bit", "action": "volume", "args": {"op": "down"}}
+{"u": "mute", "action": "volume", "args": {"op": "mute"}}
+{"u": "unmute the sound", "action": "volume", "args": {"op": "unmute"}}
+{"u": "set the volume to 30", "action": "volume", "args": {"op": "set_level", "level": 30}}
+{"u": "make it way louder", "action": "volume", "args": {"op": "up_a_lot"}}
+{"u": "pause the music", "action": "media", "args": {"op": "pause"}}
+{"u": "play", "action": "media", "args": {"op": "play"}}
+{"u": "skip this song", "action": "media", "args": {"op": "next"}}
+{"u": "previous track", "action": "media", "args": {"op": "previous"}}
+{"u": "resume the video", "action": "media", "args": {"op": "play"}}
+{"u": "open my downloads", "action": "open_folder", "args": {"folder": "downloads"}}
+{"u": "show me the documents folder", "action": "open_folder", "args": {"folder": "documents"}}
+{"u": "open pictures", "action": "open_folder", "args": {"folder": "pictures"}}
+{"u": "lock the computer", "action": "system", "args": {"op": "lock"}}
+{"u": "show the desktop", "action": "system", "args": {"op": "show_desktop"}}
+{"u": "take a screenshot", "action": "system", "args": {"op": "screenshot"}}
+{"u": "turn off the screen", "action": "system", "args": {"op": "screen_off"}}
+{"u": "remind me to stretch in 20 minutes", "action": "reminder", "args": {"text": "stretch", "when": "in 20 minutes"}}
+{"u": "set a reminder to call mom at 6pm", "action": "reminder", "args": {"text": "call mom", "when": "at 6pm"}}
+{"u": "remind me about the dentist tomorrow 9am", "action": "reminder", "args": {"text": "the dentist", "when": "tomorrow 9am"}}
+{"u": "set a timer for 10 minutes", "action": "reminder", "args": {"when": "for 10 minutes"}}
+{"u": "what's the weather like today", "action": "question", "args": {}}
+{"u": "what's on my screen", "action": "question", "args": {}}
+{"u": "what song is this", "action": "question", "args": {}}
+{"u": "how hot is my gpu right now", "action": "question", "args": {}}
+{"u": "who won the champions league final", "action": "question", "args": {}}
+{"u": "what time is it", "action": "question", "args": {}}
+{"u": "stop listening", "action": "stop", "args": {}}
+{"u": "turn off voice mode", "action": "stop", "args": {}}
+{"u": "that's all for now jarvis, go to sleep", "action": "stop", "args": {}}
+{"u": "thanks jarvis", "action": "none", "args": {}}
+{"u": "haha that's funny", "action": "none", "args": {}}
+{"u": "yeah I'll call you back later, bye", "action": "none", "args": {}}
+{"u": "how are you doing today", "action": "none", "args": {}}
+{"u": "open notepad and type buy milk", "action": "open_app", "args": {"app": "Notepad"}, "compound": true}
+{"u": "open chrome and go to youtube", "action": "open_app", "args": {"app": "Google Chrome"}, "compound": true}
+{"u": "copy this and paste it into discord", "action": "shortcut", "args": {"shortcut": "copy"}, "compound": true}

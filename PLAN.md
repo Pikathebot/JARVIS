@@ -691,8 +691,53 @@ tools*, a **Laya** model fine-tuned for computer use and for Jarvis's own use ca
   that decides what an utterance needs (tool / screen action / just talk), later fine-tuned on
   Jarvis's own cases. The 9B is **unloaded** while voice mode is on (swap ~8 s each way) and
   reloaded when voice mode ends. The model picker's fit label (§4.8b) checks each model alone;
-  a "does it still fit next to Laya + Kokoro" label is built here, with voice mode. Still open: what Laya's labels are, what MiniCPM does once
-  Laya has decided, and whether Kokoro moves to the GPU.
+  a "does it still fit next to Laya + Kokoro" label is built here, with voice mode.
+- **Design settled with the user (2026-10-02), modelled on https://github.com/kevinbadi/jev-voice
+  (`jev_voice/brain.py`):** Laya is the *command brain*, not a router to MiniCPM. One request
+  per utterance fans out ~20 typed questions (action kind, app, site, search engine, text span,
+  shortcut, scroll, volume/media op, folder, compound, addressed...). Laya never generates:
+  code cuts candidate spans from the transcript (regex) and Laya *selects*; code executes
+  (existing tools through `permissions.py`, plus new Windows input). Plan confidence = min over
+  the answers used.
+  - **MiniCPM5-2B does three things:** conversation when Laya says `none` (no tools);
+    escalation when Laya's confidence is below threshold (MiniCPM *with tools* gets a try,
+    like Haiku in jev-voice); and writing text that isn't in the utterance ("reply saying I'll
+    be late, politely").
+  - **v1 actions:** existing tools (apps, volume, media, clipboard, reminders, web search,
+    look_at_screen) **plus new Windows input**: type text, shortcuts, scroll, open folder/site.
+    The multi-step "task" loop over the UI Automation tree (jev-ultrafast port) is later.
+  - **Keyboard permissions:** run without asking, except when the focused window is a
+    terminal/PowerShell/Run dialog or the shortcut is destructive (close/quit/delete) -> spoken
+    yes/no.
+  - **Toggle:** a Voice mode button in the HUD and main window; the 9B unloads while it's on.
+  - **Feedback:** a short Kokoro line ("Opening Chrome." / "Not sure what you meant.").
+  - **Laya device:** measure CPU vs GPU on this laptop with the real question set first.
+    Laya > 20 options degrades (Banking77 0.43), so the app question gets a code-prefiltered
+    top ~10, never the whole installed list.
+  - **Fine-tuning is planned from the start:** the base checkpoint is near chance on typed
+    decisions zero-shot (0.36 vs 0.77 fine-tuned). Claude builds the dataset generator + a
+    held-out test set of spoken commands; the user runs the Laya fine-tuning notebook on
+    Kaggle's free T4s.
+  - Kokoro stays on CPU unless measured to be the latency bottleneck.
+- **Built 2026-10-02 (step 1, measure):** `backend/app/voice/command_brain.py` (pure Python:
+  ACTIONS, two-stage questions, regex candidate spans, 10-app shortlist, Plan; 12 tests in
+  `test_command_brain.py`); `scripts/laya_bench/` (`commands.jsonl` = 92 held-out spoken
+  commands, `apps.json` = this PC's app names, `bench.py`, `gen_dataset.py`, `train.py`).
+  Laya lives in its own venv `tools/laya-venv` (torch 2.11 cu128, laya 0.3.23; HF cache
+  `tools/hf-cache`) -- torch stays out of the backend venv; at runtime it'll be a sidecar.
+  **Zero-shot base `laya` (English), 92 commands:** action 70%, fully right 59%, compound 95%.
+  **GPU** 320 ms/command p50 (stage1 ~150 + stage2 ~130), 2.3 GB VRAM peak (fp32 weights --
+  try fp16). **CPU** 3.0 s/command (stage1 2.6 s) -> GPU required. Typical misses: mute/pause
+  -> stop, "type X" -> compose, "enter X" -> enter key, websites -> open_app.
+  **Local fine-tune works:** 12.7k generated rows (held-out commands excluded), embeddings +
+  lowest 14 of 28 layers frozen (198M trainable), fp16 + checkpointing: 4.7 GB peak, ~8 rows/s.
+  **Fine-tuned (2 epochs, 31 min, -> `tools/laya-voice`):** action 98%, fully right 96.7%
+  (89/92), compound 99%; 100 ms/command p50 on GPU (fp16 weights). Misses: "bring up steam" ->
+  media play at conf 0.91 (confidently wrong); "open hugging face" -> none (conf 0.17, gate
+  would catch it); "dictate the build passed on all platforms" typed "the build passed" -- a
+  training filler, i.e. template memorisation. The calibration temperature hit its 5.0 cap.
+  The held-out set shares the templates' style, so real accuracy is lower: the true test is
+  the user's own utterances once voice mode runs (log every plan).
 
 ### 4.10 Workspace location: done 2026-10-02 (device-checked; see `docs/MILESTONES.md`)
 
