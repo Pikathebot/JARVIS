@@ -41,6 +41,7 @@ def read_file(
     if not path.exists():
         candidates = [
             ws_root / "files" / Path(raw_path).name,
+            ws_root / ".jarvis" / "attachments" / Path(raw_path).name,
             ws_root / Path(raw_path).name,
         ]
         for cand in candidates:

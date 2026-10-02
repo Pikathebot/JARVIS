@@ -9,7 +9,7 @@
     mc:Ignorable="d">
 
     <!--
-        Same shape as SettingsPane: an in-window glass sheet over a scrim rather than a
+        An in-window glass sheet over a scrim rather than a
         ContentDialog, which is a popup painted above the window where the glass can't reach.
     -->
     <Grid Background="{ThemeResource ScrimBrush}" Tapped="Scrim_Tapped">
@@ -48,8 +48,25 @@
                         </StackPanel>
 
                         <StackPanel Spacing="6">
-                            <TextBlock Text="Local folders" Style="{StaticResource SecondaryFootnoteText}" />
-                            <TextBlock Text="Folders on this PC to index into the workspace's knowledge, alongside anything you attach."
+                            <TextBlock Text="Location" Style="{StaticResource SecondaryFootnoteText}" />
+                            <TextBlock Text="The folder this workspace is: Jarvis reads, indexes and writes its files there. Leave it to have Jarvis make a new folder for it."
+                                       Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="LocationText" Text="New folder in Jarvis's workspaces" Style="{StaticResource BodyText}"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                <Button Grid.Column="1" Content="Choose folder…" Click="ChooseLocation_Click" />
+                                <Button x:Name="ClearLocationButton" Grid.Column="2" Content="Clear" Visibility="Collapsed" Click="ClearLocation_Click" />
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Extra folders to index" Style="{StaticResource SecondaryFootnoteText}" />
+                            <TextBlock Text="Other folders Jarvis searches for answers. It works in the location above, not in these."
                                        Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
                             <ItemsControl x:Name="FoldersList" ItemsSource="{x:Bind Folders}">
                                 <ItemsControl.ItemTemplate>

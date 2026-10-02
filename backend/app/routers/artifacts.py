@@ -124,11 +124,10 @@ def get_target_files_dir(project_id: Optional[str], db: Session) -> Path:
     workspace_base = Path(settings.workspace_path).resolve()
 
     if project_id:
+        from app.workspaces import attachments_dir
+
         proj = db.get(Project, project_id)
-        if proj and proj.workspace_path:
-            target_dir = Path(proj.workspace_path).resolve() / "files"
-        else:
-            target_dir = workspace_base / "projects" / project_id / "files"
+        target_dir = attachments_dir(proj.workspace_path if proj else None, project_id)
     else:
         target_dir = workspace_base / "files"
 

@@ -8,10 +8,10 @@ using Microsoft.UI.Xaml.Input;
 namespace Jarvis_App.Views;
 
 /// <summary>Create-a-workspace sheet, opened from the workspace dropdown. Collects the fields of
-/// <c>POST /api/projects</c> (name, description, instructions, local folders to index), creates
-/// through <see cref="ProjectsViewModel.CreateAsync"/> and switches to the new workspace. Same
-/// in-window-sheet shape as <see cref="SettingsPane"/>; the host removes it on
-/// <see cref="CloseRequested"/>.</summary>
+/// <c>POST /api/projects</c> (name, description, instructions, the location -- the folder the
+/// workspace is -- and extra folders to index), creates through
+/// <see cref="ProjectsViewModel.CreateAsync"/> and switches to the new workspace. An in-window
+/// glass sheet; the host removes it on <see cref="CloseRequested"/>.</summary>
 public sealed partial class NewWorkspacePane : UserControl
 {
     public event Action? CloseRequested;
@@ -24,6 +24,9 @@ public sealed partial class NewWorkspacePane : UserControl
     private readonly ProjectsViewModel _projects;
     private readonly nint _hwnd;
     private bool _busy;
+
+    /// <summary>The picked workspace folder, or null for a new folder of Jarvis's own.</summary>
+    private string? _location;
 
     public NewWorkspacePane(ProjectsViewModel projects, nint hwnd)
     {
@@ -55,16 +58,48 @@ public sealed partial class NewWorkspacePane : UserControl
         }
     }
 
-    private async void AddFolder_Click(object sender, RoutedEventArgs e)
+    /// <summary>The Explorer folder dialog; null when cancelled. A failure shows in the sheet
+    /// instead of vanishing (WinRT's FolderPicker used to fail here with no trace).</summary>
+    private string? PickFolder(string title)
     {
-        var picker = new Windows.Storage.Pickers.FolderPicker();
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, _hwnd);
-        picker.FileTypeFilter.Add("*");
-        picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary;
+        try
+        {
+            ErrorText.Visibility = Visibility.Collapsed;
+            return Services.FolderDialog.Pick(_hwnd, title,
+                _location ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        }
+        catch (Exception ex)
+        {
+            App.Log($"folder dialog failed: {ex.GetType().Name}: {ex.Message}");
+            ErrorText.Text = $"Could not open the folder picker: {ex.Message}";
+            ErrorText.Visibility = Visibility.Visible;
+            return null;
+        }
+    }
 
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is null || string.IsNullOrEmpty(folder.Path)) return;
-        if (!Folders.Contains(folder.Path, StringComparer.OrdinalIgnoreCase)) Folders.Add(folder.Path);
+    private void ChooseLocation_Click(object sender, RoutedEventArgs e)
+    {
+        var path = PickFolder("Choose the workspace folder");
+        if (path is null) return;
+        _location = path;
+        LocationText.Text = path;
+        ClearLocationButton.Visibility = Visibility.Visible;
+        // A workspace made from a folder is usually named after it.
+        if (NameBox.Text.Trim().Length == 0) NameBox.Text = Path.GetFileName(path.TrimEnd('\\', '/'));
+    }
+
+    private void ClearLocation_Click(object sender, RoutedEventArgs e)
+    {
+        _location = null;
+        LocationText.Text = "New folder in Jarvis's workspaces";
+        ClearLocationButton.Visibility = Visibility.Collapsed;
+    }
+
+    private void AddFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var path = PickFolder("Add a folder to index");
+        if (path is null) return;
+        if (!Folders.Contains(path, StringComparer.OrdinalIgnoreCase)) Folders.Add(path);
     }
 
     private void RemoveFolder_Click(object sender, RoutedEventArgs e)
@@ -86,7 +121,7 @@ public sealed partial class NewWorkspacePane : UserControl
                 name,
                 NullIfBlank(DescriptionBox.Text),
                 NullIfBlank(InstructionsBox.Text),
-                workspacePath: null,
+                workspacePath: _location,
                 Folders.Count > 0 ? Folders.ToList() : null);
             // A new workspace is almost always the one you want to be in; the backend only
             // activates the very first project on its own.

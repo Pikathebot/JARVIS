@@ -42,6 +42,7 @@ def patch_file(
     if not path.exists():
         candidates = [
             ws_root / "files" / Path(clean_path_str).name,
+            ws_root / ".jarvis" / "attachments" / Path(clean_path_str).name,
             ws_root / Path(clean_path_str).name,
         ]
         for cand in candidates:

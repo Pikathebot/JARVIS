@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
 from app.config import settings
+from app.workspaces import jarvis_project_dir, validate_workspace_folder
 from app.database import SessionLocal, get_session
 from app.database.models import Project, Session as DBSession
 
@@ -134,17 +135,18 @@ def create_project(
     Create a new Project entity, initialize its on-disk filesystem workspace,
     and persist metadata to the database.
     """
+    # The workspace is the folder the user picked (an existing directory, used as is), else a
+    # new folder of Jarvis's own. Either way Jarvis's bookkeeping lives in its project dir.
+    final_workspace_path: Optional[str] = None
+    if req.workspace_path and req.workspace_path.strip():
+        try:
+            final_workspace_path = str(validate_workspace_folder(req.workspace_path))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
     project_id = str(uuid.uuid4())
     project_dir = init_project_filesystem(project_id)
-
-    # Determine workspace directory: explicit workspace_path override, else default project_dir
-    if req.workspace_path and req.workspace_path.strip():
-        final_workspace_path = str(Path(req.workspace_path.strip()).resolve())
-        try:
-            Path(final_workspace_path).mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-    else:
+    if final_workspace_path is None:
         final_workspace_path = str(project_dir)
 
     # Check if there are no existing projects; if none exist, default this to active
@@ -203,23 +205,17 @@ def update_project(
         project.description = req.description
     if req.instructions is not None:
         project.instructions = req.instructions
+    # Local folders are read-only knowledge and never move the workspace (they used to: the first
+    # one silently became the workspace on any update that didn't name a location).
     if req.workspace_path is not None:
         if req.workspace_path.strip():
-            resolved_wp = str(Path(req.workspace_path.strip()).resolve())
             try:
-                Path(resolved_wp).mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
-            project.workspace_path = resolved_wp
+                project.workspace_path = str(validate_workspace_folder(req.workspace_path))
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         else:
-            project.workspace_path = None
-    elif req.local_folders is not None and len(req.local_folders) > 0 and req.local_folders[0].strip():
-        resolved_wp = str(Path(req.local_folders[0].strip()).resolve())
-        try:
-            Path(resolved_wp).mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        project.workspace_path = resolved_wp
+            # Back to Jarvis's own folder for this workspace.
+            project.workspace_path = str(init_project_filesystem(project_id))
     if req.local_folders is not None:
         project.local_folders_json = json.dumps(req.local_folders)
 
@@ -257,7 +253,9 @@ def delete_project(
         )
 
     was_active = project.is_active
-    workspace_dir = project.workspace_path
+    # Only ever Jarvis's own directory: a workspace the user pointed at their own folder keeps
+    # that folder (and its .jarvis/attachments) when the workspace is deleted.
+    workspace_dir = str(jarvis_project_dir(project_id))
 
     # Delete project record from DB
     db.delete(project)

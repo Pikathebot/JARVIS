@@ -124,8 +124,12 @@ class ProjectIndexer:
 
         search_dirs: list[Path] = []
         if is_custom_workspace:
-            # Custom project workspace: scan root folder directly
+            # The workspace folder itself, plus the uploads kept in its hidden .jarvis folder
+            # (os.walk below skips dot-folders, so they are listed on their own).
+            from app.workspaces import EXTERNAL_ATTACHMENTS
+
             search_dirs.append(workspace_base)
+            search_dirs.append(workspace_base / EXTERNAL_ATTACHMENTS)
         else:
             project_dir = workspace_base / "projects" / project_id
             if not project_dir.exists() and (workspace_base / "files").exists():
