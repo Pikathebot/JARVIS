@@ -390,3 +390,76 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     JSON in LocalSettings (`GlassTuning`), applied in `App.OnLaunched` before any window.
     Every app glass shape comes from a GlassSlab or one of the five controls, so the groups
     cover the whole app. GlassLab is untouched (it has its own table).
+
+- [x] **Settings window (PLAN §4.8b2, 2026-10-02).**
+  later).** Settings becomes a separate window instead of the floating sheet, and the models
+  UI (picker, fit labels, Get models, downloads) moves somewhere of its own. Not designed yet --
+  ask the user where models should live before building. `ModelHubViewModel` is owned by
+  `ModelsViewModel`, not the sheet, so it can move without changing the download plumbing.
+  - **The user's choices (2026-10-02):** sidebar + pages (iPadOS/macOS System Settings style);
+    model management is a **Models page in the Settings window**; full liquid glass (its own
+    GlassHost, GPU cost only while open); a separate movable, resizable window, one instance,
+    remembers size/position. Design card next (artifact), then build after sign-off.
+  - **Built 2026-10-02 -- WinUI builds; unverified on device.** `SettingsWindow` (own GlassHost,
+    capture-excluded, one instance owned by MainWindow, size/position in LocalSettings, Ctrl+, and
+    the status pill's Models link open it on a page) hosting the rewritten `Views/SettingsPane`
+    (sidebar slab + thick page slab, seven pages). New: `Views/TrafficLights` (reusable dots;
+    MainWindow keeps its own copy), Models "Free for a model" card (`vram_total_mb` added to
+    GET /api/models from `ResourceGovernor.card_total_mb`), Voice page with speech-sensitivity and
+    pause sliders (`Services/VoiceSettings`, replacing VoiceViewModel's constants 3.0x / 850 ms,
+    saved in LocalSettings) and Play sample, Developer preview strip (the selected group's live
+    controls; it sits on the page glass, not a window onto the desktop as drawn), About page.
+    Persona rows show the id ("Operator") since all are named Jarvis; summaries carry no voice, so
+    the list has no voice column. Snapshot script takes `-Window settings`. Traffic lights sit at
+    the page's top right like the main window's (the design drew them top left).
+  - **Design APPROVED by the user 2026-10-02 ("exactly what we need"):** https://claude.ai/artifact/1zhPEqKDBMeTASKTStr78S
+    -- seven pages (General, Models, Persona, Voice, Routines, Developer, About), sidebar regular
+    glass + page thick glass, grouped cards. Developer has a live **preview strip** (the user asked
+    for an example of what each slider changes): it shows the selected group's controls and is a
+    window onto the desktop (no page glass under it) so they refract the real backdrop. Proposed,
+    not existing yet: Voice > mic sensitivity / pause sliders (today's fixed 0.045 RMS / 850 ms),
+    Ctrl+, to open Settings, personas listed by id (all three are named "Jarvis" today).
+
+  - **On device 2026-10-02 (the user): pages 2-4 of the checklist "worked perfectly"; closing the
+    window first crashed the app (native 0xc000027b: GlassHost's panel events firing into freed D3D
+    objects -- the first glass window ever closed rather than hidden). Fixed with disposed guards,
+    unhooked events and a detached swapchain in GlassHost.Dispose, a closed flag in TrafficLights,
+    SettingsPane.Detach on Closed; re-tested on device: no crash.**
+
+- [x] **Workspace location = the picked folder; folder picker fixed (PLAN §4.10, 2026-10-02).**
+  **Bug:** in the New workspace sheet, "Add folder..." opens no Explorer window. Nothing is
+  logged (AppX jarvis-app-crash.log has no picker entry): the WinRT `FolderPicker`
+  (`NewWorkspacePane.AddFolder_Click`) fails silently -- the known WinUI 3 failure (e.g. an
+  elevated process). Fix: replace it with the Win32 `IFileOpenDialog` + `FOS_PICKFOLDERS`
+  (hand-written COM interop; the app has no CsWin32), owned by the main window hwnd, with a
+  try/catch that shows the error in the sheet.
+
+  **Redesign (the user's choice): a workspace's location IS the real project folder.** You pick
+  a folder with the picker; Jarvis reads, indexes and writes files there. Its own bookkeeping
+  (qdrant index, artifact history, memory) stays in `backend/workspace/projects/{id}/`. No folder
+  picked = a new folder under Jarvis's workspaces, as today.
+  What the code does now (read 2026-10-02, nothing changed yet):
+  - Client always sends `workspace_path: null` (`NewWorkspacePane.Create_Click`), so every
+    workspace lands in `backend/workspace/projects/{id}/`; picked folders go to
+    `local_folders` and are only indexed for RAG -- why "Jarvis doesn't use that location".
+  - Backend already honours `Project.workspace_path`: `orchestrator._resolve_workspace_context`
+    gives it to the tools, `rag/indexer.py` scans it (+ files/, knowledge/, local_folders),
+    vector store keeps indexes under projects/{id}/indexes (good).
+  - Inconsistencies to fix: `artifacts.py:129` writes into `<workspace_path>/files` (would
+    create a stray files/ folder in the user's project); `update_project` silently sets
+    workspace_path to local_folders[0] when no workspace_path is given (create does not).
+  - UI: sheet gets a "Location" row (picked folder, or "New folder in Jarvis's workspaces")
+    separate from "Extra folders to index (read-only)"; editing an existing workspace's location
+    later is open (ask the user).
+  - **Built 2026-10-02 -- 733+ backend tests pass, WinUI builds; unverified on device.**
+    `app/workspaces.py` (internal vs external workspace, attachments dir, folder validation);
+    create/update validate the location (absolute, existing folder; 400 otherwise); update no
+    longer moves the workspace to local_folders[0]; **delete removes only Jarvis's own
+    projects/{id} dir, never the user's folder** (it used to rmtree workspace_path); uploads to an
+    external workspace go to `<folder>/.jarvis/attachments/` (inside the boundary, indexed,
+    read_file/patch_file fall back there); the indexer scans the folder + that dir. Client:
+    `Services/FolderDialog` (IFileOpenDialog, FOS_PICKFOLDERS) replaces FolderPicker for both the
+    Location and the extra folders; errors show in the sheet. Tests: `test_workspace_location.py`.
+    Still open: changing an existing workspace's location from the UI.
+
+  - **On device 2026-10-02 (the user): the picker opens, the workspace works in the picked folder.**

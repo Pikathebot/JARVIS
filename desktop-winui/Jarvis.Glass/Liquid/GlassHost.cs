@@ -90,8 +90,8 @@ public sealed class GlassHost : IDisposable
         if (content is not null) root.Children.Add(content);
         SwapChainPanelInterop.SetSwapChain(_panel, _d3d.SwapChain);
         ApplyCompositionScale();
-        _panel.CompositionScaleChanged += (_, _) => ApplyCompositionScale();
-        _panel.SizeChanged += (_, _) => SyncToWindow();
+        _panel.CompositionScaleChanged += OnPanelScaleChanged;
+        _panel.SizeChanged += OnPanelSizeChanged;
 
         // The WinUI window: transparent where XAML paints nothing.
         window.SystemBackdrop = new TransparentBackdrop();
@@ -155,8 +155,13 @@ public sealed class GlassHost : IDisposable
         }
     }
 
+    private void OnPanelScaleChanged(SwapChainPanel sender, object args) => ApplyCompositionScale();
+
+    private void OnPanelSizeChanged(object sender, SizeChangedEventArgs e) => SyncToWindow();
+
     private void OnRendering(object? sender, object e)
     {
+        if (_disposed) return;
         // Animations first, so what they move this frame is what gets rendered this frame.
         GlassMotion.Step(e);
         RenderTick();
@@ -208,6 +213,8 @@ public sealed class GlassHost : IDisposable
     /// renders at (scale)x the window on a HiDPI display.</summary>
     private void ApplyCompositionScale()
     {
+        // Also raised while a closing window's tree comes down, after Dispose freed the swapchain.
+        if (_disposed) return;
         var sx = _panel.CompositionScaleX;
         var sy = _panel.CompositionScaleY;
         if (sx <= 0 || sy <= 0) return;
@@ -362,8 +369,16 @@ public sealed class GlassHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        // The first window ever closed rather than hidden (Settings) crashed the app here: panel
+        // events still fired into freed D3D objects as the window's tree came down, and an
+        // exception thrown from a XAML event handler is a native crash (0xc000027b), not a
+        // managed one. Unhook everything and detach the swapchain before releasing it.
         CompositionTarget.Rendering -= OnRendering;
         _appWindow.Changed -= OnAppWindowChanged;
+        _panel.CompositionScaleChanged -= OnPanelScaleChanged;
+        _panel.SizeChanged -= OnPanelSizeChanged;
+        try { SwapChainPanelInterop.SetSwapChain(_panel, null); }
+        catch (Exception ex) { GlassLog.Write($"detaching the swapchain threw: {ex.Message}"); }
         PInvoke.RemoveWindowSubclass(_windowHwnd, _subclassProc, SubclassId);
         GlassScene.Unregister(_windowId);
         _capture.Dispose();
@@ -400,7 +415,7 @@ internal static unsafe class SwapChainPanelInterop
     // {63aad0b8-7c24-40ff-85a8-640d944cc325}
     private static readonly Guid IID_ISwapChainPanelNative = new(0x63aad0b8, 0x7c24, 0x40ff, 0x85, 0xa8, 0x64, 0x0d, 0x94, 0x4c, 0xc3, 0x25);
 
-    public static void SetSwapChain(SwapChainPanel panel, IDXGISwapChain1 swapChain)
+    public static void SetSwapChain(SwapChainPanel panel, IDXGISwapChain1? swapChain)
     {
         var unknown = WinRT.MarshalInspectable<object>.FromManaged(panel);
         try
@@ -411,7 +426,7 @@ internal static unsafe class SwapChainPanelInterop
                 // IUnknown: QueryInterface/AddRef/Release = slots 0..2; SetSwapChain = slot 3.
                 var vtbl = *(void***)native;
                 var setSwapChain = (delegate* unmanaged[Stdcall]<nint, nint, int>)vtbl[3];
-                Marshal.ThrowExceptionForHR(setSwapChain(native, swapChain.NativePointer));
+                Marshal.ThrowExceptionForHR(setSwapChain(native, swapChain?.NativePointer ?? 0));
             }
             finally
             {

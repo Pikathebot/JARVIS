@@ -786,6 +786,10 @@ class ResourceGovernor:
         total = recent[-1][2]
         return round(max(0.0, total - max(s[1] for s in recent)), 1)
 
+    def card_total_mb(self) -> Optional[float]:
+        """The card's total VRAM from the latest GPU sample, or None before the first."""
+        return self._external_samples[-1][2] if self._external_samples else None
+
     def _vram_reasons(self, metrics: SystemMetrics) -> list[str]:
         """
         VRAM is only a reason to evict when something *other than the model* needs the card.

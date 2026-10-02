@@ -28,6 +28,12 @@ public sealed class PersonaSummary
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+
+    /// <summary>The id, capitalised ("operator" -> "Operator"): every built-in persona is
+    /// *named* Jarvis, so the name alone can't tell them apart in a list.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayName => string.IsNullOrEmpty(Id) ? Name : char.ToUpperInvariant(Id[0]) + Id[1..];
+
     public string Description { get; set; } = "";
 }
 

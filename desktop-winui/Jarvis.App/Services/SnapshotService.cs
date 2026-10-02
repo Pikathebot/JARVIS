@@ -26,7 +26,17 @@ public sealed class SnapshotService : IDisposable
     private static readonly TimeSpan MaxHold = TimeSpan.FromSeconds(10);
 
     private readonly DispatcherQueueTimer _timer;
-    private readonly IReadOnlyList<(string Name, nint Hwnd)> _windows;
+    private readonly List<(string Name, nint Hwnd)> _windows;
+
+    /// <summary>The running service, for windows that come and go (Settings).</summary>
+    public static SnapshotService? Current { get; private set; }
+
+    public void Track(string name, nint hwnd)
+    {
+        if (!_windows.Contains((name, hwnd))) _windows.Add((name, hwnd));
+    }
+
+    public void Untrack(nint hwnd) => _windows.RemoveAll(w => w.Hwnd == hwnd);
     private readonly string _requestPath = Path.Combine(AppContext.BaseDirectory, "snapshot.request");
     private readonly string _readyPath = Path.Combine(AppContext.BaseDirectory, "snapshot.ready");
     private DateTime _heldSince;
@@ -35,7 +45,8 @@ public sealed class SnapshotService : IDisposable
 
     public SnapshotService(DispatcherQueue dispatcher, IReadOnlyList<(string Name, nint Hwnd)> windows)
     {
-        _windows = windows;
+        _windows = windows.ToList();
+        Current = this;
         TryDelete(_readyPath);
         // A stale request from a previous run must not freeze this one -- but a fresh one is a
         // script catching the startup sequence, and is answered.

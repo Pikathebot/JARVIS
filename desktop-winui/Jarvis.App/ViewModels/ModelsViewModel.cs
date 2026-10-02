@@ -31,6 +31,13 @@ public partial class ModelsViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsBusy { get; set; }
 
+    /// <summary>MiB of the card a model can count on (GET /api/models fit_budget_mb).</summary>
+    [ObservableProperty]
+    public partial double? FitBudgetMb { get; set; }
+
+    [ObservableProperty]
+    public partial double? VramTotalMb { get; set; }
+
     /// <summary>Surfaced verbatim in the dialog — a model that will not load (VRAM, a bad file)
     /// is the expected failure here and the user needs to see why.</summary>
     [ObservableProperty]
@@ -72,6 +79,8 @@ public partial class ModelsViewModel : ObservableObject
         catalog.Selection.TryGetValue("fast", out var fast);
         MainSelection = main;
         FastSelection = fast;
+        FitBudgetMb = catalog.FitBudgetMb;
+        VramTotalMb = catalog.VramTotalMb;
     }
 
     /// <summary>

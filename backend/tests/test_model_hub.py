@@ -137,9 +137,11 @@ def test_governor_budget_is_the_card_minus_the_recent_high_water_mark():
     gov = ResourceGovernor(enabled=True)
     gov._external_samples.clear()
     assert gov.fit_budget_mb() is None
+    assert gov.card_total_mb() is None
     gov._external_samples.extend([(100.0, 2300.0, 8188.0), (500.0, 1200.0, 8188.0), (900.0, 1500.0, 8188.0)])
     assert gov.fit_budget_mb(window_s=900) == 8188.0 - 2300.0  # the 2.3 GB peak still counts
     assert gov.fit_budget_mb(window_s=600) == 8188.0 - 1500.0  # ...until it ages out
+    assert gov.card_total_mb() == 8188.0
 
 
 # --- repo listing ------------------------------------------------------------------------------

@@ -623,11 +623,7 @@ in chat doesn't stick.
 **b. Model download from HuggingFace + fit labels: done 2026-10-02** (device-checked; see
 `docs/MILESTONES.md`). It lives in the Settings sheet for now.
 
-**b2. Settings as its own window; model management out of Settings (the user, 2026-10-02,
-later).** Settings becomes a separate window instead of the floating sheet, and the models
-UI (picker, fit labels, Get models, downloads) moves somewhere of its own. Not designed yet --
-ask the user where models should live before building. `ModelHubViewModel` is owned by
-`ModelsViewModel`, not the sheet, so it can move without changing the download plumbing.
+**b2. Settings window: done 2026-10-02** (device-checked; see `docs/MILESTONES.md`).
 
 **c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** (raised by the user
 2026-09-28): https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF
@@ -697,3 +693,14 @@ tools*, a **Laya** model fine-tuned for computer use and for Jarvis's own use ca
   reloaded when voice mode ends. The model picker's fit label (§4.8b) checks each model alone;
   a "does it still fit next to Laya + Kokoro" label is built here, with voice mode. Still open: what Laya's labels are, what MiniCPM does once
   Laya has decided, and whether Kokoro moves to the GPU.
+
+### 4.10 Workspace location: done 2026-10-02 (device-checked; see `docs/MILESTONES.md`)
+
+Open: changing an existing workspace's location from the UI.
+
+### 4.11 Crash on Quit from the tray (seen 2026-10-02 09:37 and 09:53, unverified)
+
+Windows logged `0xc000027b` in CoreMessagingXP.dll both times the user quit Jarvis from the tray
+menu -- the same signature as the Settings-window close crash, i.e. an exception thrown from a
+XAML event handler during teardown. The GlassHost disposal guards added for that may have fixed
+it too; check the Application event log after a few tray quits before digging further.

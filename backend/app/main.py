@@ -189,6 +189,7 @@ get_runtime_process_manager().vram_headroom_provider = (
 # The model picker's fit labels: the card minus what the rest of the machine held lately.
 from app.agent import model_hub as _model_hub
 _model_hub.budget_provider = governor.fit_budget_mb
+_model_hub.card_total_provider = governor.card_total_mb
 process_watcher = ProcessWatcher(
     config_path=settings.governor_watchlist_path,
     poll_interval=settings.governor_process_poll_interval,

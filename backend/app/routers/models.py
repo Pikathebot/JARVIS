@@ -74,6 +74,7 @@ async def list_models():
     return {
         "models": models,
         "fit_budget_mb": budget,
+        "vram_total_mb": model_hub.current_card_total_mb(),
         "projectors": [to_dict(info) for info in catalog.projectors()],
         "selection": catalog.selection(),
         "slots": list(SLOTS),

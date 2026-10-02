@@ -66,6 +66,9 @@ public sealed class ModelCatalogResponse
     /// else), or null before the governor has sampled the GPU.</summary>
     public double? FitBudgetMb { get; set; }
 
+    /// <summary>The card's total VRAM from the governor's latest reading, or null.</summary>
+    public double? VramTotalMb { get; set; }
+
     /// <summary>Which slot llama-server currently has loaded, or null when nothing is running.</summary>
     public string? LoadedSlot { get; set; }
 

@@ -36,9 +36,7 @@ namespace Jarvis_App.ViewModels;
 public partial class VoiceViewModel : ObservableObject, IDisposable
 {
     private const float MinSpeechRms = 0.008f;
-    private const float NoiseFloorRatio = 3.0f;
     private const float InitialNoiseFloor = 0.004f;
-    private const int SilenceMs = 850;
     private const int MaxUtteranceMs = 12000;
     private const int MinUtteranceMs = 320;
     // Barge-in is judged against our own voice leaking from the speakers into the mic, not the
@@ -216,7 +214,7 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
         var rms = (float)Math.Sqrt(sumSquares / samples.Length);
 
         var quantumMs = samples.Length / (double)_sampleRate * 1000.0;
-        var threshold = Math.Max(MinSpeechRms, _noiseFloor * NoiseFloorRatio);
+        var threshold = Math.Max(MinSpeechRms, _noiseFloor * Services.VoiceSettings.SpeechRatio);
         var speaking = rms >= threshold;
         // Track the room: drop to a quieter level almost at once, climb slowly (~5 s to reach a
         // sustained new level at 100 frames/s). Climbing also while "speaking" is what lets the
@@ -291,7 +289,7 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
             _recordingMs += quantumMs;
             _silenceAccumMs += quantumMs;
 
-            if (_silenceAccumMs >= SilenceMs)
+            if (_silenceAccumMs >= Services.VoiceSettings.PauseMs)
             {
                 if (_recordingMs - _silenceAccumMs >= MinUtteranceMs)
                 {

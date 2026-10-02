@@ -7,376 +7,733 @@
     xmlns:models="using:Jarvis.Core.Models"
     xmlns:glass="using:Jarvis_Glass"
     xmlns:vm="using:Jarvis_App.ViewModels"
+    xmlns:local="using:Jarvis_App.Views"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
     <!--
-        Settings is an in-window sheet, not a ContentDialog: dialogs and flyouts are popups painted
-        above the window, where the glass renderer behind it can't reach, so nothing inside them
-        could be glass. Here the sheet is a layer-2 slab over the panels and its switches are real
-        GlassToggles. The scrim is XAML above the glass (it dims the panels beneath).
+        The Settings window's content (PLAN 4.8b2; design: the "Jarvis Settings window" canvas).
+        Two glass slabs over the desktop: the section list on regular glass, the page on thick
+        glass (its XAML text must read over any desktop). One page shows at a time; the others are
+        Collapsed, which takes their glass controls off the scene too.
     -->
-    <Grid Background="{ThemeResource ScrimBrush}" Tapped="Scrim_Tapped">
-        <glass:GlassSlab x:Name="Sheet" Material="Thick" SlabCornerRadius="{StaticResource RadiusSheet}" TintAmount="0.62" Frost="36"
-                         Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
-                         Background="Transparent" Tapped="Sheet_Tapped">
-            <Grid Padding="24,20,24,24">
+    <UserControl.Resources>
+        <Style x:Key="SettingsCard" TargetType="Border">
+            <Setter Property="CornerRadius" Value="{StaticResource CardCornerRadius}" />
+            <Setter Property="Background" Value="{ThemeResource FillTertiaryBrush}" />
+        </Style>
+        <Style x:Key="SettingsRow" TargetType="Grid">
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="ColumnSpacing" Value="12" />
+        </Style>
+        <Style x:Key="RowSeparator" TargetType="Rectangle">
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Margin" Value="14,0" />
+            <Setter Property="Fill" Value="{ThemeResource SeparatorBrush}" />
+        </Style>
+        <Style x:Key="NavButton" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="{StaticResource RowCornerRadius}" />
+        </Style>
+        <Style x:Key="KeyCap" TargetType="Border">
+            <Setter Property="CornerRadius" Value="{StaticResource SmallCornerRadius}" />
+            <Setter Property="Background" Value="{ThemeResource FillSecondaryBrush}" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid x:Name="RootGrid" Padding="8" ColumnSpacing="8">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="232" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Sections -->
+        <glass:GlassSlab x:Name="SidebarSlab" SlabCornerRadius="{StaticResource RadiusPanel}">
+            <StackPanel Padding="8,14,8,8" Spacing="2">
+                <TextBlock Text="Settings" Style="{StaticResource Title3Text}" Margin="10,6,10,14" />
+                <Button x:Name="NavGeneral" Style="{StaticResource NavButton}" Tag="General" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE713;" FontSize="16" />
+                        <TextBlock Text="General" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavModels" Style="{StaticResource NavButton}" Tag="Models" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE81E;" FontSize="16" />
+                        <TextBlock Text="Models" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavPersona" Style="{StaticResource NavButton}" Tag="Persona" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE77B;" FontSize="16" />
+                        <TextBlock Text="Persona" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavVoice" Style="{StaticResource NavButton}" Tag="Voice" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE720;" FontSize="16" />
+                        <TextBlock Text="Voice" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavRoutines" Style="{StaticResource NavButton}" Tag="Routines" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE823;" FontSize="16" />
+                        <TextBlock Text="Routines" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavDeveloper" Style="{StaticResource NavButton}" Tag="Developer" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE90F;" FontSize="16" />
+                        <TextBlock Text="Developer" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="NavAbout" Style="{StaticResource NavButton}" Tag="About" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE946;" FontSize="16" />
+                        <TextBlock Text="About" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </glass:GlassSlab>
+
+        <!-- Page -->
+        <glass:GlassSlab x:Name="PageSlab" Grid.Column="1" Material="Thick" TintAmount="0.62" Frost="36" SlabCornerRadius="{StaticResource RadiusPanel}">
+            <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="48" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Grid Margin="0,0,0,12">
-                    <TextBlock Text="Settings" Style="{StaticResource Title2Text}" VerticalAlignment="Center" />
-                    <glass:GlassButton Text="✕" Width="36" Height="36" MinWidth="36" MinHeight="36" HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click" />
-                </Grid>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
-        <StackPanel Spacing="16" MinWidth="380">
+                <TextBlock x:Name="PageTitle" Text="General" Style="{StaticResource Title2Text}" Margin="28,8,0,0" VerticalAlignment="Center" />
+                <local:TrafficLights x:Name="WindowButtons" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" />
 
-            <!-- Appearance: dark (default), light glass, high contrast. Applied live (JarvisTheme). -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderText}" />
-                <glass:GlassSegmented x:Name="AppearanceSwitch" Items="Dark|Light|High contrast" HorizontalAlignment="Stretch" SelectionChanged="AppearanceSwitch_SelectionChanged" />
-                <TextBlock x:Name="AppearanceNote" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed"
-                           Text="Windows high contrast is on, so Jarvis stays in high contrast." />
-            </StackPanel>
+                <ScrollViewer x:Name="PageScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
+                    <Grid Padding="28,8,28,28">
 
-            <StackPanel Spacing="4">
-                <TextBlock Text="Active backend" Style="{StaticResource SectionHeaderText}" />
-                <TextBlock x:Name="BackendText" Text="—" Style="{StaticResource BodyText}" />
-                <TextBlock x:Name="ModelText" Text="—" Style="{StaticResource SecondaryFootnoteText}" />
-            </StackPanel>
+                        <!-- ========== General ========== -->
+                        <StackPanel x:Name="GeneralPage" Spacing="20">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Theme" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                        <glass:GlassSegmented x:Name="AppearanceSwitch" Grid.Column="1" Width="320" Items="Dark|Light|High contrast" SelectionChanged="AppearanceSwitch_SelectionChanged" />
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="AppearanceNote" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0" Visibility="Collapsed"
+                                           Text="Windows high contrast is on, so Jarvis stays in high contrast." />
+                            </StackPanel>
 
-            <StackPanel Spacing="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Models" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
-                    <ProgressRing
-                        x:Name="ModelBusyRing"
-                        Grid.Column="1"
-                        Width="14"
-                        Height="14"
-                        IsActive="False"
-                        Visibility="Collapsed" />
-                </Grid>
-                <TextBlock
-                    Text="Main is what chat runs on; Fast is the smaller model the router falls back to. Models kept directly in models/ are recommended."
-                    Style="{StaticResource SecondaryFootnoteText}"
-                    TextWrapping="Wrap" />
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Behaviour" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="Proactive actions" Style="{StaticResource BodyText}" />
+                                            <TextBlock Text="Actions Jarvis takes on its own still go through the permission gate." Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <glass:GlassToggle x:Name="ProactiveActionsToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="ProactiveActionsToggle_Toggled" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
 
-                <ListView
-                    x:Name="ModelList"
-                    SelectionMode="None"
-                    MaxHeight="200"
-                    ItemsSource="{x:Bind ModelsViewModel.Models}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:ModelInfo">
-                            <Grid Padding="8,6" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
-                                        <!-- Visibility set in code-behind: x:Bind cannot express a bool-to-Visibility hop without a converter. -->
-                                        <TextBlock
-                                            x:Name="RecommendedBadge"
-                                            Text="Recommended"
-                                            Style="{StaticResource CaptionEmphasisText}"
-                                            Foreground="{ThemeResource AccentTextBrush}"
-                                            VerticalAlignment="Center"
-                                            Visibility="Collapsed" />
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Shortcuts" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Open Settings" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                            <Border Grid.Column="1" Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl + ," Style="{StaticResource DataText}" /></Border>
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Show or hide the HUD" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                            <Border Grid.Column="1" Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl + Shift + J" Style="{StaticResource DataText}" /></Border>
+                                        </Grid>
                                     </StackPanel>
-                                    <TextBlock
-                                        x:Name="ModelSubtitle"
-                                        Style="{StaticResource SecondaryFootnoteText}"
-                                        TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <Button
-                                    x:Name="MainButton"
-                                    Grid.Column="1"
-                                    Content="Main"
-                                    Padding="10,2"
-                                    Tag="{x:Bind}"
-                                    Click="SelectMainModel_Click" />
-                                <Button
-                                    x:Name="FastButton"
-                                    Grid.Column="2"
-                                    Content="Fast"
-                                    Padding="10,2"
-                                    Tag="{x:Bind}"
-                                    Click="SelectFastModel_Click" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                                </Border>
+                            </StackPanel>
 
-                <TextBlock
-                    x:Name="ModelStatusText"
-                    Style="{StaticResource SecondaryFootnoteText}"
-                    TextWrapping="Wrap"
-                    Visibility="Collapsed" />
-            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Screen capture" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource StatusWarningBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="Jarvis is hidden from screen capture" Style="{StaticResource BodyText}" />
+                                            <TextBlock Text="The glass refracts your real desktop, so Jarvis's windows are excluded from capture: screen recorders, Teams or Zoom screen share and Xbox Game Bar will not see them."
+                                                       Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
 
-            <!-- Get models (PLAN 4.8b): curated list, HuggingFace search, a repo's files, downloads.
-                 Every row says per slot whether it fits the card (model_hub.fit_label). -->
-            <StackPanel Spacing="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Get models" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
-                    <ProgressRing x:Name="HubBusyRing" Grid.Column="1" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
-                </Grid>
-                <TextBlock x:Name="HubBudgetText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed" />
+                        <!-- ========== Models ========== -->
+                        <StackPanel x:Name="ModelsPage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Graphics card" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Padding="14,14" ColumnSpacing="24">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" MinWidth="120">
+                                            <TextBlock Text="Free for a model" Style="{StaticResource SecondaryFootnoteText}" />
+                                            <TextBlock x:Name="BudgetMetric" Text="—" Style="{StaticResource MetricText}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                                            <Grid x:Name="BudgetBar" Height="8" CornerRadius="4" Background="{ThemeResource MeterTrackBrush}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition x:Name="BudgetOtherColumn" Width="0*" />
+                                                    <ColumnDefinition x:Name="BudgetFreeColumn" Width="1*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Background="{ThemeResource GrayBrush}" />
+                                                <Border Grid.Column="1" Background="{ThemeResource AccentBrush}" />
+                                            </Grid>
+                                            <TextBlock x:Name="BudgetDetail" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap"
+                                                       Text="Waiting for a GPU reading." />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
 
-                <TextBlock Text="Known to work here" Style="{StaticResource BodyText}" />
-                <ListView x:Name="CuratedList" SelectionMode="None" MaxHeight="240" ItemsSource="{x:Bind ModelsViewModel.Hub.Curated}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:CuratedModel">
-                            <Grid Padding="8,6" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{x:Bind File.Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
-                                    <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
-                                        VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadCurated_Click" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                            <StackPanel Spacing="6">
+                                <Grid>
+                                    <TextBlock Text="Installed" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    <ProgressRing x:Name="ModelBusyRing" Width="14" Height="14" IsActive="False" Visibility="Collapsed" HorizontalAlignment="Right" />
+                                </Grid>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <ListView x:Name="ModelList" SelectionMode="None" ItemsSource="{x:Bind ModelsViewModel.Models}">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="models:ModelInfo">
+                                                <Grid Padding="6,8" ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="2">
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                            <!-- Visibility set in code-behind: x:Bind cannot express a bool-to-Visibility hop without a converter. -->
+                                                            <TextBlock x:Name="RecommendedBadge" Text="Recommended" Style="{StaticResource CaptionEmphasisText}"
+                                                                       Foreground="{ThemeResource AccentTextBrush}" VerticalAlignment="Center" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                        <TextBlock x:Name="ModelSubtitle" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <Button x:Name="MainButton" Grid.Column="1" Content="Main" Padding="10,2" VerticalAlignment="Center" Tag="{x:Bind}" Click="SelectMainModel_Click" />
+                                                    <Button x:Name="FastButton" Grid.Column="2" Content="Fast" Padding="10,2" VerticalAlignment="Center" Tag="{x:Bind}" Click="SelectFastModel_Click" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </Border>
+                                <TextBlock Text="Main is what chat runs on; Fast is the smaller model the router falls back to."
+                                           Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0" />
+                                <TextBlock x:Name="ModelStatusText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0" Visibility="Collapsed" />
+                            </StackPanel>
 
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="HubSearchBox" PlaceholderText="Search HuggingFace for GGUF models" KeyDown="HubSearchBox_KeyDown" />
-                    <Button Grid.Column="1" Content="Search" Click="HubSearch_Click" />
-                </Grid>
-                <ListView x:Name="HubResultsList" SelectionMode="None" MaxHeight="200" ItemsSource="{x:Bind ModelsViewModel.Hub.SearchResults}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:HubSearchResult">
-                            <Grid Padding="8,6" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{x:Bind Repo}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Content="Files" Padding="10,2" VerticalAlignment="Center" Tag="{x:Bind}" Click="OpenRepo_Click" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-
-                <!-- A repo's files: shown after "Files" on a search result. -->
-                <StackPanel x:Name="RepoPanel" Spacing="6" Visibility="Collapsed">
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="RepoTitle" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Close" Padding="10,2" Click="CloseRepo_Click" />
-                    </Grid>
-                    <StackPanel x:Name="RepoVisionRow" Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="Download vision (projector) too" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
-                        <glass:GlassToggle x:Name="RepoVisionToggle" VerticalAlignment="Center" Toggled="RepoVisionToggle_Toggled" />
-                    </StackPanel>
-                    <ListView x:Name="RepoFilesList" SelectionMode="None" MaxHeight="280" ItemsSource="{x:Bind ModelsViewModel.Hub.RepoFiles}">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="models:HubFileInfo">
-                                <Grid Padding="8,6" ColumnSpacing="8">
+                            <!-- Get models (PLAN 4.8b): curated list, HuggingFace search, a repo's files, downloads. -->
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <TextBlock Text="Get models" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    <ProgressRing x:Name="HubBusyRing" Width="14" Height="14" IsActive="False" Visibility="Collapsed" HorizontalAlignment="Right" />
+                                </Grid>
+                                <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{x:Bind SizeDisplay}" Style="{StaticResource SecondaryFootnoteText}" />
-                                        <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
-                                            VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadRepoFile_Click" />
+                                    <TextBox x:Name="HubSearchBox" PlaceholderText="Search HuggingFace for GGUF models" KeyDown="HubSearchBox_KeyDown" />
+                                    <Button Grid.Column="1" Content="Search" Click="HubSearch_Click" />
                                 </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </StackPanel>
 
-                <ListView x:Name="DownloadsList" SelectionMode="None" MaxHeight="200" ItemsSource="{x:Bind ModelsViewModel.Hub.Downloads}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="vm:DownloadItem">
-                            <Grid Padding="8,6" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="4">
-                                    <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
-                                    <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" Maximum="100" />
-                                    <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                <TextBlock Text="Known to work here" Style="{StaticResource FootnoteText}" Margin="4,4,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <ListView x:Name="CuratedList" SelectionMode="None" ItemsSource="{x:Bind ModelsViewModel.Hub.Curated}">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="models:CuratedModel">
+                                                <Grid Padding="6,8" ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="2">
+                                                        <TextBlock Text="{x:Bind File.Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
+                                                            VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadCurated_Click" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </Border>
+
+                                <ListView x:Name="HubResultsList" SelectionMode="None" MaxHeight="240" ItemsSource="{x:Bind ModelsViewModel.Hub.SearchResults}">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="models:HubSearchResult">
+                                            <Grid Padding="6,6" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="{x:Bind Repo}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Files" Padding="10,2" VerticalAlignment="Center" Tag="{x:Bind}" Click="OpenRepo_Click" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <!-- A repo's files: shown after "Files" on a search result. -->
+                                <StackPanel x:Name="RepoPanel" Spacing="6" Visibility="Collapsed">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="RepoTitle" Style="{StaticResource BodyEmphasisText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <Button Grid.Column="1" Content="Close" Padding="10,2" Click="CloseRepo_Click" />
+                                    </Grid>
+                                    <StackPanel x:Name="RepoVisionRow" Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="Download vision (projector) too" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                        <glass:GlassToggle x:Name="RepoVisionToggle" VerticalAlignment="Center" Toggled="RepoVisionToggle_Toggled" />
+                                    </StackPanel>
+                                    <Border Style="{StaticResource SettingsCard}">
+                                        <ListView x:Name="RepoFilesList" SelectionMode="None" MaxHeight="320" ItemsSource="{x:Bind ModelsViewModel.Hub.RepoFiles}">
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate x:DataType="models:HubFileInfo">
+                                                    <Grid Padding="6,8" ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{x:Bind SizeDisplay}" Style="{StaticResource SecondaryFootnoteText}" />
+                                                            <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
+                                                        </StackPanel>
+                                                        <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
+                                                                VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadRepoFile_Click" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                    </Border>
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Cancel" Padding="10,2" VerticalAlignment="Center"
-                                        IsEnabled="{x:Bind CanCancel, Mode=OneWay}" Tag="{x:Bind}" Click="CancelDownload_Click" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
 
-                <TextBlock x:Name="HubStatusText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed" />
-            </StackPanel>
+                                <TextBlock Text="Downloads" Style="{StaticResource FootnoteText}" Margin="4,4,0,0" />
+                                <ListView x:Name="DownloadsList" SelectionMode="None" ItemsSource="{x:Bind ModelsViewModel.Hub.Downloads}">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DownloadItem">
+                                            <Grid Padding="6,6" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                                    <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" Maximum="100" />
+                                                    <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Cancel" Padding="10,2" VerticalAlignment="Center"
+                                                        IsEnabled="{x:Bind CanCancel, Mode=OneWay}" Tag="{x:Bind}" Click="CancelDownload_Click" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
 
-            <StackPanel Spacing="8">
-                <TextBlock Text="Persona" Style="{StaticResource SectionHeaderText}" />
-                <ListView
-                    x:Name="PersonaList"
-                    SelectionMode="None"
-                    MaxHeight="140"
-                    ItemsSource="{x:Bind PersonaViewModel.Available}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:PersonaSummary">
-                            <Grid Padding="8,6" Tapped="PersonaItem_Tapped" Tag="{x:Bind}">
+                                <TextBlock x:Name="HubStatusText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0" Visibility="Collapsed" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ========== Persona ========== -->
+                        <StackPanel x:Name="PersonaPage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="How Jarvis talks" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <ListView x:Name="PersonaList" SelectionMode="None" ItemsSource="{x:Bind PersonaViewModel.Available}">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="models:PersonaSummary">
+                                                <Grid Padding="6,10" ColumnSpacing="12" Tapped="PersonaItem_Tapped" Tag="{x:Bind}" Background="Transparent">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,0,0">
+                                                        <Ellipse Stroke="{ThemeResource LabelSecondaryBrush}" StrokeThickness="1.5" />
+                                                        <Ellipse x:Name="ActiveBadge" Width="18" Height="18" Stroke="{ThemeResource AccentBrush}" StrokeThickness="5" Visibility="Collapsed" />
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                        <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource BodyText}" />
+                                                        <TextBlock Text="{x:Bind Description}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </Border>
+                                <TextBlock Text="Each persona speaks with its own voice; the Voice page shows the active one." Style="{StaticResource SecondaryFootnoteText}" Margin="4,0" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Customise" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="Addresses you as" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="Leave empty for no form of address." Style="{StaticResource SecondaryFootnoteText}" />
+                                            </StackPanel>
+                                            <TextBox x:Name="AddressTermBox" Grid.Column="1" PlaceholderText="sir" VerticalAlignment="Center" />
+                                            <Button Grid.Column="2" Content="Apply" VerticalAlignment="Center" Click="ApplyAddressTerm_Click" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="Reset customisations" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="Back to the persona as written." Style="{StaticResource SecondaryFootnoteText}" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="Reset" VerticalAlignment="Center" Click="ResetOverrides_Click" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ========== Voice ========== -->
+                        <StackPanel x:Name="VoicePage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Speaking" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="Voice" Style="{StaticResource BodyText}" />
+                                            <TextBlock x:Name="VoiceSource" Text="Kokoro, on the CPU. Set by the active persona." Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="VoiceIdText" Grid.Column="1" Text="—" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                        <Button x:Name="PlaySampleButton" Grid.Column="2" Content="Play sample" VerticalAlignment="Center" Click="PlaySample_Click" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Listening" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="Transcription" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="faster-whisper, on the CPU." Style="{StaticResource SecondaryFootnoteText}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="200" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="Speech sensitivity" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="How much louder than the room counts as speech. Lower hears quieter speech, and more noise." Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <TextBlock x:Name="SpeechRatioText" Grid.Column="1" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                            <glass:GlassSlider x:Name="SpeechRatioSlider" Grid.Column="2" Width="200" VerticalAlignment="Center" ValueChanged="SpeechRatioSlider_ValueChanged" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="200" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="Pause before sending" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="Silence that ends what you said." Style="{StaticResource SecondaryFootnoteText}" />
+                                            </StackPanel>
+                                            <TextBlock x:Name="PauseText" Grid.Column="1" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                            <glass:GlassSlider x:Name="PauseSlider" Grid.Column="2" Width="200" VerticalAlignment="Center" ValueChanged="PauseSlider_ValueChanged" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <HyperlinkButton Content="Reset listening to defaults" Padding="4,0" Click="ResetListening_Click" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="HUD" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="Show or hide the HUD" Style="{StaticResource BodyText}" />
+                                            <TextBlock Text="The overlay keeps its own voice session." Style="{StaticResource SecondaryFootnoteText}" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl + Shift + J" Style="{StaticResource DataText}" /></Border>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6" Opacity="0.55">
+                                <TextBlock Text="Fast voice mode" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="Fast voice mode" Style="{StaticResource BodyText}" />
+                                                <Border Style="{StaticResource KeyCap}" Padding="7,1"><TextBlock Text="Planned" Style="{StaticResource CaptionText}" /></Border>
+                                            </StackPanel>
+                                            <TextBlock Text="MiniCPM5-2B with tools, Laya as the router and Kokoro, all on the graphics card. The 9B unloads while it is on."
+                                                       Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ========== Routines ========== -->
+                        <StackPanel x:Name="RoutinesPage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Scheduled" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid>
+                                        <ListView x:Name="RoutinesList" SelectionMode="None" ItemsSource="{x:Bind RoutinesViewModel.Routines}">
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate x:DataType="models:Routine">
+                                                    <Grid Padding="6,8" ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" />
+                                                            <TextBlock Text="{x:Bind Kind}" Style="{StaticResource SecondaryFootnoteText}" />
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="1" Text="{x:Bind Time}" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                                        <Button Grid.Column="2" Content="Test" Padding="8,2" Tag="{x:Bind}" Click="RunRoutine_Click" />
+                                                        <Button Grid.Column="3" Content="Remove" Padding="8,2" Tag="{x:Bind}" Click="RemoveRoutine_Click" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                        <StackPanel x:Name="RoutinesEmpty" Spacing="4" Padding="16,24" HorizontalAlignment="Center">
+                                            <TextBlock Text="No routines yet" Style="{StaticResource BodyText}" HorizontalAlignment="Center" />
+                                            <TextBlock Text="A routine runs at a set time every day: a briefing, or a message Jarvis says to you."
+                                                       Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" TextAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="New routine" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel Padding="14,12" Spacing="10">
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="RoutineNameBox" PlaceholderText="Routine name" />
+                                            <TimePicker x:Name="RoutineTimePicker" Grid.Column="1" MinuteIncrement="5" />
+                                            <ComboBox x:Name="RoutineKindCombo" Grid.Column="2" HorizontalAlignment="Stretch" SelectedIndex="0">
+                                                <ComboBoxItem Content="briefing" />
+                                                <ComboBoxItem Content="message" />
+                                            </ComboBox>
+                                        </Grid>
+                                        <TextBox x:Name="RoutineMessageBox" PlaceholderText="Message (for 'message' routines)" />
+                                        <Button Content="Add routine" HorizontalAlignment="Right" Click="AddRoutine_Click" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ========== Developer (PLAN 4.8d) ========== -->
+                        <StackPanel x:Name="DeveloperPage" Spacing="16" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Glass material" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <glass:GlassSegmented x:Name="TuningGroups" Items="Lens|Toggle|Slider|Button|Field|Panels" HorizontalAlignment="Stretch"
+                                                      SelectionChanged="TuningGroups_SelectionChanged" />
+                            </StackPanel>
+
+                            <!-- Preview: the selected group's controls, live, so each slider shows what it changes. -->
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Preview" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}" MinHeight="140">
+                                    <Grid Padding="20,16">
+                                        <StackPanel x:Name="PreviewToggles" Orientation="Horizontal" Spacing="28" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <StackPanel Spacing="8"><glass:GlassToggle /><TextBlock Text="Off" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" /></StackPanel>
+                                            <StackPanel Spacing="8"><glass:GlassToggle IsOn="True" /><TextBlock Text="On" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" /></StackPanel>
+                                        </StackPanel>
+                                        <StackPanel x:Name="PreviewSliders" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                            <glass:GlassSlider x:Name="PreviewSlider" Width="260" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="PreviewButtons" Spacing="14" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                                                <glass:GlassButton Text="Glass" />
+                                                <glass:GlassButton Text="Accent" IsAccent="True" />
+                                            </StackPanel>
+                                            <glass:GlassSegmented Items="One|Two|Three" Width="260" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="PreviewFields" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                            <glass:GlassTextField Placeholder="Ask Jarvis..." Width="300" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="PreviewPanels" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                            <glass:GlassSlab SlabCornerRadius="{StaticResource RadiusPanel}" Width="300">
+                                                <StackPanel Padding="16" Spacing="4">
+                                                    <TextBlock Text="A panel" Style="{StaticResource BodyEmphasisText}" />
+                                                    <TextBlock Text="Regular glass: frost, tint, rim and shadow." Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </glass:GlassSlab>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="PreviewHint" Text="Press and hold a control to see it lifted." Style="{StaticResource SecondaryFootnoteText}" Margin="4,0" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="TuningRows" Spacing="4" />
+                            <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" />
-                                    <TextBlock Text="{x:Bind Description}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <TextBlock
-                                    x:Name="ActiveBadge"
-                                    Grid.Column="1"
-                                    Text="Active"
-                                    Style="{StaticResource CaptionEmphasisText}"
-                                    Foreground="{ThemeResource AccentTextBrush}"
-                                    VerticalAlignment="Top"
-                                    Visibility="Collapsed" />
+                                <Button Content="Reset group" Click="ResetTuningGroup_Click" />
+                                <Button Grid.Column="1" Content="Reset all" Click="ResetTuningAll_Click" />
+                                <Button Grid.Column="2" Content="Copy values" Click="CopyTuning_Click" />
+                                <TextBlock x:Name="TuningStatus" Grid.Column="3" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" TextAlignment="Right" />
                             </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                        </StackPanel>
 
-                <TextBlock Text="Addresses you as" Style="{StaticResource SecondaryFootnoteText}" Margin="0,4,0,0" />
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="AddressTermBox" PlaceholderText="sir" />
-                    <Button Grid.Column="1" Content="Apply" Margin="8,0,0,0" Click="ApplyAddressTerm_Click" />
-                </Grid>
-                <HyperlinkButton Content="Reset customizations" Click="ResetOverrides_Click" Padding="0" />
-            </StackPanel>
+                        <!-- ========== About ========== -->
+                        <StackPanel x:Name="AboutPage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Backend" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Status" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="BackendText" Grid.Column="1" Text="—" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Address" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="127.0.0.1:8000" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Chat model" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="ModelText" Grid.Column="1" Text="—" Style="{StaticResource BodyText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Sidecars" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="Image captioner :8002, embeddings :8003 · CPU, started on first use" Style="{StaticResource BodyText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock Text="Proactive actions" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
-                <glass:GlassToggle x:Name="ProactiveActionsToggle" VerticalAlignment="Center" Toggled="ProactiveActionsToggle_Toggled" />
-            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Files" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Memory database" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="backend/data/jarvis_memory.db" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Workspaces" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="backend/workspace/projects/" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <Grid Style="{StaticResource SettingsRow}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Backend log" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="backend.log" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                            <Button Grid.Column="2" Content="Open folder" Click="OpenRepoFolder_Click" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
-            <StackPanel Spacing="8">
-                <TextBlock Text="Scheduled routines" Style="{StaticResource SectionHeaderText}" />
-                <ListView
-                    x:Name="RoutinesList"
-                    SelectionMode="None"
-                    MaxHeight="160"
-                    ItemsSource="{x:Bind RoutinesViewModel.Routines}">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:Routine">
-                            <Grid Padding="8,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Style="{StaticResource BodyText}">
-                                        <Run Text="{x:Bind Name}" />
-                                        <Run Text=" · " Foreground="{ThemeResource LabelSecondaryBrush}" />
-                                        <Run Text="{x:Bind Time}" Foreground="{ThemeResource LabelSecondaryBrush}" />
-                                    </TextBlock>
-                                    <TextBlock Text="{x:Bind Kind}" Style="{StaticResource SecondaryFootnoteText}" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Content="Test" Padding="8,2" Tag="{x:Bind}" Click="RunRoutine_Click" />
-                                <Button Grid.Column="2" Content="Remove" Padding="8,2" Margin="8,0,0,0" Tag="{x:Bind}" Click="RemoveRoutine_Click" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="This build" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Version" Style="{StaticResource BodyText}" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="VersionText" Grid.Column="1" Text="—" Style="{StaticResource DataText}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
 
-                <Grid ColumnSpacing="6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="RoutineNameBox" PlaceholderText="Routine name" />
-                    <TimePicker x:Name="RoutineTimePicker" Grid.Column="1" MinuteIncrement="5" />
-                    <ComboBox x:Name="RoutineKindCombo" Grid.Column="2" HorizontalAlignment="Stretch" SelectedIndex="0">
-                        <ComboBoxItem Content="briefing" />
-                        <ComboBoxItem Content="message" />
-                    </ComboBox>
-                </Grid>
-                <TextBox x:Name="RoutineMessageBox" PlaceholderText="Message (for 'message' routines)" />
-                <Button Content="Add routine" HorizontalAlignment="Stretch" Click="AddRoutine_Click" />
-            </StackPanel>
-
-            <StackPanel Spacing="4">
-                <TextBlock Text="Glass" Style="{StaticResource SectionHeaderText}" />
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE7BA;" FontSize="12" Foreground="{ThemeResource StatusWarningBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
-                    <TextBlock Text="The liquid-glass panels refract what is actually on your desktop. To do that Jarvis excludes its own windows from screen capture — screen recorders, Zoom/Teams screen-share and Xbox Game Bar will not see it."
-                               Style="{StaticResource FootnoteText}" Foreground="{ThemeResource StatusWarningBrush}" TextWrapping="Wrap" MaxWidth="360" />
-                </StackPanel>
-            </StackPanel>
-
-            <!-- Developer (PLAN 4.8d): live glass material tuning, one group at a time so only a
-                 handful of glass sliders are live. Rows are built in code-behind from GlassTuning. -->
-            <StackPanel Spacing="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Developer" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
-                    <glass:GlassToggle x:Name="DeveloperToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="DeveloperToggle_Toggled" />
-                </Grid>
-                <StackPanel x:Name="TuningPanel" Spacing="8" Visibility="Collapsed">
-                    <TextBlock Text="Glass material, live. Your changes are kept across restarts; Copy values puts them on the clipboard as code to bake in."
-                               Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
-                    <glass:GlassSegmented x:Name="TuningGroups" Items="Lens|Toggle|Slider|Button|Field|Panels" HorizontalAlignment="Stretch"
-                                          SelectionChanged="TuningGroups_SelectionChanged" />
-                    <StackPanel x:Name="TuningRows" Spacing="4" />
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button Content="Reset group" HorizontalAlignment="Stretch" Click="ResetTuningGroup_Click" />
-                        <Button Grid.Column="1" Content="Reset all" HorizontalAlignment="Stretch" Click="ResetTuningAll_Click" />
-                        <Button Grid.Column="2" Content="Copy values" HorizontalAlignment="Stretch" Click="CopyTuning_Click" />
                     </Grid>
-                    <TextBlock x:Name="TuningStatus" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
-                </StackPanel>
-            </StackPanel>
-
-        </StackPanel>
-    </ScrollViewer>
+                </ScrollViewer>
             </Grid>
         </glass:GlassSlab>
     </Grid>

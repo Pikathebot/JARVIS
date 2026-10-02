@@ -79,6 +79,7 @@ public partial class App : Application
             // The backend first: uvicorn takes seconds to import and start, and building the
             // windows needn't come before it.
             var repoRoot = FindRepoRoot();
+            RepoRoot = repoRoot;
             _backendHost = new BackendHost(_api, repoRoot);
             var backendReady = _backendHost.EnsureRunningAsync(TimeSpan.FromSeconds(20));
             LogStartup("backend launched");
@@ -180,6 +181,9 @@ public partial class App : Application
     }
 
     private bool _exiting;
+
+    /// <summary>The JARVIS checkout this app runs from (Settings > About opens it).</summary>
+    public static string? RepoRoot { get; private set; }
 
     /// <summary>The one way out: stops the backend (and its llama-servers) and ends the process.</summary>
     private void ExitApp()

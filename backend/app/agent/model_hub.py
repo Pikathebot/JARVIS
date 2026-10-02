@@ -392,6 +392,18 @@ budget_provider: Optional[Callable[[], Optional[float]]] = None
 """Set at startup to the governor's ``fit_budget_mb``; None leaves every label 'unknown'."""
 
 
+card_total_provider: Optional[Callable[[], Optional[float]]] = None
+"""Set at startup to the governor's ``card_total_mb``."""
+
+
+def current_card_total_mb() -> Optional[float]:
+    try:
+        value = card_total_provider() if card_total_provider else None
+    except Exception:
+        return None
+    return None if value is None else float(value)
+
+
 def current_budget_mb() -> Optional[float]:
     if budget_provider is None:
         return None

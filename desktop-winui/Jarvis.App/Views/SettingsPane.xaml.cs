@@ -3,31 +3,26 @@ using Jarvis.Core.Models;
 using Jarvis_App.Services;
 using Jarvis_App.ViewModels;
 using Jarvis_Glass;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Jarvis_App.Views;
 
-/// <summary>Native port of SettingsDialog.tsx (backend/model info, persona, proactive-actions
-/// toggle, routines) as an in-window glass sheet -- see the remark in SettingsPane.xaml for why
-/// it is not a ContentDialog. The host shows it in an overlay grid and removes it on
-/// <see cref="CloseRequested"/>.</summary>
+/// <summary>
+/// The Settings window's content (PLAN 4.8b2): a section list and one page at a time --
+/// General, Models, Persona, Voice, Routines, Developer, About. Hosted by
+/// <see cref="SettingsWindow"/>; the pages hold what the old in-window sheet had plus the
+/// Models budget card, the Voice listening sliders and the Developer preview.
+/// </summary>
 public sealed partial class SettingsPane : UserControl
 {
-    public event Action? CloseRequested;
-
-    /// <summary>The sheet itself, apart from its scrim: what rises on open (MainWindow.OpenSheet).</summary>
-    public UIElement SheetSurface => Sheet;
-
-    private void Close_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
-
-    private void Scrim_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => CloseRequested?.Invoke();
-
-    /// <summary>Taps inside the sheet must not reach the scrim's close handler.</summary>
-    private void Sheet_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => e.Handled = true;
+    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Developer", "About" };
 
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
+    private readonly VoiceViewModel _voice;
+    private string _page = "General";
 
     public PersonaViewModel PersonaViewModel { get; }
     public RoutinesViewModel RoutinesViewModel { get; }
@@ -38,24 +33,74 @@ public sealed partial class SettingsPane : UserControl
         GovernorViewModel governor,
         PersonaViewModel personaViewModel,
         RoutinesViewModel routinesViewModel,
-        ModelsViewModel modelsViewModel)
+        ModelsViewModel modelsViewModel,
+        VoiceViewModel voice)
     {
         _api = api;
         _governor = governor;
+        _voice = voice;
         PersonaViewModel = personaViewModel;
         RoutinesViewModel = routinesViewModel;
         ModelsViewModel = modelsViewModel;
-        ModelsViewModel.PropertyChanged += (_, _) => RefreshModelState();
         InitializeComponent();
+
+        ModelsViewModel.PropertyChanged += Models_PropertyChanged;
         ModelsViewModel.Hub.PropertyChanged += Hub_PropertyChanged;
-        Unloaded += (_, _) => ModelsViewModel.Hub.PropertyChanged -= Hub_PropertyChanged;
-        // Not in XAML: a bare integer there is what let the sheet sit on the same
-        // layer as the controls behind it, which it could neither cover nor frost.
-        Sheet.Layer = GlassLayers.Sheet;
+        RoutinesViewModel.Routines.CollectionChanged += Routines_CollectionChanged;
+        Unloaded += (_, _) => Detach();
+
         _syncingAppearance = true;
         AppearanceSwitch.SelectedIndex = (int)Themes.JarvisTheme.Appearance;
         _syncingAppearance = false;
         Loaded += SettingsPane_Loaded;
+        ShowPage(_page);
+    }
+
+    /// <summary>Stops listening to the view models, which outlive the window (Unloaded is not
+    /// reliably raised when a window closes, so the window calls this from Closed too).</summary>
+    public void Detach()
+    {
+        ModelsViewModel.PropertyChanged -= Models_PropertyChanged;
+        ModelsViewModel.Hub.PropertyChanged -= Hub_PropertyChanged;
+        RoutinesViewModel.Routines.CollectionChanged -= Routines_CollectionChanged;
+    }
+
+    /// <summary>Hooks the traffic lights and the drag strip to the hosting window.</summary>
+    public void AttachWindow(Window window, AppWindow appWindow) => WindowButtons.Attach(window, appWindow, RootGrid);
+
+    // --- sections ------------------------------------------------------------------------------
+
+    private void Nav_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string page }) ShowPage(page);
+    }
+
+    public void ShowPage(string page)
+    {
+        if (!Pages.Contains(page)) page = "General";
+        _page = page;
+        PageTitle.Text = page;
+
+        var panels = new (string Name, FrameworkElement Panel, Button Nav)[]
+        {
+            ("General", GeneralPage, NavGeneral), ("Models", ModelsPage, NavModels), ("Persona", PersonaPage, NavPersona),
+            ("Voice", VoicePage, NavVoice), ("Routines", RoutinesPage, NavRoutines),
+            ("Developer", DeveloperPage, NavDeveloper), ("About", AboutPage, NavAbout),
+        };
+        foreach (var (name, panel, nav) in panels)
+        {
+            var on = name == page;
+            panel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            nav.Background = on ? Themes.JarvisTheme.Brush("FillSecondary") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            if (nav.Content is StackPanel content && content.Children.Count > 0 && content.Children[0] is FontIcon icon)
+                icon.Foreground = Themes.JarvisTheme.Brush(on ? "Accent" : "LabelSecondary");
+        }
+        PageScroll.ChangeView(null, 0, null, disableAnimation: true);
+
+        // The Developer page's sliders exist only while it shows (each is a live glass shape).
+        if (page == "Developer") BuildTuningRows();
+        else TuningRows.Children.Clear();
+        if (page == "Models") RefreshBudget();
     }
 
     private bool _syncingAppearance;
@@ -76,18 +121,21 @@ public sealed partial class SettingsPane : UserControl
             return;
         }
         Themes.JarvisTheme.Set(chosen);
+        ShowPage(_page); // nav colours come from the palette
     }
 
     private async void SettingsPane_Loaded(object sender, RoutedEventArgs e)
     {
-        BackendText.Text = string.IsNullOrEmpty(_governor.ActiveBackend) ? "Offline" : _governor.ActiveBackend;
-        ModelText.Text = _governor.ConfiguredModel;
+        RefreshAbout();
+        ShowListening();
 
         await PersonaViewModel.RefreshAsync();
         RefreshPersonaHighlight();
+        RefreshVoice();
         AddressTermBox.PlaceholderText = PersonaViewModel.Status?.Active.AddressTerm ?? "sir";
 
         await RoutinesViewModel.RefreshAsync();
+        Routines_CollectionChanged(null, null);
 
         await ModelsViewModel.RefreshAsync();
         ModelList.Loaded += (_, _) => RefreshModelRows();
@@ -107,6 +155,11 @@ public sealed partial class SettingsPane : UserControl
             // leave default
         }
     }
+
+    // --- Models --------------------------------------------------------------------------------
+
+    private void Models_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) =>
+        DispatcherQueue.TryEnqueue(RefreshModelState);
 
     /// <summary>
     /// Per-row badges and slot buttons. Done here rather than through x:Bind because "is this
@@ -131,8 +184,9 @@ public sealed partial class SettingsPane : UserControl
                 // The containing directory is what distinguishes a top-level model from an
                 // identically-named copy inside a vendor download tree.
                 var family = model.Family is null ? "" : $" · {model.Family}";
+                var vision = model.Projector is null ? " · text only" : " · vision";
                 var fit = SlotFit.Line(model.Fit);
-                subtitle.Text = $"{model.SizeDisplay}{family} · {model.Directory}" + (fit.Length > 0 ? $"\n{fit}" : "");
+                subtitle.Text = $"{model.SizeDisplay}{family}{vision} · {model.Directory}" + (fit.Length > 0 ? $"\n{fit}" : "");
             }
 
             SetSlotButton(root.FindName("MainButton") as Button, "main", model);
@@ -161,6 +215,28 @@ public sealed partial class SettingsPane : UserControl
             : Visibility.Visible;
 
         RefreshModelRows();
+        RefreshBudget();
+    }
+
+    /// <summary>The "Free for a model" card: the governor's budget against the card's total.</summary>
+    private void RefreshBudget()
+    {
+        var budget = ModelsViewModel.FitBudgetMb;
+        var total = ModelsViewModel.VramTotalMb;
+        if (budget is null || total is null || total <= 0)
+        {
+            BudgetMetric.Text = "—";
+            BudgetDetail.Text = "Waiting for a GPU reading from the backend.";
+            BudgetOtherColumn.Width = new GridLength(0, GridUnitType.Star);
+            BudgetFreeColumn.Width = new GridLength(1, GridUnitType.Star);
+            return;
+        }
+        var other = Math.Max(0, total.Value - budget.Value);
+        BudgetMetric.Text = $"{budget.Value / 1024:0.0} GB";
+        BudgetOtherColumn.Width = new GridLength(other, GridUnitType.Star);
+        BudgetFreeColumn.Width = new GridLength(budget.Value, GridUnitType.Star);
+        BudgetDetail.Text = $"{total.Value / 1024:0.0} GB card · {other / 1024:0.0} GB held by other apps (the most in the last 10 minutes). "
+            + "Fits leaves 500 MB spare; Spills would run partly from shared memory, slowly.";
     }
 
     private async void SelectMainModel_Click(object sender, RoutedEventArgs e) => await SelectModelAsync(sender, "main");
@@ -178,20 +254,18 @@ public sealed partial class SettingsPane : UserControl
         }
     }
 
-    // --- Get models ------------------------------------------------------------------------
+    // --- Get models ----------------------------------------------------------------------------
 
-    private void Hub_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => RefreshHubState();
+    private void Hub_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) =>
+        DispatcherQueue.TryEnqueue(RefreshHubState);
 
-    /// <summary>Busy ring, budget line, status and the repo panel. In code-behind for the same
-    /// reason as the model rows: bool/null-to-Visibility hops need converters under x:Bind.</summary>
+    /// <summary>Busy ring, status and the repo panel. In code-behind for the same reason as the
+    /// model rows: bool/null-to-Visibility hops need converters under x:Bind.</summary>
     private void RefreshHubState()
     {
         var hub = ModelsViewModel.Hub;
         HubBusyRing.IsActive = hub.IsBusy;
         HubBusyRing.Visibility = hub.IsBusy ? Visibility.Visible : Visibility.Collapsed;
-
-        HubBudgetText.Text = hub.BudgetText ?? "";
-        HubBudgetText.Visibility = string.IsNullOrEmpty(hub.BudgetText) ? Visibility.Collapsed : Visibility.Visible;
 
         HubStatusText.Text = hub.StatusMessage ?? "";
         HubStatusText.Visibility = string.IsNullOrEmpty(hub.StatusMessage) ? Visibility.Collapsed : Visibility.Visible;
@@ -238,29 +312,196 @@ public sealed partial class SettingsPane : UserControl
         if (sender is FrameworkElement { Tag: DownloadItem item }) await ModelsViewModel.Hub.CancelAsync(item);
     }
 
+    // --- Persona -------------------------------------------------------------------------------
+
+    private void RefreshPersonaHighlight()
+    {
+        var activeId = PersonaViewModel.Status?.ActiveId;
+        foreach (var item in PersonaList.Items)
+        {
+            var container = PersonaList.ContainerFromItem(item) as ListViewItem;
+            if (container?.ContentTemplateRoot is not FrameworkElement root) continue;
+            var badge = root.FindName("ActiveBadge") as FrameworkElement;
+            if (badge is not null && item is PersonaSummary summary)
+            {
+                badge.Visibility = summary.Id == activeId ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+    }
+
+    private async void PersonaItem_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PersonaSummary persona })
+        {
+            await PersonaViewModel.SelectAsync(persona);
+            RefreshPersonaHighlight();
+            RefreshVoice();
+        }
+    }
+
+    private async void ApplyAddressTerm_Click(object sender, RoutedEventArgs e)
+    {
+        var text = AddressTermBox.Text.Trim();
+        if (string.IsNullOrEmpty(text)) return;
+        await PersonaViewModel.SetAddressTermAsync(text);
+        AddressTermBox.Text = "";
+        AddressTermBox.PlaceholderText = text;
+    }
+
+    private async void ResetOverrides_Click(object sender, RoutedEventArgs e)
+    {
+        await PersonaViewModel.ResetOverridesAsync();
+        AddressTermBox.PlaceholderText = PersonaViewModel.Status?.Active.AddressTerm ?? "sir";
+    }
+
+    private async void ProactiveActionsToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _api.UpdateAwarenessConfigAsync(new AwarenessConfigPatch { ActionsEnabled = ProactiveActionsToggle.IsOn });
+        }
+        catch
+        {
+            // best-effort; toggle stays as the user left it visually
+        }
+    }
+
+    // --- Voice ---------------------------------------------------------------------------------
+
+    private void RefreshVoice()
+    {
+        var active = PersonaViewModel.Status?.Active;
+        VoiceIdText.Text = string.IsNullOrEmpty(active?.VoiceId) ? "—" : active!.VoiceId;
+        var persona = PersonaViewModel.Available.FirstOrDefault(p => p.Id == PersonaViewModel.Status?.ActiveId);
+        VoiceSource.Text = persona is null
+            ? "Kokoro, on the CPU. Set by the active persona."
+            : $"Kokoro, on the CPU. Set by the active persona ({persona.DisplayName}).";
+    }
+
+    private async void PlaySample_Click(object sender, RoutedEventArgs e)
+    {
+        PlaySampleButton.IsEnabled = false;
+        try
+        {
+            var voiceId = PersonaViewModel.Status?.Active.VoiceId;
+            await _voice.SpeakAsync("This is how I sound.", string.IsNullOrEmpty(voiceId) ? null : voiceId);
+        }
+        finally
+        {
+            PlaySampleButton.IsEnabled = true;
+        }
+    }
+
+    private bool _syncingListening;
+
+    /// <summary>Puts the saved values on the two sliders (GlassSlider runs 0..1).</summary>
+    private void ShowListening()
+    {
+        _syncingListening = true;
+        SpeechRatioSlider.Value = (VoiceSettings.SpeechRatio - VoiceSettings.MinSpeechRatio) / (VoiceSettings.MaxSpeechRatio - VoiceSettings.MinSpeechRatio);
+        PauseSlider.Value = (double)(VoiceSettings.PauseMs - VoiceSettings.MinPauseMs) / (VoiceSettings.MaxPauseMs - VoiceSettings.MinPauseMs);
+        _syncingListening = false;
+        SpeechRatioText.Text = $"{VoiceSettings.SpeechRatio:0.0}× the room";
+        PauseText.Text = $"{VoiceSettings.PauseMs} ms";
+    }
+
+    private void SpeechRatioSlider_ValueChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncingListening) return;
+        VoiceSettings.SetSpeechRatio(VoiceSettings.MinSpeechRatio + (float)SpeechRatioSlider.Value * (VoiceSettings.MaxSpeechRatio - VoiceSettings.MinSpeechRatio));
+        SpeechRatioText.Text = $"{VoiceSettings.SpeechRatio:0.0}× the room";
+    }
+
+    private void PauseSlider_ValueChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncingListening) return;
+        // 50 ms steps: finer than anyone can tell apart, coarse enough to read.
+        var ms = VoiceSettings.MinPauseMs + PauseSlider.Value * (VoiceSettings.MaxPauseMs - VoiceSettings.MinPauseMs);
+        VoiceSettings.SetPauseMs((int)(Math.Round(ms / 50) * 50));
+        PauseText.Text = $"{VoiceSettings.PauseMs} ms";
+    }
+
+    private void ResetListening_Click(object sender, RoutedEventArgs e)
+    {
+        VoiceSettings.SetSpeechRatio(VoiceSettings.DefaultSpeechRatio);
+        VoiceSettings.SetPauseMs(VoiceSettings.DefaultPauseMs);
+        ShowListening();
+    }
+
+    // --- Routines ------------------------------------------------------------------------------
+
+    private void Routines_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs? e) =>
+        RoutinesEmpty.Visibility = RoutinesViewModel.Routines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private async void AddRoutine_Click(object sender, RoutedEventArgs e)
+    {
+        var name = RoutineNameBox.Text.Trim();
+        if (string.IsNullOrEmpty(name)) return;
+        var time = RoutineTimePicker.Time;
+
+        var kind = (RoutineKindCombo.SelectedItem as ComboBoxItem)?.Content as string == "message"
+            ? RoutineKind.Message
+            : RoutineKind.Briefing;
+
+        await RoutinesViewModel.CreateAsync(name, $"{time.Hours:D2}:{time.Minutes:D2}", kind, RoutineMessageBox.Text);
+        RoutineNameBox.Text = "";
+        RoutineMessageBox.Text = "";
+    }
+
+    private async void RunRoutine_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Routine routine })
+        {
+            await RoutinesViewModel.RunNowAsync(routine);
+        }
+    }
+
+    private async void RemoveRoutine_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Routine routine })
+        {
+            await RoutinesViewModel.DeleteAsync(routine);
+        }
+    }
+
     // --- Developer: glass tuning ---------------------------------------------------------------
 
     private bool _syncingTuning;
 
-    private void DeveloperToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        TuningPanel.Visibility = DeveloperToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
-        if (DeveloperToggle.IsOn) BuildTuningRows();
-        else TuningRows.Children.Clear(); // unloads the sliders, taking their glass with them
-    }
-
     private void TuningGroups_SelectionChanged(object sender, RoutedEventArgs e)
     {
-        if (DeveloperToggle.IsOn) BuildTuningRows();
+        if (_page == "Developer") BuildTuningRows();
     }
 
     private string CurrentTuningGroup => GlassTuning.Groups[Math.Clamp(TuningGroups.SelectedIndex, 0, GlassTuning.Groups.Length - 1)];
+
+    /// <summary>The preview shows the controls the selected group tunes; the rest are collapsed,
+    /// which also takes their glass off the scene.</summary>
+    private void ShowPreview(string group)
+    {
+        void Show(FrameworkElement e, bool on) => e.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        Show(PreviewToggles, group is "Lens" or "Toggle");
+        Show(PreviewSliders, group is "Lens" or "Slider");
+        Show(PreviewButtons, group == "Button");
+        Show(PreviewFields, group == "Field");
+        Show(PreviewPanels, group == "Panels");
+        PreviewSliders.Margin = group == "Lens" ? new Thickness(0, 80, 0, 0) : new Thickness(0);
+        PreviewToggles.Margin = group == "Lens" ? new Thickness(0, 0, 0, 40) : new Thickness(0);
+        PreviewSlider.Value = 0.35;
+        PreviewHint.Text = group switch
+        {
+            "Panels" => "The panel group scales every glass panel in Jarvis at once.",
+            "Field" => "Click into the field to see it focused.",
+            _ => "Press and hold a control to see it lifted (or raise Force lift in Lens).",
+        };
+    }
 
     /// <summary>One label/value line and one glass slider per knob in the selected group.
     /// Rebuilt on group change rather than collapsed, so only this group's sliders hold glass.</summary>
     private void BuildTuningRows()
     {
         TuningRows.Children.Clear();
+        ShowPreview(CurrentTuningGroup);
         var resources = Application.Current.Resources;
         foreach (var knob in GlassTuning.InGroup(CurrentTuningGroup))
         {
@@ -326,85 +567,33 @@ public sealed partial class SettingsPane : UserControl
             : $"Copied {count} value(s) as code -- paste them to Claude to bake in.";
     }
 
-    private void RefreshPersonaHighlight()
-    {
-        var activeId = PersonaViewModel.Status?.ActiveId;
-        foreach (var item in PersonaList.Items)
-        {
-            var container = PersonaList.ContainerFromItem(item) as ListViewItem;
-            if (container?.ContentTemplateRoot is not FrameworkElement root) continue;
-            var badge = root.FindName("ActiveBadge") as FrameworkElement;
-            if (badge is not null && item is PersonaSummary summary)
-            {
-                badge.Visibility = summary.Id == activeId ? Visibility.Visible : Visibility.Collapsed;
-            }
-        }
-    }
+    // --- About ---------------------------------------------------------------------------------
 
-    private async void PersonaItem_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    private void RefreshAbout()
     {
-        if (sender is FrameworkElement { Tag: PersonaSummary persona })
-        {
-            await PersonaViewModel.SelectAsync(persona);
-            RefreshPersonaHighlight();
-        }
-    }
-
-    private async void ApplyAddressTerm_Click(object sender, RoutedEventArgs e)
-    {
-        var text = AddressTermBox.Text.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-        await PersonaViewModel.SetAddressTermAsync(text);
-        AddressTermBox.Text = "";
-        AddressTermBox.PlaceholderText = text;
-    }
-
-    private async void ResetOverrides_Click(object sender, RoutedEventArgs e)
-    {
-        await PersonaViewModel.ResetOverridesAsync();
-        AddressTermBox.PlaceholderText = PersonaViewModel.Status?.Active.AddressTerm ?? "sir";
-    }
-
-    private async void ProactiveActionsToggle_Toggled(object sender, RoutedEventArgs e)
-    {
+        BackendText.Text = string.IsNullOrEmpty(_governor.ActiveBackend) ? "Offline" : $"Running · {_governor.ActiveBackend}";
+        ModelText.Text = _governor.ConfiguredModel;
         try
         {
-            await _api.UpdateAwarenessConfigAsync(new AwarenessConfigPatch { ActionsEnabled = ProactiveActionsToggle.IsOn });
+            var v = Windows.ApplicationModel.Package.Current.Id.Version;
+            VersionText.Text = $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}";
         }
         catch
         {
-            // best-effort; toggle stays as the user left it visually
+            VersionText.Text = "development build";
         }
     }
 
-    private async void AddRoutine_Click(object sender, RoutedEventArgs e)
+    private void OpenRepoFolder_Click(object sender, RoutedEventArgs e)
     {
-        var name = RoutineNameBox.Text.Trim();
-        if (string.IsNullOrEmpty(name)) return;
-        var time = RoutineTimePicker.Time;
-
-        var kind = (RoutineKindCombo.SelectedItem as ComboBoxItem)?.Content as string == "message"
-            ? RoutineKind.Message
-            : RoutineKind.Briefing;
-
-        await RoutinesViewModel.CreateAsync(name, $"{time.Hours:D2}:{time.Minutes:D2}", kind, RoutineMessageBox.Text);
-        RoutineNameBox.Text = "";
-        RoutineMessageBox.Text = "";
-    }
-
-    private async void RunRoutine_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: Routine routine })
+        if (string.IsNullOrEmpty(App.RepoRoot)) return;
+        try
         {
-            await RoutinesViewModel.RunNowAsync(routine);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{App.RepoRoot}\"") { UseShellExecute = true });
         }
-    }
-
-    private async void RemoveRoutine_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: Routine routine })
+        catch (Exception ex)
         {
-            await RoutinesViewModel.DeleteAsync(routine);
+            App.Log($"open repo folder failed: {ex.Message}");
         }
     }
 }

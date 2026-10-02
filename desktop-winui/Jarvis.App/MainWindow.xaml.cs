@@ -246,8 +246,18 @@ public sealed partial class MainWindow : Window
             _appWindow.Hide();
         };
 
+        // Ctrl+, opens Settings (VirtualKey has no name for the comma key: 188 is VK_OEM_COMMA).
+        var settingsKey = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
+        {
+            Key = (Windows.System.VirtualKey)188,
+            Modifiers = Windows.System.VirtualKeyModifiers.Control,
+        };
+        settingsKey.Invoked += (_, args) => { args.Handled = true; OpenSettings(null); };
+        RootGrid.KeyboardAccelerators.Add(settingsKey);
+
         Closed += (_, _) =>
         {
+            _settingsWindow?.Close();
             VoiceViewModel.Dispose();
             _hotkey.Dispose();
             GovernorViewModel.Dispose();
@@ -579,7 +589,7 @@ public sealed partial class MainWindow : Window
     private void StatusModels_Click(object sender, RoutedEventArgs e)
     {
         SetStatusPopoverOpen(false);
-        Settings_Click(sender, e);
+        OpenSettings("Models");
     }
 
     // ------------------------------------------------------------------ inspector auto-open
@@ -1073,12 +1083,20 @@ public sealed partial class MainWindow : Window
         try { await _api.UnloadModelsAsync(); } catch { /* surfaced via governor poll */ }
     }
 
-    private void Settings_Click(object sender, RoutedEventArgs e)
+    private void Settings_Click(object sender, RoutedEventArgs e) => OpenSettings(null);
+
+    private SettingsWindow? _settingsWindow;
+
+    /// <summary>Settings is its own window (PLAN 4.8b2): one instance, re-activated (and turned to
+    /// <paramref name="page"/>, when given) if it is already open.</summary>
+    public void OpenSettings(string? page)
     {
-        if (SettingsHost.Children.Count > 0) return;
-        var pane = new SettingsPane(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel);
-        pane.CloseRequested += () => CloseSheet(pane.SheetSurface);
-        OpenSheet(pane, pane.SheetSurface);
+        if (_settingsWindow is null)
+        {
+            _settingsWindow = new SettingsWindow(_api, GovernorViewModel, PersonaViewModel, RoutinesViewModel, ModelsViewModel, VoiceViewModel);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        }
+        _settingsWindow.ShowPage(page);
     }
 
     private void NewWorkspace_Click(object sender, RoutedEventArgs e)

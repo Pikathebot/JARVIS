@@ -102,9 +102,16 @@ public static class JarvisTheme
 
     private static void ApplyTo(Window window)
     {
-        if (window.Content is FrameworkElement root)
+        try
         {
-            root.RequestedTheme = JarvisPalette.Appearance == JarvisAppearance.Light ? ElementTheme.Light : ElementTheme.Dark;
+            if (window.Content is FrameworkElement root)
+            {
+                root.RequestedTheme = JarvisPalette.Appearance == JarvisAppearance.Light ? ElementTheme.Light : ElementTheme.Dark;
+            }
+        }
+        catch
+        {
+            // a closed window (Settings) still in the weak list: nothing to theme
         }
     }
 

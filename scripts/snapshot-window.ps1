@@ -20,7 +20,7 @@
     Where the PNGs go (one per visible window: main.png, hud.png). Default: a temp folder.
 
 .PARAMETER Window
-    Which window(s) to keep: main, hud, or all (default main).
+    Which window(s) to keep: main, hud, settings, or all (default main).
 
 .PARAMETER DelayMs
     Wait this long before requesting, e.g. to catch the startup sequence part-way.
@@ -30,7 +30,7 @@
 #>
 param(
     [string]$OutDir = (Join-Path $env:TEMP "jarvis-snapshots"),
-    [ValidateSet("main", "hud", "all")][string]$Window = "main",
+    [ValidateSet("main", "hud", "settings", "all")][string]$Window = "main",
     [int]$DelayMs = 0,
     [string]$Configuration = "Debug"
 )
