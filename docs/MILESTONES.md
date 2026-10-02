@@ -374,3 +374,19 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
       9B's "with vision" fit is an estimate (our measured launch used our Q8_0 projector, the repo
       ships F16); files in repo subfolders are saved flat in `models/<repo name>/`.
     - **On device 2026-10-02 (the user): "the downloads work great."**
+
+- [x] **Developer glass sliders (PLAN §4.8d, 2026-10-02)** -- GlassLab's material sliders in the app's
+  Settings for live tuning.
+  - **The user's choices (2026-10-02):** controls + panels; values saved across restarts with
+    Reset and a "Copy values" export (C# lines to bake in); a hidden Developer section at the
+    bottom of Settings; glass sliders (GlassSlider) for the rows.
+  - **Built 2026-10-02; on device the user: "sliders work".** `Jarvis.Glass/Liquid/GlassTuning.cs`:
+    ~60 knobs in six groups (Lens, Toggle, Slider, Button incl. segmented pill, Field, Panels),
+    defaults read from the `Material` statics on first use. Panels = `GlassSlab.Tuning`
+    multipliers (frost, tint, refraction, bezel, specular, shadow) + second light, applied in
+    `GlassSlab.Publish`; `GlassSlab.RepublishAll` added. Settings > Developer toggle shows a
+    `GlassSegmented` group picker; only the selected group's sliders exist (rebuilt on change), so
+    ~10 glass sliders are live at most. `Services/GlassTuningStore` keeps the changed values as
+    JSON in LocalSettings (`GlassTuning`), applied in `App.OnLaunched` before any window.
+    Every app glass shape comes from a GlassSlab or one of the five controls, so the groups
+    cover the whole app. GlassLab is untouched (it has its own table).

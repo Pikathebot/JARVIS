@@ -652,8 +652,8 @@ runs on our llama-server as is.
   alone -- unverified); their mmproj is F16 876 MiB, else quantize it with
   `scripts/quantize_mmproj.py`.
 
-**d. Developer settings: Liquid Glass sliders** -- GlassLab's material sliders in the app's
-Settings for live tuning.
+**d. Developer settings: Liquid Glass sliders: done 2026-10-02** (device-checked; see
+`docs/MILESTONES.md`). Settings > Developer.
 
 ### 4.5 Waiting on the device
 

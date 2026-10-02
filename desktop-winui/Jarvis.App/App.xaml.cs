@@ -62,6 +62,8 @@ public partial class App : Application
             // Colours before any window: every page resolves {ThemeResource ...Brush} from these.
             // Not in the constructor: Application.Resources throws E_UNEXPECTED there.
             Themes.JarvisTheme.Install(this);
+            // Saved glass tuning (Settings > Developer) before any window publishes glass.
+            Services.GlassTuningStore.Load();
 
             DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 

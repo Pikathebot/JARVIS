@@ -344,6 +344,37 @@
                 </StackPanel>
             </StackPanel>
 
+            <!-- Developer (PLAN 4.8d): live glass material tuning, one group at a time so only a
+                 handful of glass sliders are live. Rows are built in code-behind from GlassTuning. -->
+            <StackPanel Spacing="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Developer" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
+                    <glass:GlassToggle x:Name="DeveloperToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="DeveloperToggle_Toggled" />
+                </Grid>
+                <StackPanel x:Name="TuningPanel" Spacing="8" Visibility="Collapsed">
+                    <TextBlock Text="Glass material, live. Your changes are kept across restarts; Copy values puts them on the clipboard as code to bake in."
+                               Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                    <glass:GlassSegmented x:Name="TuningGroups" Items="Lens|Toggle|Slider|Button|Field|Panels" HorizontalAlignment="Stretch"
+                                          SelectionChanged="TuningGroups_SelectionChanged" />
+                    <StackPanel x:Name="TuningRows" Spacing="4" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Content="Reset group" HorizontalAlignment="Stretch" Click="ResetTuningGroup_Click" />
+                        <Button Grid.Column="1" Content="Reset all" HorizontalAlignment="Stretch" Click="ResetTuningAll_Click" />
+                        <Button Grid.Column="2" Content="Copy values" HorizontalAlignment="Stretch" Click="CopyTuning_Click" />
+                    </Grid>
+                    <TextBlock x:Name="TuningStatus" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                </StackPanel>
+            </StackPanel>
+
         </StackPanel>
     </ScrollViewer>
             </Grid>

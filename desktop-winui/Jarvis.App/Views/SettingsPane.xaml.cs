@@ -238,6 +238,94 @@ public sealed partial class SettingsPane : UserControl
         if (sender is FrameworkElement { Tag: DownloadItem item }) await ModelsViewModel.Hub.CancelAsync(item);
     }
 
+    // --- Developer: glass tuning ---------------------------------------------------------------
+
+    private bool _syncingTuning;
+
+    private void DeveloperToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        TuningPanel.Visibility = DeveloperToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        if (DeveloperToggle.IsOn) BuildTuningRows();
+        else TuningRows.Children.Clear(); // unloads the sliders, taking their glass with them
+    }
+
+    private void TuningGroups_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (DeveloperToggle.IsOn) BuildTuningRows();
+    }
+
+    private string CurrentTuningGroup => GlassTuning.Groups[Math.Clamp(TuningGroups.SelectedIndex, 0, GlassTuning.Groups.Length - 1)];
+
+    /// <summary>One label/value line and one glass slider per knob in the selected group.
+    /// Rebuilt on group change rather than collapsed, so only this group's sliders hold glass.</summary>
+    private void BuildTuningRows()
+    {
+        TuningRows.Children.Clear();
+        var resources = Application.Current.Resources;
+        foreach (var knob in GlassTuning.InGroup(CurrentTuningGroup))
+        {
+            var label = new TextBlock { Text = knob.Label, Style = (Style)resources["FootnoteText"] };
+            var value = new TextBlock { Style = (Style)resources["SecondaryFootnoteText"], HorizontalAlignment = HorizontalAlignment.Right };
+            var header = new Grid();
+            header.Children.Add(label);
+            header.Children.Add(value);
+
+            var slider = new GlassSlider { Width = double.NaN, HorizontalAlignment = HorizontalAlignment.Stretch };
+            _syncingTuning = true;
+            slider.Value = (knob.Get() - knob.Min) / (knob.Max - knob.Min);
+            _syncingTuning = false;
+            ShowTuningValue(value, knob);
+            slider.ValueChanged += (_, _) =>
+            {
+                if (_syncingTuning) return;
+                knob.Set(knob.Min + (float)slider.Value * (knob.Max - knob.Min));
+                ShowTuningValue(value, knob);
+                GlassTuning.Changed();
+                GlassTuningStore.SaveSoon();
+            };
+
+            var row = new StackPanel { Spacing = 0 };
+            row.Children.Add(header);
+            row.Children.Add(slider);
+            TuningRows.Children.Add(row);
+        }
+        TuningStatus.Text = $"{GlassTuning.Changes().Count} value(s) changed from the defaults.";
+    }
+
+    private static void ShowTuningValue(TextBlock text, GlassKnob knob)
+    {
+        var range = knob.Max - knob.Min;
+        var format = range <= 1f ? "0.000" : range <= 10f ? "0.00" : "0.0";
+        text.Text = GlassTuning.IsChanged(knob)
+            ? $"{knob.Get().ToString(format)}  (was {knob.Default.ToString(format)})"
+            : knob.Get().ToString(format);
+    }
+
+    private void ResetTuningGroup_Click(object sender, RoutedEventArgs e)
+    {
+        GlassTuning.Reset(CurrentTuningGroup);
+        GlassTuningStore.Save();
+        BuildTuningRows();
+    }
+
+    private void ResetTuningAll_Click(object sender, RoutedEventArgs e)
+    {
+        GlassTuning.Reset();
+        GlassTuningStore.Save();
+        BuildTuningRows();
+    }
+
+    private void CopyTuning_Click(object sender, RoutedEventArgs e)
+    {
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(GlassTuning.Describe());
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        var count = GlassTuning.Changes().Count;
+        TuningStatus.Text = count == 0
+            ? "Nothing to copy: every value is at its default."
+            : $"Copied {count} value(s) as code -- paste them to Claude to bake in.";
+    }
+
     private void RefreshPersonaHighlight()
     {
         var activeId = PersonaViewModel.Status?.ActiveId;

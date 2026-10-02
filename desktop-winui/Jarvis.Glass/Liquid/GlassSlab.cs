@@ -211,8 +211,34 @@ public sealed class GlassSlab : Grid
 
     private GlassScene? _scene;
 
+    /// <summary>Live multipliers over every slab's own values, set by Settings > Developer
+    /// (<see cref="GlassTuning"/>). At 1 (and SecondLight 0.33) slabs render as their XAML says.</summary>
+    public static class Tuning
+    {
+        public static float FrostScale = 1f;
+        public static float TintScale = 1f;
+        public static float RefractionScale = 1f;
+        public static float BezelScale = 1f;
+        public static float SpecularScale = 1f;
+        public static float ShadowScale = 1f;
+        public static float SecondLight = 0.33f;
+    }
+
+    private static readonly List<WeakReference<GlassSlab>> Instances = new();
+
+    /// <summary>Re-publish every live slab after a tuning change.</summary>
+    public static void RepublishAll()
+    {
+        Instances.RemoveAll(w => !w.TryGetTarget(out _));
+        foreach (var weak in Instances)
+        {
+            if (weak.TryGetTarget(out var slab)) slab.Publish();
+        }
+    }
+
     public GlassSlab()
     {
+        Instances.Add(new WeakReference<GlassSlab>(this));
         Loaded += (_, _) =>
         {
             JarvisPalette.Changed += OnAppearanceChanged;
@@ -303,22 +329,23 @@ public sealed class GlassSlab : Grid
         var center = new Vector2((float)(b.X + b.Width / 2), (float)(b.Y + b.Height / 2)) * scale;
         var half = new Vector2((float)b.Width / 2, (float)b.Height / 2) * scale;
         var (tint, tintAmount) = EffectiveTint();
-        var shadow = JarvisPalette.Current.HasShadows ? (float)Math.Clamp(Shadow, 0, 1) : 0f;
+        tintAmount = Math.Clamp(tintAmount * Tuning.TintScale, 0f, 1f);
+        var shadow = JarvisPalette.Current.HasShadows ? Math.Clamp((float)Shadow * Tuning.ShadowScale, 0f, 1f) : 0f;
         _scene.Publish(this, GlassShape.Create(
             center, half,
             cornerRadius: (float)SlabCornerRadius * scale,
-            bezelWidth: (float)BezelWidth * scale,
+            bezelWidth: (float)BezelWidth * Tuning.BezelScale * scale,
             GlassBezelProfile.Squircle,
-            refractionScale: (float)Refraction * scale,
-            specularIntensity: (float)Specular,
+            refractionScale: (float)Refraction * Tuning.RefractionScale * scale,
+            specularIntensity: (float)Specular * Tuning.SpecularScale,
             layer: Layer,
             clip: ClipFor(this, scale),
             tintColor: new Vector3(tint.R / 255f, tint.G / 255f, tint.B / 255f),
             tintAmount: tintAmount,
-            blurRadius: (float)Frost * scale,
+            blurRadius: (float)Frost * Tuning.FrostScale * scale,
             shadowStrength: shadow,
             shadowRadius: (float)ShadowRadius * scale,
             shadowOffsetY: (float)ShadowOffsetY * scale,
-            secondLight: 0.33f));
+            secondLight: Tuning.SecondLight));
     }
 }
