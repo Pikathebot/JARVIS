@@ -451,18 +451,19 @@ class RuntimeProcessManager:
                 return float(learned)
         except Exception:
             pass
-        mib = 1024 * 1024
+        from app.agent.model_catalog import rule_of_thumb_cost_mb
+
         try:
-            weights = model.stat().st_size / mib * 0.88
+            weights = model.stat().st_size
         except OSError:
-            weights = 0.0
-        proj = 0.0
+            weights = 0
+        proj: Optional[int] = None
         if projector is not None:
             try:
-                proj = projector.stat().st_size / mib + 250.0
+                proj = projector.stat().st_size
             except OSError:
-                proj = 250.0
-        return round(weights + proj + ctx_size / 1024 * 20.0 + 500.0, 1)
+                proj = 0
+        return rule_of_thumb_cost_mb(weights, proj, ctx_size)
 
     def _launch_rungs(self, resolved_model: Path, alias: str) -> list[dict[str, Any]]:
         """

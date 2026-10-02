@@ -35,6 +35,10 @@ public sealed class ModelInfo
     /// own folder), or null for a text-only model. A model with a projector sees images.</summary>
     public string? Projector { get; set; }
 
+    /// <summary>Per slot ("main", "fast"): whether the model fits the card next to what the
+    /// rest of the machine holds. Empty when the backend could not size it.</summary>
+    public Dictionary<string, SlotFit> Fit { get; set; } = new();
+
     /// <summary>Human-readable size, e.g. "4.7 GB" — VRAM headroom is the whole question when
     /// picking a model on an 8GB card, so it belongs next to the name.</summary>
     [JsonIgnore]
@@ -57,6 +61,10 @@ public sealed class ModelCatalogResponse
     public Dictionary<string, string?> Selection { get; set; } = new();
 
     public List<string> Slots { get; set; } = new();
+
+    /// <summary>MiB of the card a model can count on (total minus the recent peak of everything
+    /// else), or null before the governor has sampled the GPU.</summary>
+    public double? FitBudgetMb { get; set; }
 
     /// <summary>Which slot llama-server currently has loaded, or null when nothing is running.</summary>
     public string? LoadedSlot { get; set; }

@@ -47,6 +47,8 @@ public sealed partial class SettingsPane : UserControl
         ModelsViewModel = modelsViewModel;
         ModelsViewModel.PropertyChanged += (_, _) => RefreshModelState();
         InitializeComponent();
+        ModelsViewModel.Hub.PropertyChanged += Hub_PropertyChanged;
+        Unloaded += (_, _) => ModelsViewModel.Hub.PropertyChanged -= Hub_PropertyChanged;
         // Not in XAML: a bare integer there is what let the sheet sit on the same
         // layer as the controls behind it, which it could neither cover nor frost.
         Sheet.Layer = GlassLayers.Sheet;
@@ -92,6 +94,9 @@ public sealed partial class SettingsPane : UserControl
         ModelList.ContainerContentChanging += (_, _) => RefreshModelRows();
         RefreshModelState();
 
+        RefreshHubState();
+        _ = ModelsViewModel.Hub.LoadCuratedAsync();
+
         try
         {
             var awareness = await _api.FetchAwarenessStatusAsync();
@@ -126,7 +131,8 @@ public sealed partial class SettingsPane : UserControl
                 // The containing directory is what distinguishes a top-level model from an
                 // identically-named copy inside a vendor download tree.
                 var family = model.Family is null ? "" : $" · {model.Family}";
-                subtitle.Text = $"{model.SizeDisplay}{family} · {model.Directory}";
+                var fit = SlotFit.Line(model.Fit);
+                subtitle.Text = $"{model.SizeDisplay}{family} · {model.Directory}" + (fit.Length > 0 ? $"\n{fit}" : "");
             }
 
             SetSlotButton(root.FindName("MainButton") as Button, "main", model);
@@ -170,6 +176,66 @@ public sealed partial class SettingsPane : UserControl
             // a model in Settings shouldn't itself trigger a load/unload cycle.
             await ModelsViewModel.SelectAsync(slot, model, activate: false);
         }
+    }
+
+    // --- Get models ------------------------------------------------------------------------
+
+    private void Hub_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => RefreshHubState();
+
+    /// <summary>Busy ring, budget line, status and the repo panel. In code-behind for the same
+    /// reason as the model rows: bool/null-to-Visibility hops need converters under x:Bind.</summary>
+    private void RefreshHubState()
+    {
+        var hub = ModelsViewModel.Hub;
+        HubBusyRing.IsActive = hub.IsBusy;
+        HubBusyRing.Visibility = hub.IsBusy ? Visibility.Visible : Visibility.Collapsed;
+
+        HubBudgetText.Text = hub.BudgetText ?? "";
+        HubBudgetText.Visibility = string.IsNullOrEmpty(hub.BudgetText) ? Visibility.Collapsed : Visibility.Visible;
+
+        HubStatusText.Text = hub.StatusMessage ?? "";
+        HubStatusText.Visibility = string.IsNullOrEmpty(hub.StatusMessage) ? Visibility.Collapsed : Visibility.Visible;
+
+        RepoPanel.Visibility = hub.OpenRepo is null ? Visibility.Collapsed : Visibility.Visible;
+        RepoTitle.Text = hub.OpenRepo ?? "";
+        RepoVisionRow.Visibility = hub.RepoHasVision ? Visibility.Visible : Visibility.Collapsed;
+        if (RepoVisionToggle.IsOn != hub.IncludeVision) RepoVisionToggle.IsOn = hub.IncludeVision;
+    }
+
+    private async void DownloadCurated_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: CuratedModel model }) await ModelsViewModel.Hub.DownloadCuratedAsync(model);
+    }
+
+    private async void HubSearch_Click(object sender, RoutedEventArgs e) => await ModelsViewModel.Hub.SearchAsync(HubSearchBox.Text);
+
+    private async void HubSearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
+        e.Handled = true;
+        await ModelsViewModel.Hub.SearchAsync(HubSearchBox.Text);
+    }
+
+    private async void OpenRepo_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: HubSearchResult result }) await ModelsViewModel.Hub.OpenRepoAsync(result.Repo);
+    }
+
+    private void CloseRepo_Click(object sender, RoutedEventArgs e) => ModelsViewModel.Hub.CloseRepo();
+
+    private void RepoVisionToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (ModelsViewModel.Hub.IncludeVision != RepoVisionToggle.IsOn) ModelsViewModel.Hub.IncludeVision = RepoVisionToggle.IsOn;
+    }
+
+    private async void DownloadRepoFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: HubFileInfo file }) await ModelsViewModel.Hub.DownloadRepoFileAsync(file);
+    }
+
+    private async void CancelDownload_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: DownloadItem item }) await ModelsViewModel.Hub.CancelAsync(item);
     }
 
     private void RefreshPersonaHighlight()

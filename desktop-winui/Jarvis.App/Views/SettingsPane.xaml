@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:models="using:Jarvis.Core.Models"
     xmlns:glass="using:Jarvis_Glass"
+    xmlns:vm="using:Jarvis_App.ViewModels"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
@@ -119,6 +120,124 @@
                     Style="{StaticResource SecondaryFootnoteText}"
                     TextWrapping="Wrap"
                     Visibility="Collapsed" />
+            </StackPanel>
+
+            <!-- Get models (PLAN 4.8b): curated list, HuggingFace search, a repo's files, downloads.
+                 Every row says per slot whether it fits the card (model_hub.fit_label). -->
+            <StackPanel Spacing="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Get models" Style="{StaticResource SectionHeaderText}" VerticalAlignment="Center" />
+                    <ProgressRing x:Name="HubBusyRing" Grid.Column="1" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
+                </Grid>
+                <TextBlock x:Name="HubBudgetText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed" />
+
+                <TextBlock Text="Known to work here" Style="{StaticResource BodyText}" />
+                <ListView x:Name="CuratedList" SelectionMode="None" MaxHeight="240" ItemsSource="{x:Bind ModelsViewModel.Hub.Curated}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:CuratedModel">
+                            <Grid Padding="8,6" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{x:Bind File.Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
+                                        VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadCurated_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="HubSearchBox" PlaceholderText="Search HuggingFace for GGUF models" KeyDown="HubSearchBox_KeyDown" />
+                    <Button Grid.Column="1" Content="Search" Click="HubSearch_Click" />
+                </Grid>
+                <ListView x:Name="HubResultsList" SelectionMode="None" MaxHeight="200" ItemsSource="{x:Bind ModelsViewModel.Hub.SearchResults}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:HubSearchResult">
+                            <Grid Padding="8,6" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{x:Bind Repo}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource SecondaryFootnoteText}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Files" Padding="10,2" VerticalAlignment="Center" Tag="{x:Bind}" Click="OpenRepo_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <!-- A repo's files: shown after "Files" on a search result. -->
+                <StackPanel x:Name="RepoPanel" Spacing="6" Visibility="Collapsed">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="RepoTitle" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Close" Padding="10,2" Click="CloseRepo_Click" />
+                    </Grid>
+                    <StackPanel x:Name="RepoVisionRow" Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="Download vision (projector) too" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                        <glass:GlassToggle x:Name="RepoVisionToggle" VerticalAlignment="Center" Toggled="RepoVisionToggle_Toggled" />
+                    </StackPanel>
+                    <ListView x:Name="RepoFilesList" SelectionMode="None" MaxHeight="280" ItemsSource="{x:Bind ModelsViewModel.Hub.RepoFiles}">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="models:HubFileInfo">
+                                <Grid Padding="8,6" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{x:Bind SizeDisplay}" Style="{StaticResource SecondaryFootnoteText}" />
+                                        <TextBlock Text="{x:Bind FitDisplay}" Style="{StaticResource FootnoteText}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="{x:Bind DownloadLabel}" IsEnabled="{x:Bind CanDownload}" Padding="10,2"
+                                            VerticalAlignment="Center" Tag="{x:Bind}" Click="DownloadRepoFile_Click" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+
+                <ListView x:Name="DownloadsList" SelectionMode="None" MaxHeight="200" ItemsSource="{x:Bind ModelsViewModel.Hub.Downloads}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:DownloadItem">
+                            <Grid Padding="8,6" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" />
+                                    <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" Maximum="100" />
+                                    <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Cancel" Padding="10,2" VerticalAlignment="Center"
+                                        IsEnabled="{x:Bind CanCancel, Mode=OneWay}" Tag="{x:Bind}" Click="CancelDownload_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <TextBlock x:Name="HubStatusText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Visibility="Collapsed" />
             </StackPanel>
 
             <StackPanel Spacing="8">

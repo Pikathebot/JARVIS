@@ -26,6 +26,7 @@ Two discovery rules worth stating, because they encode a preference rather than 
 
 import json
 import logging
+import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -77,6 +78,39 @@ class ModelInfo:
 # lives in its own folder with its projector beside it, exactly like a chat model would, so
 # without this it would be listed as a (tiny, useless) chat candidate.
 SIDECAR_DIRS: frozenset[str] = frozenset({"captioner", "embeddings"})
+
+
+def rule_of_thumb_cost_mb(
+    model_bytes: int,
+    projector_bytes: Optional[int],
+    ctx_size: int,
+    kv_mib_per_1k: Optional[float] = None,
+) -> float:
+    """
+    MiB a launch configuration should take on the card, before it has ever run here.
+
+    Weights land on the GPU except the token embeddings (~12%), a projector brings its own
+    vision compute buffer (~250 MiB), the KV cache grows with context, and ~500 MiB of compute
+    buffers and CUDA context come on top. Without the model's own KV rate (read from its GGUF
+    header by ``model_hub``), ~20 MiB per 1k is a middle value between the hybrid Qwen3.5 (~17)
+    and a dense 2B with 2 KV heads (~21). Deliberately a little high: a first launch that steps
+    down one rung too many is a text-only turn; one that steps down too few is an OOM.
+    """
+    mib = 1024 * 1024
+    weights = model_bytes / mib * 0.88
+    proj = (projector_bytes / mib + 250.0) if projector_bytes is not None else 0.0
+    rate = kv_mib_per_1k if kv_mib_per_1k is not None else 20.0
+    return round(weights + proj + ctx_size / 1024 * rate + 500.0, 1)
+
+
+_SPLIT_PART = re.compile(r"-(\d{5})-of-\d{5}$", re.IGNORECASE)
+
+
+def _is_later_split_part(path: Path) -> bool:
+    """``x-00002-of-00003.gguf`` and on: llama-server loads a split model from its first part,
+    so only that one is a model to pick."""
+    m = _SPLIT_PART.search(path.stem)
+    return bool(m) and int(m.group(1)) != 1
 
 
 def _is_sidecar(path: Path, models_dir: Path) -> bool:
@@ -173,7 +207,7 @@ class ModelCatalog:
             return models
 
         for path in sorted(self.models_dir.rglob("*.gguf")):
-            if _is_projector(path) or _is_sidecar(path, self.models_dir):
+            if _is_projector(path) or _is_sidecar(path, self.models_dir) or _is_later_split_part(path):
                 continue
             models.append(self._describe(path))
 

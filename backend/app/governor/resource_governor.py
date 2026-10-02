@@ -238,6 +238,10 @@ class ResourceGovernor:
         self._history: deque[GovernorEvent] = deque(maxlen=50)
         self._last_status: str = GovernorStatus.IDLE.value
 
+        # 7. What the rest of the machine has held on the card lately, for the model picker's
+        # fit labels: (timestamp, external MiB, card total MiB), one per collect_metrics.
+        self._external_samples: deque[tuple[float, float, float]] = deque(maxlen=2000)
+
         self._init_nvml()
 
         # Prime psutil CPU percent calculation
@@ -768,6 +772,20 @@ class ResourceGovernor:
             return None
         return round(max(0.0, metrics.vram_free_mb - reserve_mb), 1)
 
+    def fit_budget_mb(self, window_s: float = 600.0) -> Optional[float]:
+        """
+        MiB of the card a Jarvis model can count on: the total minus the most the rest of the
+        machine has held over the last ``window_s`` (a high-water mark, so the desktop's swings
+        between ~1.1 and ~2.3 GB don't flip a model between "fits" and "spills" as a browser
+        tab opens). None before the first GPU sample.
+        """
+        if not self._external_samples:
+            return None
+        newest = self._external_samples[-1][0]
+        recent = [s for s in self._external_samples if s[0] >= newest - window_s]
+        total = recent[-1][2]
+        return round(max(0.0, total - max(s[1] for s in recent)), 1)
+
     def _vram_reasons(self, metrics: SystemMetrics) -> list[str]:
         """
         VRAM is only a reason to evict when something *other than the model* needs the card.
@@ -859,6 +877,11 @@ class ResourceGovernor:
                 metrics.external_vram_mb = round(max(0.0, metrics.vram_used_mb - metrics.model_vram_mb), 1)
                 metrics.model_resident = metrics.model_vram_mb <= 0 or metrics.vram_used_mb >= metrics.model_vram_mb
                 metrics.external_vram_baseline_mb = self._track_external_baseline(metrics)
+                if metrics.model_resident:
+                    # A paged-out model makes the subtraction read ~0 external; skip those.
+                    self._external_samples.append(
+                        (metrics.timestamp, metrics.external_vram_mb, metrics.vram_total_mb)
+                    )
 
                 # GPU Temperature
                 try:

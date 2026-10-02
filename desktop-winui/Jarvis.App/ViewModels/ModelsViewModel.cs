@@ -36,10 +36,15 @@ public partial class ModelsViewModel : ObservableObject
     [ObservableProperty]
     public partial string? StatusMessage { get; set; }
 
+    /// <summary>Getting new models from HuggingFace. Lives here, not in the Settings sheet, so
+    /// a download is still watched after the sheet closes and lands in <see cref="Models"/>.</summary>
+    public ModelHubViewModel Hub { get; }
+
     public ModelsViewModel(JarvisApiClient api, DispatcherQueue dispatcher)
     {
         _api = api;
         _dispatcher = dispatcher;
+        Hub = new ModelHubViewModel(api, dispatcher, RefreshAsync);
     }
 
     public async Task RefreshAsync()

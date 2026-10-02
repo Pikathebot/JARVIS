@@ -327,3 +327,50 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
   messages x3: all 5 facts saved, repeats caught by `_same_fact`, chit-chat/questions saved
   nothing. On device: a fact settled in one chat was recalled in a new chat in the same
   workspace. Known gap: synonym near-duplicates ("answers" vs "responses") both get saved.
+
+- [x] **Model download from HuggingFace + fit labels (PLAN §4.8b, 2026-10-02).** Download GGUFs from inside the
+  app; suggest models from the detected RAM / VRAM / CPU.
+  - **The user's choices (2026-10-02):** a curated list we maintain (models known to work here)
+    plus a HuggingFace search box for any GGUF repo. How "fits" is judged is being discussed
+    (leaning towards the governor's live free VRAM + learned launch costs).
+  - **Fit check (agreed 2026-10-02):** budget = 8 GB minus the non-Jarvis VRAM (the governor's
+    external baseline, taken as a rolling high-water mark so labels don't flicker); cost = learned
+    `launch_costs` when we have them, else an estimate from file + projector + KV (layer/head
+    counts read from the GGUF header via a ranged HF request) + CUDA overhead. Labels per slot:
+    **Fits** (>= 500 MB headroom), **Tight**, **Spills**. Spills is only labelled, never blocked.
+  - **Spec (approved by the user 2026-10-02):**
+    - *Backend* (`app/agent/model_hub.py` + routes on the existing `/api/models` router):
+      `GET hub/curated` (our list, `data/curated_models.json`: current main + Q8_0 projector, fast,
+      a few alternates); `GET hub/search?q=` (HF `api/models?search=&filter=gguf&sort=downloads`);
+      `GET hub/files?repo=` (the repo's `.gguf` files with sizes and a fit label per slot;
+      projectors listed apart); `POST download {repo, file, projector?}`; `GET downloads`
+      (progress); `DELETE downloads/{id}` (cancel). `GET /api/models` gains the fit label too.
+    - *Download:* streamed with httpx to `models/<repo-name>/<file>.part`, resumed with a Range
+      request after a failure or restart, checked against the SHA-256 HF publishes, then renamed --
+      so a half-written file never shows up in the catalogue. Refused up front if the disk lacks
+      the space. Split GGUFs (`-00001-of-0000N`) downloaded as a set; one at a time.
+    - *Fit estimate:* first ~4 MB of the file by Range request -> parse the GGUF header (layers,
+      KV heads, head size, context length, `full_attention_interval` for hybrids) -> KV at the
+      slot's context, q8_0. Learned `launch_costs` win once the model has run.
+    - *Client:* a "Get models" pane in the Settings models sheet (inline, not a popup): curated
+      list, search box, a repo's files with Fits/Tight/Spills per slot, download button, progress
+      bar, cancel. The client polls `downloads` once a second while the pane is open.
+    - *Tests:* GGUF header parsing on a synthetic file, the fit maths, resume/hash/rename with a
+      fake HTTP server; nothing in tests touches the network.
+  - **Built 2026-10-02 -- 724 tests pass, WinUI builds; unverified on device (the Settings pane
+    has not been seen on screen).** `app/agent/model_hub.py` (header reader, fit, HF client,
+    `DownloadManager`), routes in `routers/models.py`, `ResourceGovernor.fit_budget_mb` (10-minute
+    high-water of external VRAM), the curated list in `backend/app/agent/curated_models.json`
+    (tracked; repo-root `data/` is gitignored), `rule_of_thumb_cost_mb` shared with the launch
+    ladder, split GGUFs listed once in the catalogue. Client: `ModelHubViewModel` (owned by
+    `ModelsViewModel`, so a download keeps polling after Settings closes and a finished one
+    refreshes the picker) and a "Get models" section in `SettingsPane`; the local Models rows now
+    show the fit line too.
+    - Checked live: header KV rates match the card (9B 17.0, MiniCPM 22.31 MiB/1k); `GET /api/models`
+      and `hub/curated` against the real GPU (budget 6.9 GB with the app closed) and HF; a real
+      download of `angt/test-split-model-stories260K` (2-part split) -> hashed, renamed, listed
+      once with a fit label (then deleted).
+    - Notes: a repo's first `hub/files` reads one header over the network (~5 s); the curated
+      9B's "with vision" fit is an estimate (our measured launch used our Q8_0 projector, the repo
+      ships F16); files in repo subfolders are saved flat in `models/<repo name>/`.
+    - **On device 2026-10-02 (the user): "the downloads work great."**

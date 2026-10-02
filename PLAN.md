@@ -620,8 +620,14 @@ in chat doesn't stick.
 - **Process (the user's terms):** design the diagnostic (logging + test set) first; no fix spec
   until the user has run it and reported results; ask about anything ambiguous, don't assume.
 
-**b. Model download from HuggingFace + hardware suggestions.** Download GGUFs from inside the
-app; suggest models from the detected RAM / VRAM / CPU.
+**b. Model download from HuggingFace + fit labels: done 2026-10-02** (device-checked; see
+`docs/MILESTONES.md`). It lives in the Settings sheet for now.
+
+**b2. Settings as its own window; model management out of Settings (the user, 2026-10-02,
+later).** Settings becomes a separate window instead of the floating sheet, and the models
+UI (picker, fit labels, Get models, downloads) moves somewhere of its own. Not designed yet --
+ask the user where models should live before building. `ModelHubViewModel` is owned by
+`ModelsViewModel`, not the sheet, so it can move without changing the download plumbing.
 
 **c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** (raised by the user
 2026-09-28): https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF
@@ -673,3 +679,21 @@ windows only. No path in the code shows the HUD at launch (hidden in its constru
 by the toggle), so the on-screen report is unexplained; ask the user if it recurs.
 Header fit at 1280x800 (2026-09-24): logged 753 px needed of 637, captions shed, fits in 586 --
 unseen on screen.
+
+### 4.9 Fast voice mode (raised by the user 2026-10-02, queued after 4.8)
+
+A dedicated voice mode built for speed: **MiniCPM5-2B** (the fast slot) as the voice brain *with
+tools*, a **Laya** model fine-tuned for computer use and for Jarvis's own use cases, and
+**Kokoro** for speech -- all resident in VRAM together.
+- Today a turn that runs on the fast model gets no tools; voice mode would lift that for MiniCPM
+  (it scored 5/5 on `scripts/bench_tool_chain.py`, 14 s vs 35 s for the 4B).
+- VRAM sketch (to measure, not trust): desktop ~2.3 GB + MiniCPM5-2B Q4_K_M ~1.7 GB + Kokoro-82M
+  (CPU today, ~0.3-0.5 GB on GPU) + Laya. Fits 8 GB only with the 9B main (~5.0 GB) unloaded.
+- Note: the memory's "Laya" (convaiinnovations/laya) is a 0.4B decision classifier, not a
+  computer-use model -- which model is meant is an open question for the user.
+- **The user's answers (2026-10-02):** Laya = convaiinnovations/laya (0.4B) used as a *router*
+  that decides what an utterance needs (tool / screen action / just talk), later fine-tuned on
+  Jarvis's own cases. The 9B is **unloaded** while voice mode is on (swap ~8 s each way) and
+  reloaded when voice mode ends. The model picker's fit label (§4.8b) checks each model alone;
+  a "does it still fit next to Laya + Kokoro" label is built here, with voice mode. Still open: what Laya's labels are, what MiniCPM does once
+  Laya has decided, and whether Kokoro moves to the GPU.

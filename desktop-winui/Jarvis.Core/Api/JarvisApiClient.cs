@@ -107,6 +107,30 @@ public sealed class JarvisApiClient
             new ModelSelectRequest { Slot = slot, ModelId = modelId, Activate = activate },
             ct);
 
+    /// <summary>The models known to work on this laptop, with sizes and fit labels.</summary>
+    public Task<CuratedModelsResponse> FetchCuratedModelsAsync(CancellationToken ct = default) =>
+        GetAsync<CuratedModelsResponse>("/api/models/hub/curated", ct);
+
+    public Task<HubSearchResponse> SearchHubAsync(string query, CancellationToken ct = default) =>
+        GetAsync<HubSearchResponse>($"/api/models/hub/search?q={Uri.EscapeDataString(query)}", ct);
+
+    /// <summary>A repo's GGUF files with fit labels. The first call for a repo reads one header
+    /// from HuggingFace, ~5 s.</summary>
+    public Task<HubFilesResponse> FetchHubFilesAsync(string repo, CancellationToken ct = default) =>
+        GetAsync<HubFilesResponse>($"/api/models/hub/files?repo={Uri.EscapeDataString(repo)}", ct);
+
+    public Task<ModelDownloadResponse> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken ct = default) =>
+        PostAsync<ModelDownloadRequest, ModelDownloadResponse>("/api/models/download", request, ct);
+
+    public Task<ModelDownloadsResponse> FetchModelDownloadsAsync(CancellationToken ct = default) =>
+        GetAsync<ModelDownloadsResponse>("/api/models/downloads", ct);
+
+    public async Task CancelModelDownloadAsync(string jobId, CancellationToken ct = default)
+    {
+        var response = await _http.DeleteAsync($"/api/models/downloads/{Uri.EscapeDataString(jobId)}", ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "cancel download").ConfigureAwait(false);
+    }
+
     public async Task PauseGovernorAsync(string? reason = null, CancellationToken ct = default)
     {
         var body = new GovernorPauseRequest { Reason = reason ?? "User requested manual pause" };
