@@ -10,7 +10,12 @@ D3D11 Liquid Glass renderer (`desktop-winui/`). Optional OpenRouter "Heavy Mode"
 
 ## 0. What Jarvis is for
 
-A private assistant that lives on this one laptop: it answers and acts (files, apps, media, web,
+The user's goal, in their words (2026-10-16): like JARVIS in the Avengers, a personal AI assistant that can do
+anything, working together with the user on whatever the work is. It steps aside on its own (turns itself off)
+when the laptop is needed for heavy use, and comes back by itself when that work is finished. "Anything" is
+bounded only by this one laptop's resources, not by domain.
+
+Concretely: a private assistant that lives on this one laptop: it answers and acts (files, apps, media, web,
 shell) with every risky action gated behind an explicit yes, speaks and listens without the cloud,
 notices things about the machine on its own and says so once, and never lets its own model starve
 the rest of the desktop of VRAM. The UI should feel like Apple's Liquid Glass, measured against a
@@ -961,3 +966,143 @@ staging were not needed yet; they come with Phase 2's async ring.
 - Run flags that matter: `-fit off` (fit allocates nothing and doesn't know the bank), `-ngl 99 -np 1`,
   `--moe-slot-bank 256`, and `D:\CUDA\v12.9\bin` on PATH when running from `build\bin` (0xC0000135 otherwise).
 - Results rows: `docs/MOE_BENCH_PROTOCOL.md` §6. Next: Phase 2 (Windows I/O engine, gate G2).
+
+### 4.13 Harness review: what to take from Odysseus (started 2026-10-16)
+
+Raised by the user 2026-10-16: can the 9B get "MoE-level" ability without the MoE? Answer so far: knowledge
+breadth, no (it lives in parameter count; retrieval covers it); behaviour on Jarvis's own tasks, yes
+(distillation / fine-tuning). First find where the 9B actually fails, then decide harness fix vs model fix.
+
+**Eval (built 2026-10-16):** `scripts/eval_jarvis_tasks.py`. It has 41 tasks taken from the user's real sessions
+(deduplicated from `backend/data`), in groups web / closed / system / workspace / convo / chain. It reuses
+`bench_tool_chain.py`'s server and simulated world. The model sees what it sees in the app: the real head prompt,
+the real tool schemas per space, the turn context on the user turn, thinking chosen like the router, and the
+stream loop's safety nets (reasoning-only nudge, empty re-ask, claim nudge, tool calls parsed from text). Web pages
+carry planted facts, so only a real search + read passes the current-events tasks.
+- First pass (live 9B, before the harness fixes in the script): 26/41. Real model failures: knowledge
+  (Thirparappu "Idukki", Wukong studio "GameTech", nanites as Terminator lore, Ishiguro Nobel 2004, Coimbatore
+  list with Lalbagh, invented Python 3.13 features); grounding (Bleach: "no real-time access", never searched;
+  Wukong mod: searched, didn't open the page, invented a name); thread (forgot "500" two turns back).
+- Live 9B, 3 seeds with the script fixed: 91/123 (chain 15/15, system 26/27, workspace 22/24, convo 5/6,
+  web 8/15, closed 15/36). Failed all 3: bleach-arc (never searches; skill) and six knowledge tasks. Flaky
+  (passes sometimes): wukong-mod, tn-headlines, wukong-studio, strawberry, remember-dark, enhance-prompt,
+  prompt-length, the best fine-tuning targets. Safety nets fired 14× in 123 tasks.
+- Defiant comparison: see "Model comparison" below the candidate list.
+
+**Source:** github.com/odysseus-dev/odysseus (AGPL-3.0: take ideas, not code), mainly
+`plans/ODYSSEUS_TOOL_HARDENING_PLAN.md`. Their key number: a Qwen3.5 9B fine-tuned for their tool runtime scored
+94.5% vs 77.9% for the untouched base on the same 344-turn suite, at the same speed (92.6% on a sealed blind set).
+
+**Candidates, to go through one at a time with the user (decisions recorded under each):**
+1. Failure layers in the eval: every failure gets one primary layer (route, contract, model, policy, execution,
+   evidence, answer, rendering, performance) before any fix.
+   **Decided 2026-10-16: yes, option A.** The script auto-tags the clear cases (web task with no search = model;
+   searched but never fetched = evidence; empty content with an answer in reasoning = rendering; an action
+   task with no action tool = model) and Claude hand-tags the rest after each run.
+2. Sealed blind split: keep part of the suite out of all tuning so a fix or fine-tune can't overfit to it.
+   **Decided 2026-10-16: yes, option A.** The 41 current tasks are all dev (Claude has seen every transcript).
+   The sealed set is built from fresh tasks taken from the user's next real requests, a few per group, kept in a
+   separate file; it is run only to confirm a change at the end, and its transcripts are never used to guide fixes.
+3. Contract self-check: offered tools are a subset of what will execute; never offer a tool the gate will refuse.
+   **Decided 2026-10-16: option A.** Keep the fixed tool list (KV-cache prefix). A tool that can't run in the
+   current state (git tools in a non-repo workspace, a tool whose sidecar or mode is off) fails fast with "not
+   available here because X; don't retry", plus a test that walks every tool in every space and checks for a
+   clean refusal instead of an exception or a hang.
+4. Typed follow-ups: "rewrite it" / "pause it" resolve against the previous tool result (object, success),
+   not keywords.
+   **Decided 2026-10-16: option C.** The harness keeps a per-session "recent objects" record built from real tool
+   results, never from the model's words (object, action, success, how many turns ago; last search with its
+   query and which pages were opened). Chat: it rides in the per-turn context block (~50-100 tokens, cache-safe),
+   so the model resolves "it" against facts and can answer "did you actually do it?" truthfully. Voice mode
+   keeps its deterministic fast path for short commands ("close it", "pause it", ...), reading the same
+   record. Ephemeral sessions keep it in `EphemeralMemoryStore` like the rest of their history.
+5. Scoped contextual authority: a follow-up "yes, change it" may only revise an object proven earlier in the same
+   family; never a new object, a destructive action or an external side effect.
+   **Decided 2026-10-16: skip, already covered.** Approvals are `act_<hash>` tokens for one exact call (tool +
+   normalised args, 90 s expiry), so a "yes" can't spill over. What runs unasked is workspace writes (backed
+   up) and low-risk input/media tools; their real exposure is injected instructions, handled under #6.
+6. Gate after outside content: once a turn has read a fetched page / file / email, action tools need approval
+   (prompt injection; matters more now that `type_text` / `press_keys` exist).
+   **Decided 2026-10-16: option C.** A turn becomes *tainted* once a tool brings in outside text: `fetch_url`,
+   `web_search`, `look_at_screen`, `get_clipboard`, and reads of files known to come from outside (uploads /
+   attachments, files Jarvis wrote from fetched content). Ordinary workspace reads don't taint. For the rest of
+   a tainted turn these normally-free tools need approval: `type_text`, `press_keys`, `write_file`,
+   `patch_file`, `set_clipboard`, `remember` (memory poisoning). Tools that already always ask are unchanged;
+   volume/media/reminders stay free. Voice mode's code-built direct plans must be unaffected (verify when building).
+7. Research pipeline: a fixed search -> open the top pages -> answer with sources flow for current-events
+   questions, instead of trusting the model to fetch.
+   **Decided 2026-10-16: option D.** Today `web_search` returns DuckDuckGo snippets only, so the model answers
+   from a line of text (Wukong mod invented) or never searches (Bleach). Build a code-run pipeline (search ->
+   open the top 3 pages -> pull the passages relevant to the question -> results with sources). It is offered
+   as a `research` tool, and the harness also pre-runs it before the model on clear recency triggers (explicit
+   "latest / new / news / current / this week", a date or year past the model's cutoff), putting the results in
+   the turn context like RAG. Triggers start conservative and widen only from eval misses; closed-book tasks
+   (`strawberry`, `mvc-talk`, ...) must not trigger it. Results count as outside content for #6.
+8. Blind A/B compare in the app: two models answer, the user picks, without knowing which is which.
+   **Decided 2026-10-16: B (offline review page) now.** A local page reads two eval result files (answers are
+   generated in advance by the unattended eval runs), shows each prompt's two answers unlabelled in random
+   order, takes A / B / tie, reveals the models after each vote, and saves votes as `{prompt, chosen, rejected}`
+   (DPO-ready). Pairs with identical answers are skipped. First use: live 9B vs Defiant Fable 9B.
+   **In-app variant (user's idea), decided 2026-10-16:** one model, two answers, so no model swap. Answer 1 is the
+   normal reply, shown at once. Only on text-only replies (no tool ran, so nothing happens twice). It fires when
+   both conditions hold: a ~1-in-15 chance per eligible reply, and the model itself judges a meaningfully
+   different answer is possible. The judge is a short thinking-off call after answer 1 is shown, returning a
+   steering axis (shorter / more casual / more detailed / different structure) or NONE. Answer 2 is **steered**
+   along that axis, generated in the background; a compare card appears only when it is ready. Votes are saved
+   in the same `{prompt, chosen, rejected}` format as the offline page, feeding #10.
+9. Per-turn metrics footer: TTFT, tok/s, rounds, tool calls, prompt tokens.
+   **Decided 2026-10-16: option A, always shown.** One quiet line under every reply, e.g. "0.4 s first token ·
+   27 tok/s · 3 rounds · 2 tools · 1.6k prompt (1.4k cached) · nudged ×1". Numbers come from llama-server's
+   timings / cached-token counts and the orchestrator's round, tool and safety-net counters, sent on the `done`
+   event; the client renders it in the muted text style.
+10. Fine-tune the 9B on the remaining "model"-layer failures (teacher, data, LoRA on 8 GB), only after 1-9.
+   **Decided 2026-10-16: option C plus Hugging Face datasets, trained with Soup.**
+   - Data, in order: (1) self-distillation: many 9B attempts on task variations, the eval's checks keep passes
+     (SFT) and pass/fail pairs (DPO), plus the user's votes from #8; (2) open Hugging Face datasets as an extra
+     source; (3) a cloud teacher only for gaps the 9B never solves, on synthetic prompts, not the user's chats.
+   - Dataset criteria: open licence; traces short enough for 8 GB training and Jarvis's 32k context (aim
+     < 4k tokens); converted to Jarvis's real tool schemas; mixed in as a minority beside our own data;
+     reasoning length kept modest (max-effort traces teach long thinking, the main latency cost). Domain is
+     *not* a filter: Jarvis should help with anything (§0), coding included. Provenance checked per set
+     (outputs of commercial models may carry their provider's terms). The user's example
+     (MoreThought/Fable-5.1-Max-Reasoning, ~50k-token coding traces) was illustrative and fails the length
+     criterion.
+   - Trainer: Soup (github.com/MakazhanAlpamys/Soup, Apache-2.0): YAML-driven SFT/DPO/tool-calling, LoRA merge,
+     GGUF export, layer streaming (beta) for big models on small GPUs. Own venv (Python 3.10-3.12). First a
+     smoke test: Qwen3.5 (hybrid DeltaNet + vision) support, 20 steps on 100 rows, merge, export, re-quantise
+     to IQ3_XXS with the imatrix, load in llama-server.
+   - Gate: replaces the main model only if it beats the live 9B on the sealed set (#2) and wins the blind votes (#8).
+11. Compact per-family tool sets (theirs) vs Jarvis's fixed set (KV-cache stable): measure before changing.
+   **Decided 2026-10-16: option A, keep the fixed set.** The eval shows few wrong-tool failures (system 26/27,
+   chain 15/15); the misses are grounding and knowledge. Revisit only if wrong-tool failures grow as tools are
+   added (#7's `research` is next); then run the compact-set eval variant (option B) before changing anything.
+12. Product features (email, calendar, notes, tasks): only if the user wants them; none in session history.
+   **Decided 2026-10-16: all three, in order notes + tasks -> calendar -> email** (cheapest and safest first;
+   email only after #6's gate exists, since every email is outside content and sending must always ask).
+   Notes/tasks extend the existing reminders/memory/artifacts locally. The user barely uses a calendar today
+   and wants Jarvis to help them use their time well; their timetable is to be worked out with Jarvis in a
+   later chat session. Open: which calendar and email services (not decided yet). Proactive nudges ("meeting
+   in 10 minutes", "the email you were waiting for arrived") go through `AwarenessMonitor.emit`.
+13. Nudge wording: stop the "I apologize for the confusion" leak after the reasoning-only nudge.
+   **Decided 2026-10-16: option A.** Measured: 10 nudges in the 9B's 3 passes, 0 apologies (the one seen was a
+   debug run). But `_NUDGE_TO_ACT` ("You stopped before doing anything") is false when tools already ran and
+   the answer landed in the reasoning. When a tool has run this turn, send "Now give the user your answer."
+   instead; keep the current text for turns where nothing ran. Pin with a test.
+
+**Found while comparing models (2026-10-16), fix with the batch:** `claims_unrun_action` only matches "I ..."
+phrasing, so Defiant's "Bumped version to 1.4.4 and saved." (no write ran) slipped past the claim nudge, as did
+"I'll remind you of this in 10 minutes." (no `remind_me`). Widen the detector to subject-less past-tense claims
+and "I'll <action>" promises when no matching tool ran, with tests from these exact replies plus neighbours.
+
+**Model comparison 2026-10-16 (41 tasks × 3, same seeds, Whisper mode):** live Qwen3.5-9B 91/123, Defiant Fable
+9B 92/123. Defiant is 35% faster (822 vs 1264 s; half the completion tokens) and slightly better on web/convo,
+but failed 3/15 chains, all by claiming an action it never took (claimed-without-acting 3 vs 1). Telemetry was
+real in all 6 VRAM/CPU answers (one arithmetic slip: "about 625 MB free" of 3 GB). Decision: keep the live 9B
+for now; re-run both after the claim detector fix, then let the blind votes (#8) decide.
+
+**Raised, not yet discussed:** check the governor against §0's "turns itself back on when the heavy work is
+finished": after an eviction, does the model come back on its own once the external load ends, and how fast?
+
+**Build order for the batch (agreed items):** 13 + claim detector (small) -> 1 (eval layers) -> 3 (fail-fast
+refusals) -> 9 (metrics footer) -> 4 (recent objects) -> 6 (taint gate) -> 7 (research) -> 8 (review page, then
+in-app compare) -> 2 (sealed set, as new requests come in) -> 12 (notes/tasks, calendar, email) -> 10 (fine-tune).
