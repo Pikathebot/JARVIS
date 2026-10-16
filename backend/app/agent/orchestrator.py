@@ -60,6 +60,14 @@ class OrchestratorResult:
     spoken: Optional[str] = None
 
 
+_ARGLESS_ANNOUNCEMENT = re.compile(
+    r"^\s*(?:(?:i'?ll|i will|let me|i'?m going to|i am going to|i'?m)\s+)?"
+    r"(?:call|calling|use|using|run|running|invoke|invoking)\s+(?:the\s+)?`?"
+    r"(get_system_status|list_processes|get_clipboard|reminders)`?\b",
+    re.IGNORECASE,
+)
+
+
 def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
     """
     Extract embedded tool calls outputted as raw text by models:
@@ -136,6 +144,16 @@ def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]
     if extracted:
         cleaned_content = tool_announcement_regex.sub("", content).strip()
         return cleaned_content, extracted
+
+    # 2b. A reply that opens by announcing a read-only tool with no required arguments ("Calling
+    # get_system_status to measure your CPU usage.") and stops there: MiniCPM did this for 4 of
+    # 12 CPU questions in a replay of the 2026-10-04 voice session. Read-only tools only, so a
+    # misread can't change anything; only at the start, so "you can call X" in an answer doesn't.
+    m = _ARGLESS_ANNOUNCEMENT.match(content)
+    if m:
+        name = m.group(1).lower()
+        return "", [{"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function",
+                     "function": {"name": name, "arguments": {}}}]
 
     # 3. Match JSON blocks with unambiguous parameter signatures or name/parameters
     json_block_regex = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*?\})", re.DOTALL)
@@ -250,6 +268,37 @@ _ACTION_REQUEST_RE = re.compile(
     r"screenshot|turn (?:up|down|on|off)|set|change|update|git|file|folder|process|app)\b",
     re.IGNORECASE,
 )
+
+_VOICE_CHAT_NOTE = (
+    "Voice mode: this reply is spoken aloud. Answer in one or two short, natural sentences, no "
+    "lists or markdown. The user is just talking: don't use tools."
+)
+_VOICE_ACT_NOTE = (
+    "Voice mode: this reply is spoken aloud. Use a tool if the request needs one, then answer in "
+    "one or two short, natural sentences, no lists or markdown."
+)
+
+
+def _voice_tools(tools: list, fast_can_see: bool) -> list:
+    """Voice mode's tool list: everything, minus look_at_screen when the fast model has no
+    projector -- on device MiniCPM picked it for "open the HUD", asked for approval, then said it
+    couldn't see. (The list is still the same every voice turn, so the prefix stays cached.)"""
+    if fast_can_see:
+        return tools
+    return [t for t in tools if getattr(t, "__name__", None) != "look_at_screen"]
+
+
+def _effective_voice_route(voice_route: Optional[str]) -> Optional[str]:
+    """The turn's voice route: what voice mode asked for, or 'act' for any other turn while voice
+    mode is on -- the 9B is unloaded then, and a typed turn must not swap it back in."""
+    if voice_route in ("chat", "act"):
+        return voice_route
+    try:
+        from app.voice.voice_mode import get_voice_mode
+        return "act" if get_voice_mode().enabled else None
+    except Exception:
+        return None
+
 
 _FAST_NO_TOOLS_NOTE = (
     "You have no tools in this turn (the fast model is answering). If the user asked you to do "
@@ -865,9 +914,11 @@ class AgentOrchestrator:
         max_iterations: int = 5,
         compaction_threshold_override: Optional[int] = None,
         chat_mode: Optional[str] = "WORKSPACE",
-        attachments: Optional[list[dict[str, Any]]] = None
+        attachments: Optional[list[dict[str, Any]]] = None,
+        voice_route: Optional[str] = None,
     ) -> OrchestratorResult:
         return await self._run_internal(
+            voice_route=voice_route,
             user_message=user_message,
             session_id=session_id,
             project_id=project_id,
@@ -893,7 +944,8 @@ class AgentOrchestrator:
         max_iterations: int = 5,
         compaction_threshold_override: Optional[int] = None,
         chat_mode: Optional[str] = "WORKSPACE",
-        attachments: Optional[list[dict[str, Any]]] = None
+        attachments: Optional[list[dict[str, Any]]] = None,
+        voice_route: Optional[str] = None,
     ) -> OrchestratorResult:
         active_session_id = session_id or "default"
         # A token whose confirmation window lapsed does not approve anything: the action is
@@ -925,6 +977,9 @@ class AgentOrchestrator:
         combined_tools = tools_for_space(effective_mode_str) + list(mcp_tools or [])
 
         # 2. Routing Decision (Amendment 2)
+        voice_route = _effective_voice_route(voice_route)  # voice mode on: never swap main back in
+        if voice_route:
+            requested_model = "fast"
         decision = self.router.evaluate(
             message=user_message,
             requested_mode=requested_mode,
@@ -933,7 +988,12 @@ class AgentOrchestrator:
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model, user_message)
-        if is_fast:
+        if voice_route:
+            decision.model, is_fast, thinking = "fast", True, False
+            combined_tools = _voice_tools(combined_tools, self._slot_has_vision("fast", decision.provider))
+            note = _VOICE_CHAT_NOTE if voice_route == "chat" else _VOICE_ACT_NOTE
+            turn_directive = "\n\n".join(d for d in (turn_directive, note) if d)
+        elif is_fast:
             # The fast model gets no tools: it chats and answers quick questions. A turn that
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []
@@ -1492,12 +1552,16 @@ class AgentOrchestrator:
         max_iterations: int = 5,
         compaction_threshold_override: Optional[int] = None,
         chat_mode: Optional[str] = "WORKSPACE",
-        attachments: Optional[list[dict[str, Any]]] = None
+        attachments: Optional[list[dict[str, Any]]] = None,
+        voice_route: Optional[str] = None,
     ):
         """
         Asynchronously streams chat tokens, tool execution events, and metadata.
         Yields JSON event dictionaries: {"event": "...", "data": {...}}
         """
+        voice_route = _effective_voice_route(voice_route)
+        if voice_route:
+            requested_model = "fast"
         active_session_id = session_id or "default"
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
@@ -1532,7 +1596,15 @@ class AgentOrchestrator:
         is_fast = "fast" in (decision.model or "").lower() or decision.mode == "fast"
         decision, is_fast = self._prefer_seeing_slot(decision, is_fast, attachments)
         decision, is_fast, thinking = self._prefer_loaded_slot(decision, is_fast, requested_model, user_message)
-        if is_fast:
+        if voice_route:
+            # Voice mode: MiniCPM is the only chat model loaded and it keeps the space's tools on
+            # every voice turn (one fixed list, so its prompt prefix stays cached); what this turn
+            # is for rides on the user turn instead.
+            decision.model, is_fast, thinking = "fast", True, False
+            combined_tools = _voice_tools(combined_tools, self._slot_has_vision("fast", decision.provider))
+            note = _VOICE_CHAT_NOTE if voice_route == "chat" else _VOICE_ACT_NOTE
+            turn_directive = "\n\n".join(d for d in (turn_directive, note) if d)
+        elif is_fast:
             # The fast model gets no tools: it chats and answers quick questions. A turn that
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []

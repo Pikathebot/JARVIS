@@ -53,6 +53,7 @@ def main() -> None:
     ap.add_argument("--head", type=int, default=320, help="head_max_len (option budget)")
     ap.add_argument("--max-len", type=int, default=512)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--fp16", action="store_true", help="half-precision weights (cuda)")
     args = ap.parse_args()
 
     import torch
@@ -60,6 +61,8 @@ def main() -> None:
 
     t0 = time.perf_counter()
     agent = laya.load(args.model, device=args.device, subfolder=args.subfolder)
+    if args.fp16:
+        agent.model.half()
     load_s = time.perf_counter() - t0
 
     def predict(state: dict, questions: dict) -> dict:

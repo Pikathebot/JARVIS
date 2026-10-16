@@ -64,6 +64,22 @@ def test_audio_transcriber_processing():
     assert res["format"] == "wav"
 
 
+def test_gpu_whisper_failure_leaves_the_cpu_model_serving(monkeypatch):
+    import faster_whisper
+
+    def boom(name, device="cpu", compute_type="int8"):
+        if device == "cuda":
+            raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+        return "cpu-model"
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", boom)
+    t = AudioTranscriber(model_size="tiny.en", gpu_model="large-v3-turbo")
+    assert t.use_gpu(True) is False
+    assert t.vram_mb == 0.0
+    assert t._get_model() == "cpu-model"
+    assert t.use_gpu(False) is True
+
+
 # --- API Integration Tests with FastAPI app ---
 
 @pytest.mark.anyio
@@ -107,6 +123,11 @@ async def test_chat_with_wake_word_prefix():
     """Verify that a prompt starting with 'Jarvis, ...' executes smoothly and strips wake word."""
     from unittest.mock import AsyncMock, patch
     from app.agent.llamacpp_provider import LlamaCppProvider
+    from app.main import run_db_migrations
+
+    # ASGITransport skips startup, so the schema is only there if an earlier test file made it;
+    # run on its own this file hit "no such table: sessions".
+    run_db_migrations()
 
     mock_resp = {
         "message": {

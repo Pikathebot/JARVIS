@@ -383,7 +383,7 @@
                                 <glass:GlassTextField
                                     x:Name="ComposerBox"
                                     MinHeight="48"
-                                    InputPadding="48,8,92,0"
+                                    InputPadding="48,8,130,0"
                                     VerticalAlignment="Stretch"
                                     Placeholder="Message Jarvis"
                                     AcceptsReturn="True"
@@ -394,6 +394,10 @@
                                     <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE710;" />
                                 </Button>
                                 <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,7,7">
+                                    <!-- Voice mode: MiniCPM + Laya instead of the 9B, commands run directly. -->
+                                    <Button x:Name="VoiceModeButton" Style="{StaticResource IconButtonStyle}" ToolTipService.ToolTip="Voice mode: fast spoken commands" Click="VoiceModeButton_Click">
+                                        <FontIcon x:Name="VoiceModeIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE945;" />
+                                    </Button>
                                     <Button x:Name="MicButton" Style="{StaticResource IconButtonStyle}" ToolTipService.ToolTip="Talk to Jarvis" Click="MicButton_Click">
                                         <FontIcon x:Name="MicIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE720;" />
                                     </Button>

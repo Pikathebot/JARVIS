@@ -6,7 +6,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -162,6 +162,13 @@ async def reload_paged_model() -> bool:
     return await pm.ensure_running(kind)
 
 
+def _laya_vram_mb() -> float:
+    from app.voice.laya_sidecar import get_laya_sidecar
+
+    laya = get_laya_sidecar()
+    return laya.vram_mb if laya.is_running() else 0.0
+
+
 governor = ResourceGovernor(
     enabled=settings.governor_enabled,
     poll_interval=settings.governor_poll_interval,
@@ -174,7 +181,9 @@ governor = ResourceGovernor(
     startup_grace_seconds=settings.governor_startup_grace_seconds,
     auto_unload_on_throttle=True,
     on_throttle_unload=auto_unload_models,
-    model_vram_mb_provider=lambda: get_runtime_process_manager().model_vram_mb,
+    # Ours = the chat model plus voice mode's Laya sidecar (~1 GB on the GPU while it runs),
+    # which otherwise reads as an external workload growing past the launch baseline.
+    model_vram_mb_provider=lambda: get_runtime_process_manager().model_vram_mb + _laya_vram_mb() + transcriber.vram_mb,
     external_vram_floor_mb=settings.governor_external_vram_floor_mb,
     external_vram_baseline_provider=lambda: get_runtime_process_manager().external_vram_baseline_mb,
     external_vram_growth_mb=settings.governor_external_vram_growth_mb,
@@ -537,6 +546,11 @@ class ChatRequest(BaseModel):
         default=False,
         description="Scratchpad turn: the conversation is kept in memory only and never written "
                     "to the database or the session list (see app.memory.ephemeral)"
+    )
+    voice_route: Optional[Literal["chat", "act"]] = Field(
+        default=None,
+        description="Set by voice mode (/api/voice/listen's voice_route): the turn runs on the fast "
+                    "model, 'chat' to talk, 'act' with tools; replies are short enough to speak"
     )
 
 
@@ -1002,7 +1016,8 @@ async def chat(request: ChatRequest):
                 system_prompt=request.system_prompt,
                 approved_action_ids=request.approved_action_ids,
                 chat_mode=request.chat_mode,
-                attachments=request.attachments
+                attachments=request.attachments,
+                voice_route=request.voice_route,
             )
 
         return ChatResponse(
@@ -1070,7 +1085,8 @@ async def chat_stream(request: ChatRequest):
                     system_prompt=request.system_prompt,
                     approved_action_ids=request.approved_action_ids,
                     chat_mode=request.chat_mode,
-                    attachments=request.attachments
+                    attachments=request.attachments,
+                    voice_route=request.voice_route,
                 ):
 
                     event_type = event.get("event", "message")

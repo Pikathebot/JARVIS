@@ -191,10 +191,23 @@ public partial class App : Application
         if (_exiting) return;
         _exiting = true;
         _mainWindow.HideOnClose = false;
-        _snapshots?.Dispose();
-        _tray?.Dispose();
-        _backendHost.Dispose();
+        // Close the windows ourselves before Exit(): only Window.Closed runs GlassHost.Dispose, which
+        // stops desktop capture and the render loop. Exit() alone tore everything down under them
+        // (tray-quit crash, PLAN 4.11). Each step is logged so a crash here names its step.
+        Step("snapshots", () => _snapshots?.Dispose());
+        Step("tray", () => _tray?.Dispose());
+        Step("hud window", () => _hudWindow.Close());
+        Step("main window", () => _mainWindow.Close()); // its Closed closes Settings too; ExitApp re-entry is a no-op
+        Step("backend", () => _backendHost.Dispose());
+        Log("exit: Application.Exit");
         Microsoft.UI.Xaml.Application.Current.Exit();
+
+        static void Step(string name, Action step)
+        {
+            Log($"exit: {name}");
+            try { step(); }
+            catch (Exception ex) { Log($"exit: {name} threw {ex.GetType().Name}: {ex.Message}"); }
+        }
     }
 
     /// <summary>

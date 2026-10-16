@@ -14,7 +14,11 @@ The state machine per session:
       └──────────────────── stop ─── SPEAKING <─────────────────────-┘
 
 ARMED is what makes it feel like Jarvis rather than a walkie-talkie: for a
-short window after a reply, follow-up questions need no wake word.
+window after a reply, follow-up questions need no wake word. The window grows
+while the user keeps talking (15 s, then 45 s, then 90 s by default) and drops
+back to the first rung once one lapses: a conversation needs the wake word
+once, coming back after a long quiet needs it again. (The user's rule,
+2026-10-13; on device a reply 52 s into a quick back-and-forth was ignored.)
 """
 from __future__ import annotations
 
@@ -45,6 +49,7 @@ class VoiceSession:
     last_wake_word: Optional[str] = None
     last_transcript: str = ""
     turns: int = 0
+    streak: int = 0  # follow-ups in a row without the window lapsing: picks the window's rung
     updated_at: float = field(default_factory=time.time)
 
     def is_armed(self, now: Optional[float] = None) -> bool:
@@ -60,6 +65,7 @@ class VoiceSession:
             "last_wake_word": self.last_wake_word,
             "last_transcript": self.last_transcript,
             "turns": self.turns,
+            "streak": self.streak,
         }
 
 
@@ -99,9 +105,14 @@ class VoiceSessionManager:
         detector: Optional[WakeWordDetector] = None,
         follow_up_window_seconds: float = 15.0,
         min_transcript_chars: int = 2,
+        follow_up_ladder: Optional[tuple[float, ...]] = None,
     ):
         self.detector = detector or WakeWordDetector()
         self.follow_up_window_seconds = follow_up_window_seconds
+        # Rung n is the window after n follow-ups in a row; the last rung is the ceiling.
+        self.follow_up_ladder = follow_up_ladder or (
+            follow_up_window_seconds, follow_up_window_seconds * 3, follow_up_window_seconds * 6
+        )
         self.min_transcript_chars = min_transcript_chars
         self._sessions: dict[str, VoiceSession] = {}
 
@@ -141,10 +152,14 @@ class VoiceSessionManager:
 
     def arm_follow_up(self, session_id: str, window_seconds: Optional[float] = None) -> VoiceSession:
         """
-        After a reply, stay armed briefly so the next question needs no wake word.
+        After a reply, stay armed so the next question needs no wake word -- longer the more
+        the user has been talking (see the module docstring).
         """
         session = self.get(session_id)
-        window = self.follow_up_window_seconds if window_seconds is None else window_seconds
+        if window_seconds is None:
+            window = self.follow_up_ladder[min(session.streak, len(self.follow_up_ladder) - 1)]
+        else:
+            window = window_seconds
         session.armed_until = time.time() + max(0.0, window)
         session.state = VoiceState.LISTENING
         session.updated_at = time.time()
@@ -157,15 +172,20 @@ class VoiceSessionManager:
         session_id: str,
         transcript: str,
         greeting: str = "",
+        spoken_seconds: float = 0.0,
     ) -> UtteranceDecision:
         """
         Decide whether a transcribed utterance is addressed to Jarvis.
+
+        ``spoken_seconds`` is how long the utterance lasted: the follow-up window is checked
+        against when the user *started* talking, so a sentence begun inside it counts.
 
         Returns a decision rather than acting, so the caller stays in control
         of dispatching to the agent.
         """
         session = self.get(session_id)
         now = time.time()
+        started = now - max(0.0, spoken_seconds or 0.0)
         clean = (transcript or "").strip()
 
         if len(clean) < self.min_transcript_chars:
@@ -178,6 +198,7 @@ class VoiceSessionManager:
 
         session.last_transcript = clean
         detected, wake_word, remainder = self.detector.detect_in_text(clean)
+        in_window = session.is_armed(started)
 
         # A wake word always takes priority: it re-addresses Jarvis explicitly.
         if detected:
@@ -185,6 +206,8 @@ class VoiceSessionManager:
             if remainder:
                 session.state = VoiceState.THINKING
                 session.turns += 1
+                # Said inside the window it's the same conversation; after a lapse, a new one.
+                session.streak = session.streak + 1 if in_window else 0
                 session.armed_until = 0.0
                 return UtteranceDecision(
                     should_respond=True,
@@ -198,6 +221,8 @@ class VoiceSessionManager:
 
             # Bare "Jarvis" - acknowledge and wait for the actual request.
             session.state = VoiceState.ARMED
+            if not in_window:
+                session.streak = 0
             session.armed_until = now + self.follow_up_window_seconds
             return UtteranceDecision(
                 should_respond=False,
@@ -210,9 +235,10 @@ class VoiceSessionManager:
             )
 
         # No wake word, but we are still within the follow-up window.
-        if session.is_armed(now):
+        if in_window:
             session.state = VoiceState.THINKING
             session.turns += 1
+            session.streak += 1
             session.armed_until = 0.0
             return UtteranceDecision(
                 should_respond=True,
@@ -222,6 +248,8 @@ class VoiceSessionManager:
                 state=session.state,
             )
 
+        if session.state not in (VoiceState.THINKING, VoiceState.SPEAKING):
+            session.streak = 0  # the window lapsed: the conversation is over
         return UtteranceDecision(
             should_respond=False,
             transcript=clean,

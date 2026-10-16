@@ -13,6 +13,7 @@ from app.agent.tools.patch_file import patch_file
 from app.agent.tools.file_search import find_files, grep_in_files
 from app.agent.tools.app_control import launch_app, focus_app
 from app.agent.tools.media_control import set_volume, set_mute, media_control
+from app.agent.tools.input_control import type_text, press_keys, scroll
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
 from app.agent.tools.process_control import list_processes, kill_process
 from app.agent.tools.reminders import remind_me, reminders
@@ -46,6 +47,9 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "set_volume": set_volume,
     "set_mute": set_mute,
     "media_control": media_control,
+    "type_text": type_text,
+    "press_keys": press_keys,
+    "scroll": scroll,
     "get_clipboard": get_clipboard,
     "set_clipboard": set_clipboard,
     "list_processes": list_processes,
@@ -90,6 +94,9 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     set_volume,
     set_mute,
     media_control,
+    type_text,
+    press_keys,
+    scroll,
     get_clipboard,
     set_clipboard,
     list_processes,
@@ -223,6 +230,20 @@ class MediaControlArgs(BaseModel):
         default="status", description="status = what is playing; the rest control playback")
 
 
+class TypeTextArgs(BaseModel):
+    text: str = Field(..., description="Exactly the text to type")
+    press_enter: bool = Field(default=False, description="Press Enter afterwards")
+
+
+class PressKeysArgs(BaseModel):
+    keys: str = Field(..., description="A shortcut name (copy, paste, undo, save, new_tab, close_tab, back, reload, select_all, enter, escape) or keys like ctrl+shift+t")
+
+
+class ScrollArgs(BaseModel):
+    direction: Literal["down", "up", "top", "bottom"] = Field(default="down", description="Which way")
+    amount: Literal["little", "page", "a_lot"] = Field(default="page", description="How far (up/down only)")
+
+
 class GetClipboardArgs(BaseModel):
     pass
 
@@ -338,6 +359,9 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "set_volume": SetVolumeArgs,
     "set_mute": SetMuteArgs,
     "media_control": MediaControlArgs,
+    "type_text": TypeTextArgs,
+    "press_keys": PressKeysArgs,
+    "scroll": ScrollArgs,
     "get_clipboard": GetClipboardArgs,
     "set_clipboard": SetClipboardArgs,
     "list_processes": ListProcessesArgs,

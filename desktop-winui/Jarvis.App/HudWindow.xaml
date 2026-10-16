@@ -40,6 +40,11 @@
                     <!-- Measured readouts: tabular mono; they turn status colours past their limit and say so in words. -->
                     <TextBlock x:Name="VramRing" Text="VRAM —" Style="{StaticResource DataText}" />
                     <TextBlock x:Name="GpuRing" Text="GPU —" Style="{StaticResource DataText}" />
+                    <!-- Voice mode (MiniCPM + Laya instead of the 9B). -->
+                    <Button x:Name="VoiceModeButton" Style="{StaticResource IconButtonStyle}" ToolTipService.ToolTip="Voice mode: fast spoken commands"
+                            Click="VoiceModeButton_Click">
+                        <FontIcon x:Name="VoiceModeIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE945;" />
+                    </Button>
                 </StackPanel>
             </Grid>
     </glass:GlassSlab>

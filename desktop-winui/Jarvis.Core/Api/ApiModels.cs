@@ -140,6 +140,10 @@ public sealed class SendChatRequest
 
     [JsonPropertyName("approved_action_ids")]
     public List<string>? ApprovedActionIds { get; set; }
+
+    /// <summary>Voice mode's route ("chat" | "act") from /api/voice/listen; null otherwise.</summary>
+    [JsonPropertyName("voice_route")]
+    public string? VoiceRoute { get; set; }
 }
 
 public sealed class VoiceSayRequest

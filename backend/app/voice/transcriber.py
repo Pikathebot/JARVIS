@@ -1,22 +1,45 @@
-import io
+import gc
 import logging
 import os
 import tempfile
+import threading
+import time
+from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
+
 logger = logging.getLogger("jarvis.voice.transcriber")
+
+
+def _repo_path(path_str: str) -> Path:
+    p = Path(path_str)
+    return p if p.is_absolute() else Path(__file__).resolve().parents[3] / p
 
 
 class AudioTranscriber:
     """
     Speech-to-Text transcription engine powered by local Whisper.
+
+    A CPU model always serves; a larger GPU model (see ``Settings.whisper_gpu_model``) can be
+    loaded beside it with :meth:`use_gpu` -- voice mode does so while the 9B is unloaded and
+    there is VRAM for it. Its measured VRAM is reported through ``vram_mb`` so the governor
+    counts it as ours.
     """
 
-    def __init__(self, model_size: str = "tiny.en"):
-        self.model_size = model_size
+    def __init__(self, model_size: Optional[str] = None, gpu_model: Optional[str] = None):
+        from app.config import settings
+
+        self.model_size = model_size or settings.whisper_cpu_model
+        self.gpu_model_name = gpu_model or settings.whisper_gpu_model
         self._whisper_model = None
+        self._gpu_model = None
+        self._gpu_lock = threading.Lock()
+        self.vram_mb = 0.0
 
     def _get_model(self):
+        if self._gpu_model is not None:
+            return self._gpu_model
         if self._whisper_model is None:
             try:
                 from faster_whisper import WhisperModel
@@ -30,6 +53,46 @@ class AudioTranscriber:
                 logger.warning("Failed to initialize Whisper model: %s", e)
                 return None
         return self._whisper_model
+
+    def use_gpu(self, on: bool) -> bool:
+        """Load (or drop) the GPU model. Blocking; call off the event loop. False when it
+        couldn't load -- the CPU model keeps serving."""
+        with self._gpu_lock:
+            if not on:
+                if self._gpu_model is not None:
+                    self._gpu_model = None
+                    gc.collect()
+                    logger.info("Whisper GPU model unloaded.")
+                self.vram_mb = 0.0
+                return True
+            if self._gpu_model is not None:
+                return True
+            from app.config import settings
+            from app.voice.laya_sidecar import _gpu_used_mb
+
+            dll_dir = settings.whisper_cuda_dll_dir and _repo_path(settings.whisper_cuda_dll_dir)
+            if dll_dir and dll_dir.is_dir() and hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(str(dll_dir))
+                os.environ["PATH"] = str(dll_dir) + os.pathsep + os.environ.get("PATH", "")
+            try:
+                from faster_whisper import WhisperModel
+
+                before = _gpu_used_mb()
+                started = time.time()
+                model = WhisperModel(self.gpu_model_name, device="cuda", compute_type="int8_float16")
+                # The first encode is what pulls in cuBLAS; a missing DLL surfaces here, not above.
+                list(model.transcribe(np.zeros(16000, dtype=np.float32), beam_size=1, language="en")[0])
+                after = _gpu_used_mb()
+                self.vram_mb = max(0.0, after - before) if (before is not None and after is not None) else 1200.0
+                self._gpu_model = model
+                logger.info("Whisper '%s' on GPU in %.1fs (%.0f MiB VRAM).",
+                            self.gpu_model_name, time.time() - started, self.vram_mb)
+                return True
+            except Exception as e:
+                logger.warning("Whisper GPU model unavailable, staying on CPU '%s': %s", self.model_size, e)
+                self._gpu_model = None
+                self.vram_mb = 0.0
+                return False
 
     def transcribe_audio_bytes(self, audio_data: bytes, format: str = "webm") -> dict[str, Any]:
         """
@@ -54,6 +117,9 @@ class AudioTranscriber:
             segments, info = model.transcribe(
                 tmp_path,
                 beam_size=2,
+                # The GPU model is multilingual; left to detect, an accent on a short clip can
+                # be heard as another language.
+                language="en",
                 initial_prompt="Jarvis, what's the time? Hey Jarvis.",
                 vad_filter=True,
             )

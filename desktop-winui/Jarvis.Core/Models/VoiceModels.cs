@@ -50,6 +50,11 @@ public sealed class VoiceListenResult
     [JsonPropertyName("speak_immediately")]
     public string SpeakImmediately { get; set; } = "";
 
+    /// <summary>Voice mode: "chat" | "act" when Query should go to chat on the fast model; null
+    /// when not in voice mode or the action already ran (then SpeakImmediately says so).</summary>
+    [JsonPropertyName("voice_route")]
+    public string? VoiceRoute { get; set; }
+
     public VoiceState State { get; set; }
 
     [JsonPropertyName("transcription_error")]
@@ -82,6 +87,20 @@ public sealed class VoiceSayResult
     public bool? SynthesisFailed { get; set; }
 
     public VoiceSessionState Session { get; set; } = new();
+}
+
+/// <summary>GET/POST /api/voice/mode.</summary>
+public sealed class VoiceModeStatus
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>"enabling" | "disabling" while the model swap runs; "" otherwise.</summary>
+    public string Busy { get; set; } = "";
+
+    public string Error { get; set; } = "";
+
+    [JsonPropertyName("loaded_model")]
+    public string? LoadedModel { get; set; }
 }
 
 public sealed class HandsFreeStatus

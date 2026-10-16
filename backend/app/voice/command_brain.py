@@ -171,6 +171,41 @@ def strip_wake_word(utterance: str) -> str:
     return _WAKE.sub("", utterance or "").strip()
 
 
+# A search runs only when the user asked for one. On device Laya picked web_search, confident,
+# for follow-ups it can't resolve ("can you download it?", "I meant the mod, not the movie",
+# "click into the X server") and searched the whole sentence or just "it".
+_SEARCH_CUE = re.compile(
+    r"\b(?:search|google|look\s+(?:up|for)|find|bing|show\s+me|(?:pictures?|images?|photos?|videos?)\s+of|"
+    + "|".join(re.escape(e) for e in SEARCH_ENGINES) + r")\b",
+    re.I,
+)
+_EMPTY_QUERY_WORDS = frozenset(
+    "it its that this these those them they one ones the a an for of about on please link links "
+    "result results thing stuff something".split()
+)
+
+
+# An unplaced site ("go to the rust docs") is searched for instead -- only when the user asked to
+# go somewhere and named it. "Can you click into the rising ecstasy server?" (Laya: open_website,
+# 0.89) and "open that thing we talked about" are for MiniCPM.
+_NAV_CUE = re.compile(r"\b(?:go\s+to|open|visit|navigate\s+to|take\s+me\s+to|pull\s+up|bring\s+up|load)\b", re.I)
+_REFERS_BACK = re.compile(r"\b(?:it|that|this|them|those|these|one)\b", re.I)
+
+
+def site_fallback_is_grounded(utterance: str) -> bool:
+    u = strip_wake_word(utterance or "")
+    return bool(_NAV_CUE.search(u) or _SEARCH_CUE.search(u)) and not _REFERS_BACK.search(u)
+
+
+def search_is_grounded(utterance: str, query: str) -> bool:
+    """True when ``utterance`` asks for a search and ``query`` says what for. Otherwise the turn
+    belongs to MiniCPM, which sees the conversation and can work out what "it" is."""
+    if not _SEARCH_CUE.search(utterance or ""):
+        return False
+    words = re.findall(r"[a-z0-9.+#']+", (query or "").lower())
+    return any(w not in _EMPTY_QUERY_WORDS for w in words)
+
+
 def _clean(s: str) -> str:
     s = s.strip().strip("\"“”'")
     s = _POLITE_TAIL.sub("", s).strip()
@@ -256,6 +291,12 @@ _SITE_WORD = re.compile(
 )
 
 
+_NOT_A_SITE = frozenset(
+    "it that this the docs documentation store shop page site website home homepage news "
+    "settings app link links one".split()
+)
+
+
 def domain_guess(utterance: str) -> Optional[str]:
     spoken = re.sub(r"\s+dot\s+", ".", utterance, flags=re.I)
     m = _DOMAIN.search(spoken)
@@ -263,17 +304,23 @@ def domain_guess(utterance: str) -> Optional[str]:
         return m.group(1).lower()
     m = _SITE_WORD.search(spoken)
     if m:
-        spoken_name = m.group(1).strip().lower()
-        # A site name is one or two words ("hacker news"); a longer phrase is not a domain.
-        if spoken_name.split()[0] in ("it", "that", "this", "the") or len(spoken_name.split()) > 2:
+        words = m.group(1).strip().lower().split()
+        # Only a one-word name becomes <name>.com ("go to reddit"). Gluing two words was wrong
+        # more often than right ("rust docs" -> rustdocs.com, "steam store" -> steamstore.com,
+        # even "hacker news" -> hackernews.com); those fall back to a search, which finds them.
+        if len(words) != 1 or words[0] in _NOT_A_SITE:
             return None
-        word = spoken_name.replace(" ", "")
-        return word if "." in word else f"{word}.com"
+        return words[0] if "." in words[0] else f"{words[0]}.com"
     return None
 
 
 def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+# A misheard name ("dicsord" ~ discord, 0.86) is a near-spelling; a different app is not
+# ("photoshop" ~ photos, 0.80: Laya then confidently opened Photos, 2026-10-02).
+_NEAR_SPELLING = 0.84
 
 
 @functools.lru_cache(maxsize=4096)
@@ -302,12 +349,26 @@ def app_shortlist(utterance: str, apps: list[str], n: int = APP_SHORTLIST) -> li
         for sm in matchers:
             for a in aw:
                 sm.set_seq1(a)
-                if sm.real_quick_ratio() >= 0.75 and sm.quick_ratio() >= 0.75:
+                if sm.real_quick_ratio() >= _NEAR_SPELLING and sm.quick_ratio() >= _NEAR_SPELLING:
                     fuzzy = max(fuzzy, sm.ratio())
-        if overlap or fuzzy >= 0.75:
+        if overlap or fuzzy >= _NEAR_SPELLING:
             scored.append((overlap, fuzzy, -len(app), app))
     scored.sort(reverse=True)
     return [a for *_, a in scored[:n]]
+
+
+_COMMAND_START = re.compile(
+    r"^(?:open|launch|start|switch|go|search|google|look|find|type|write|enter|press|hit|scroll|close|"
+    r"copy|paste|undo|save|play|pause|skip|mute|unmute|turn|set|remind|show|take|lock|minimize|"
+    r"maximize|refresh|reload|select)\b", re.I,
+)
+
+
+def looks_compound(utterance: str) -> bool:
+    """Code's backstop for Laya's compound answer: 'X and Y' where Y starts like a command.
+    ('type salt and pepper' stays one command -- 'pepper' is no verb.)"""
+    parts = split_compound(utterance)
+    return len(parts) > 1 and all(_COMMAND_START.match(p) for p in parts[1:])
 
 
 def split_compound(utterance: str) -> list[str]:
@@ -512,6 +573,8 @@ def evaluate(utterance: str, predict: Predict, apps: list[str], foreground: str 
             dom = domain_guess(utterance)
             if dom:
                 args["url"], args["site"] = f"https://{dom}", dom
+            elif not site_fallback_is_grounded(utterance):
+                action, args = "question", {"unplaced_site": utterance}
             else:
                 action = "web_search"  # nothing to navigate to: search for it instead
                 q2 = stage2_questions(action, ctx)
@@ -521,6 +584,9 @@ def evaluate(utterance: str, predict: Predict, apps: list[str], foreground: str 
         tkey, c = pick("text")
         args["engine"], args["query"] = engine, ctx["text"].get(tkey, utterance)
         used.append(c)
+        # (A site Laya couldn't place falls back to a search on purpose: that one is exempt.)
+        if a1["action"]["choice"] == "web_search" and not search_is_grounded(utterance, args["query"]):
+            action, args = "question", {"ungrounded_search": args["query"]}
     elif action == "type_text":
         tkey, c = pick("text")
         args["text"] = ctx["text"].get(tkey, utterance)

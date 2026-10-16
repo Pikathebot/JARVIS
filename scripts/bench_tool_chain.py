@@ -8,7 +8,7 @@ the 4B chained four"), so this drives the real ``llama-server.exe`` with the sam
 uses for the fast slot, offers the real tool schemas from ``app.agent.tools.registry``, and runs
 each model through five tasks that can only be completed with 3-4 sequential calls. Tool results
 come from a small simulated filesystem/web, so every model sees identical inputs and a task's
-success is checked mechanically (did the final write/clipboard/toast carry the right content?).
+success is checked mechanically (did the final write/clipboard/reminder carry the right content?).
 
 Examples (from the repo root, venv python)::
 
@@ -157,9 +157,10 @@ class World:
         self.clipboard = text
         return "Clipboard updated."
 
-    def send_toast(self, title: str = "", message: str = "", **_: Any) -> str:
-        self.toasts.append({"title": title, "message": message})
-        return "Toast shown."
+    def remind_me(self, text: str = "", when: str = "", **_: Any) -> str:
+        # send_toast became remind_me in the tool review (b960d7f); task 5 now ends with a reminder.
+        self.toasts.append({"title": when, "message": text})
+        return f"Reminder set for {when}: {text}"
 
     def web_search(self, query: str, **_: Any) -> str:
         return json.dumps(WEB_RESULTS, indent=1)
@@ -229,8 +230,8 @@ TASKS = [
          "result, and tell me the build number.",
          2, _t4),
     Task("compare-logs-toast",
-         "Which of the log files in the logs folder has more ERROR lines? Read both, then send me a "
-         "toast notification with the answer.",
+         "Which of the log files in the logs folder has more ERROR lines? Read both, then remind me "
+         "of the answer in 10 minutes.",
          3, _t5),
 ]
 
@@ -381,7 +382,7 @@ def jarvis_tools() -> list[dict[str, Any]]:
     from app.agent.tools import registry
 
     names = ("read_file", "list_directory", "write_file", "patch_file", "find_files", "grep_in_files",
-             "get_clipboard", "set_clipboard", "send_toast", "web_search", "fetch_url")
+             "get_clipboard", "set_clipboard", "remind_me", "web_search", "fetch_url")
     out = []
     for n in names:
         schema = convert_tool_to_openai_schema(getattr(registry, n))

@@ -48,9 +48,25 @@ def test_app_shortlist_matches_words_and_misspellings():
     assert len(brain.app_shortlist("steam", ["Steam %d" % i for i in range(40)])) == brain.APP_SHORTLIST
 
 
+def test_a_different_app_is_not_a_near_spelling():
+    # 2026-10-02: "open photoshop" shortlisted Photos (0.80) and Laya opened it at 0.97.
+    assert brain.app_shortlist("open photoshop", APPS + ["Photos"]) == []
+
+
+def test_looks_compound_backstop():
+    assert brain.looks_compound("open notepad and type hello there")
+    assert brain.looks_compound("open chrome then go to youtube")
+    assert not brain.looks_compound("type salt and pepper")
+    assert not brain.looks_compound("search for rock and roll")
+
+
 def test_domain_guess_and_wake_word():
     assert brain.domain_guess("go to stackoverflow dot com") == "stackoverflow.com"
     assert brain.domain_guess("visit nvidia.com") == "nvidia.com"
+    assert brain.domain_guess("go to reddit") == "reddit.com"
+    # Glued words were wrong more often than right: these search instead.
+    for said in ["open the steam store page", "go to the rust docs", "go to hacker news", "go to the docs"]:
+        assert brain.domain_guess(said) is None, said
     assert brain.strip_wake_word("Hey Jarvis, open chrome") == "open chrome"
 
 
@@ -111,8 +127,36 @@ def test_evaluate_unknown_site_falls_back_to_domain_then_search():
     fake = FakeLaya({"action": "open_website", "compound": "B", "site": "other"})
     assert brain.evaluate("go to stackoverflow dot com", fake, APPS).args["url"] == "https://stackoverflow.com"
     fake = FakeLaya({"action": "open_website", "compound": "B", "site": "other", "engine": "google"})
-    plan = brain.evaluate("open that thing we talked about", fake, APPS)
+    plan = brain.evaluate("go to the rust standard library docs", fake, APPS)
     assert plan.action == "web_search"
+    # Not a request to go somewhere, or it refers back: MiniCPM sees the conversation.
+    for said in ["open that thing we talked about", "Can you click into the rising ecstasy server?"]:
+        assert brain.evaluate(said, fake, APPS).action == "question", said
+
+
+def test_search_needs_a_search_cue_and_a_real_query():
+    # The device misses from 2026-10-04: each became a confident Google search.
+    for said, query in [("Search the link for it please.", "it"),
+                        ("Can you download it?", "Can you download it"),
+                        ("I meant the Blackmeat Wukong mod link, not the Hit movie.", "I meant the Blackmeat Wukong mod link"),
+                        ("Can you click into the rising ecstasy server?", "Can you click into the rising ecstasy server")]:
+        assert not brain.search_is_grounded(said, query), said
+    for said, query in [("search youtube for lofi hip hop", "lofi hip hop"),
+                        ("google best ramen near me", "best ramen near me"),
+                        ("look up rtx 5070 laptop price on amazon", "rtx 5070 laptop price"),
+                        ("find llama.cpp on github", "llama.cpp"),
+                        ("show me pictures of red pandas", "red pandas"),
+                        ("Search about the multiplayer mod in Blackmeath, Wukong.", "the multiplayer mod in Blackmeath, Wukong")]:
+        assert brain.search_is_grounded(said, query), said
+
+
+def test_evaluate_ungrounded_search_goes_to_minicpm():
+    fake = FakeLaya({"action": "web_search", "compound": "B", "engine": "google",
+                     "text": lambda crit: next((k for k, v in crit.items() if v == "it"), next(iter(crit)))})
+    plan = brain.evaluate("search the link for it please", fake, APPS)
+    assert plan.action == "question"
+    fake = FakeLaya({"action": "web_search", "compound": "B", "engine": "google"})
+    assert brain.evaluate("can you download it?", fake, APPS).action == "question"
 
 
 def test_evaluate_conversation_needs_one_pass_and_confidence_is_the_minimum():

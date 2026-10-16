@@ -260,6 +260,27 @@ def test_markdown_code_block_mentioning_a_file_is_not_a_write():
     assert cleaned == reply
 
 
+def test_an_announced_argless_read_only_tool_is_run():
+    """MiniCPM's replies to "what's my CPU usage?" in a replay of the 2026-10-04 voice session:
+    it named the tool and stopped, so nothing was measured."""
+    from app.agent.orchestrator import extract_tool_calls_from_text
+
+    for reply in ["Calling get_system_status to measure your CPU usage.",
+                  "Call get_system_status to get the current CPU usage figures.",
+                  "I'll call `get_system_status` to check.",
+                  "Let me use list_processes to see what's running."]:
+        cleaned, calls = extract_tool_calls_from_text(reply)
+        assert len(calls) == 1 and calls[0]["function"]["arguments"] == {}, reply
+        assert cleaned == ""
+    # Mentions inside an answer, tools that need arguments, and anything not at the start stay text.
+    for reply in ["You can call get_system_status any time to see the figures.",
+                  "CPU is at 12%. I used get_system_status for that.",
+                  "Calling kill_process on chrome now.",
+                  "I'll check the current CPU usage for you."]:
+        cleaned, calls = extract_tool_calls_from_text(reply)
+        assert calls == [] and cleaned == reply, reply
+
+
 
 
 # --- fetch_url: where a URL came from, and where redirects lead ---

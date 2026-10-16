@@ -180,6 +180,27 @@ class Settings(BaseSettings):
     )
     kokoro_speed: float = Field(default=1.0, alias="KOKORO_SPEED")
 
+    # Voice mode (app/voice/voice_mode.py, PLAN 4.9): Laya picks a command's action and
+    # arguments, code runs it, MiniCPM (the fast slot) handles talk, doubt and writing. Laya is a
+    # GPU sidecar in its own venv (torch stays out of this one), alive while voice mode is on.
+    laya_python: str = Field(default="tools/laya-venv/Scripts/python.exe", alias="LAYA_PYTHON")
+    laya_server_script: str = Field(default="scripts/laya_server.py", alias="LAYA_SERVER_SCRIPT")
+    laya_model_dir: str = Field(default="tools/laya-voice", alias="LAYA_MODEL_DIR")
+    laya_port: int = Field(default=8004, alias="LAYA_PORT")
+    # A plan below this (min over the answers it used) goes to MiniCPM with tools instead.
+    voice_mode_min_confidence: float = Field(default=0.5, alias="VOICE_MODE_MIN_CONFIDENCE")
+
+    # Speech to text (faster-whisper). Measured 2026-10-03 on 24 Kokoro-spoken commands, word
+    # error rate / p50 per utterance: tiny.en CPU 5.2% / 220 ms (25% when the word onset is
+    # clipped), small.en CPU 4.0% / 1.3 s, large-v3-turbo CPU 1.2% / 7 s, large-v3-turbo GPU
+    # int8_float16 1.2% / 234 ms at ~1.2 GB VRAM. The GPU model only fits next to the fast model,
+    # so it is loaded while voice mode is on and the CPU model serves the rest of the time.
+    whisper_cpu_model: str = Field(default="small.en", alias="WHISPER_CPU_MODEL")
+    whisper_gpu_model: str = Field(default="large-v3-turbo", alias="WHISPER_GPU_MODEL")
+    # ctranslate2 needs cuBLAS 12 / cuDNN 9; the Laya venv's torch ships both. Empty = off.
+    whisper_cuda_dll_dir: str = Field(default="tools/laya-venv/Lib/site-packages/torch/lib",
+                                      alias="WHISPER_CUDA_DLL_DIR")
+
     # The local model runtime. llama.cpp is the only one; routing decisions carry this name.
     model_runtime: str = Field(default="llama_cpp", alias="MODEL_RUNTIME")
 

@@ -66,6 +66,11 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "set_volume": RiskTier.LOW_RISK,
     "set_mute": RiskTier.LOW_RISK,
     "media_control": RiskTier.LOW_RISK,
+    # Input into the focused window (voice mode, PLAN 4.9): runs, except into a terminal or the
+    # Run box, or a shortcut that closes/cuts -- see the argument rules below.
+    "type_text": RiskTier.LOW_RISK,
+    "press_keys": RiskTier.LOW_RISK,
+    "scroll": RiskTier.LOW_RISK,
     # Reading runs when the user's message points at the clipboard (see _CLIPBOARD_CUE_RE);
     # writing it is no riskier than the user pressing Ctrl+C (tool review, 2026-09-30).
     "get_clipboard": RiskTier.CONFIRMATION_REQUIRED,
@@ -703,6 +708,22 @@ def evaluate_tool_permission(
             la_tier, la_reason = evaluate_launch_app_risk(str(target))
             effective_tier = la_tier
             custom_reason = la_reason
+    elif tool_name in ("type_text", "press_keys"):
+        from app.agent.tools.input_control import DESTRUCTIVE_KEYS, SHORTCUT_KEYS, foreground_is_risky
+
+        keys = str(arguments.get("keys") or "").strip().lower().replace(" ", "_")
+        submits = (tool_name == "type_text" and str(arguments.get("press_enter", "")).lower() in ("true", "1")) \
+            or SHORTCUT_KEYS.get(keys, keys) == "enter"
+        if tool_name == "press_keys" and (keys in DESTRUCTIVE_KEYS or SHORTCUT_KEYS.get(keys) in DESTRUCTIVE_KEYS):
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            does = {"close_window": "closes the focused window", "alt+f4": "closes the focused window",
+                    "close_tab": "closes the current tab", "ctrl+w": "closes the current tab",
+                    "cut": "cuts the selection", "ctrl+x": "cuts the selection"}.get(keys, "closes or cuts")
+            custom_reason = f"Pressing {SHORTCUT_KEYS.get(keys, keys)} {does}."
+        elif tool_name == "type_text" or submits:
+            risky = foreground_is_risky()
+            if risky:
+                effective_tier, custom_reason = RiskTier.CONFIRMATION_REQUIRED, risky
     elif tool_name == "kill_process":
         target = arguments.get("pid_or_name") or arguments.get("pid") or arguments.get("name") or arguments.get("process_name") or ""
         kp_tier, kp_reason = evaluate_kill_process_risk(target)

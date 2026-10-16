@@ -22,6 +22,9 @@ public sealed class StreamChatOptions
 
     public bool Ephemeral { get; init; }
 
+    /// <summary>"chat" | "act" when voice mode sent this turn; null otherwise.</summary>
+    public string? VoiceRoute { get; init; }
+
     public string? SystemPrompt { get; init; }
     public List<string>? ApprovedActionIds { get; init; }
     public List<Dictionary<string, object?>>? Attachments { get; init; }
@@ -53,6 +56,7 @@ public sealed class ChatStreamClient
             ApprovedActionIds = options.ApprovedActionIds,
             Attachments = options.Attachments,
             Ephemeral = options.Ephemeral,
+            VoiceRoute = options.VoiceRoute,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/chat/stream")

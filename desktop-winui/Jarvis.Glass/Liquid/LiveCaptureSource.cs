@@ -22,6 +22,7 @@ internal sealed class LiveCaptureSource : IDisposable
 {
     private readonly D3D11Context _d3d;
     private readonly object _gate = new();
+    private bool _disposed; // set under _gate: a frame callback still in flight must not touch D3D after Dispose
 
     private IDirect3DDevice? _direct3DDevice;
     private GraphicsCaptureItem? _item;
@@ -400,7 +401,21 @@ internal sealed class LiveCaptureSource : IDisposable
 
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
-        using var frame = sender.TryGetNextFrame();
+        // Frames arrive on pool threads, so one can be in flight while Dispose (quit, closing
+        // Settings) closes the pool: TryGetNextFrame then throws RO_E_CLOSED, and an exception
+        // escaping a WinRT event handler is a fail-fast (0xc000027b in CoreMessagingXP). That was
+        // the tray-quit crash: three dumps on 2026-10-13, all stowed HRESULT 0x80000013.
+        Direct3D11CaptureFrame? frame;
+        try
+        {
+            frame = sender.TryGetNextFrame();
+        }
+        catch (Exception ex)
+        {
+            Diag($"TryGetNextFrame threw (pool closing?): {ex.Message}");
+            return;
+        }
+        using var _ = frame;
         if (frame is null || Paused)
         {
             return;
@@ -413,6 +428,7 @@ internal sealed class LiveCaptureSource : IDisposable
 
             lock (_gate)
             {
+                if (_disposed) return;
                 EnsureSharedTexture(desc);
                 // The capture callback fires on its own thread pool thread while the render loop
                 // also uses this same immediate context - both are serialized through _gate since
@@ -524,6 +540,7 @@ internal sealed class LiveCaptureSource : IDisposable
 
     public void Dispose()
     {
+        lock (_gate) _disposed = true; // waits out a copy in flight; later frames bail
         try { _session?.Dispose(); } catch { /* best-effort */ }
         _session = null;
 

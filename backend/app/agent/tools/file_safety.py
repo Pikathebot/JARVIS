@@ -10,7 +10,7 @@ import logging
 import os
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -35,8 +35,13 @@ def backup_file(path: Path, ws_root: Path) -> Optional[Path]:
         rel = path.relative_to(ws_root) if is_inside(path, ws_root) else Path("_outside", *[
             part.replace(":", "") for part in path.parts if part not in ("\\", "/")
         ])
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        target = backup_dir(ws_root) / rel.parent / f"{rel.name}.{stamp}.bak"
+        when = datetime.now()
+        target = backup_dir(ws_root) / rel.parent / f"{rel.name}.{when:%Y%m%d-%H%M%S-%f}.bak"
+        # Windows' clock can hand two quick backups the same microsecond: step past a taken name
+        # (still sorts in order) rather than overwrite the older copy.
+        while target.exists():
+            when += timedelta(microseconds=1)
+            target = target.with_name(f"{rel.name}.{when:%Y%m%d-%H%M%S-%f}.bak")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
         old = sorted(target.parent.glob(f"{rel.name}.*.bak"))

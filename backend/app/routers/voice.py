@@ -9,6 +9,7 @@ from app.persona import persona_manager
 from app.voice.session import VoiceSessionManager, VoiceState
 from app.voice.synthesizer import AVAILABLE_NEURAL_VOICES, VoiceSynthesizer
 from app.voice.transcriber import AudioTranscriber
+from app.voice.voice_mode import get_voice_mode
 
 logger = logging.getLogger("jarvis.routers.voice")
 
@@ -46,6 +47,15 @@ class SayRequest(BaseModel):
         default=True,
         description="Apply the persona's speech shaping (strip markdown, cap length)",
     )
+
+
+class VoiceModeRequest(BaseModel):
+    enabled: bool
+
+
+class VoiceCommandRequest(BaseModel):
+    text: str
+    session_id: str = Field(default="default")
 
 
 class VoiceStateRequest(BaseModel):
@@ -86,9 +96,27 @@ async def listen(
         session_id=session_id,
         transcript=raw_transcript,
         greeting=persona.greeting,
+        spoken_seconds=float(result.get("duration_seconds") or 0.0),
     )
 
     payload = decision.to_dict()
+    payload["voice_route"] = None
+    payload["voice_plans"] = []
+    mode = get_voice_mode()
+    if mode.enabled and decision.should_respond and decision.query:
+        # Voice mode: Laya decides. A direct action runs here and comes back as a line to say
+        # (should_respond false, nothing for the chat to do); talk, questions and doubt go back
+        # to the client as a chat turn carrying voice_route for MiniCPM.
+        outcome = await mode.handle(decision.query, session_id)
+        payload["voice_plans"] = outcome.plans
+        if outcome.route:
+            payload["query"], payload["voice_route"] = outcome.query, outcome.route
+        else:
+            payload["should_respond"] = False
+            payload["speak_immediately"] = outcome.spoken
+            payload["reason"] = "voice_mode_action"
+            if outcome.awaiting_confirmation:
+                voice_sessions.arm_follow_up(session_id)  # the yes/no needs no wake word
     payload["transcription_error"] = result.get("error")
     payload["duration_seconds"] = result.get("duration_seconds", 0.0)
     payload["session"] = voice_sessions.get(session_id).to_dict()
@@ -175,6 +203,29 @@ async def arm_follow_up(session_id: str) -> dict[str, Any]:
     wake word.
     """
     return voice_sessions.arm_follow_up(session_id).to_dict()
+
+
+@router.get("/mode", response_model=dict)
+async def voice_mode_status() -> dict[str, Any]:
+    """Voice mode (PLAN 4.9): on/off, a swap in progress, the loaded model, the Laya sidecar."""
+    return get_voice_mode().status()
+
+
+@router.post("/mode", response_model=dict)
+async def set_voice_mode(req: VoiceModeRequest) -> dict[str, Any]:
+    """Start turning voice mode on (main model out, MiniCPM + Laya + GPU Whisper in) or off (back
+    to main). Returns at once with ``busy`` set; poll GET /mode until ``busy`` is empty."""
+    return get_voice_mode().start(req.enabled)
+
+
+@router.post("/command", response_model=dict)
+async def voice_command(req: VoiceCommandRequest) -> dict[str, Any]:
+    """A typed utterance through voice mode's brain, exactly as a spoken one after the wake word
+    -- for testing commands without the microphone. Voice mode must be on."""
+    mode = get_voice_mode()
+    if not mode.enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Voice mode is off.")
+    return (await mode.handle(req.text, req.session_id)).to_dict()
 
 
 @router.get("/hands-free", response_model=dict)

@@ -54,7 +54,8 @@ public sealed partial class HudWindow : Window
                 DispatcherQueue.TryEnqueue(UpdateVoiceVisuals);
             }
         };
-        VoiceViewModel.CommandReceived += query => DispatcherQueue.TryEnqueue(async () => await HandleCommandAsync(query));
+        VoiceViewModel.CommandReceived += (query, route) => DispatcherQueue.TryEnqueue(async () => await HandleCommandAsync(query, route));
+        Services.VoiceModeService.Changed += () => DispatcherQueue.TryEnqueue(UpdateVoiceModeButton);
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -151,6 +152,28 @@ public sealed partial class HudWindow : Window
         UpdateVoiceVisuals();
     }
 
+    private async void VoiceModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var turnOn = !Services.VoiceModeService.Enabled;
+        DispatcherQueue.TryEnqueue(() => CaptionText.Text = turnOn ? "Switching to voice mode…" : "Bringing the main model back…");
+        await Services.VoiceModeService.SetAsync(_api, turnOn);
+        if (turnOn && Services.VoiceModeService.Enabled && !VoiceViewModel.IsActive)
+        {
+            await VoiceViewModel.StartAsync();
+        }
+        DispatcherQueue.TryEnqueue(() => CaptionText.Text = Services.VoiceModeService.Error is { Length: > 0 } err
+            ? err : Services.VoiceModeService.Enabled ? "Voice mode on" : "Main model back");
+        UpdateVoiceVisuals();
+    }
+
+    private void UpdateVoiceModeButton()
+    {
+        var on = Services.VoiceModeService.Enabled;
+        var switching = Services.VoiceModeService.Switching;
+        VoiceModeButton.IsEnabled = !switching;
+        VoiceModeIcon.Foreground = Themes.JarvisTheme.Brush(switching ? "LabelTertiary" : on ? "Accent" : "LabelSecondary");
+    }
+
     private void UpdateVoiceVisuals()
     {
         var active = VoiceViewModel.IsActive;
@@ -169,7 +192,7 @@ public sealed partial class HudWindow : Window
         MicButton.RenderTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { ScaleX = scale, ScaleY = scale, CenterX = 26, CenterY = 26 };
     }
 
-    private async Task HandleCommandAsync(string query)
+    private async Task HandleCommandAsync(string query, string? voiceRoute = null)
     {
         List<string>? approved = null;
         if (_pendingConfirmations.Count > 0)
@@ -204,7 +227,7 @@ public sealed partial class HudWindow : Window
         {
             _lastQuery = query;
         }
-        var response = await SendAsync(query, approved);
+        var response = await SendAsync(query, approved, voiceRoute);
         if (!string.IsNullOrWhiteSpace(response.Spoken ?? response.Response))
         {
             await VoiceViewModel.SpeakAsync(response.Spoken ?? response.Response);
@@ -261,13 +284,14 @@ public sealed partial class HudWindow : Window
     /// <summary>Non-streaming chat turn for the HUD — mirrors sendChatApi() in api.ts. The
     /// LISTENING/GO AHEAD/WORKING/SPEAKING state label is driven by VoiceViewModel.State via
     /// UpdateVoiceVisuals, not set directly here.</summary>
-    public async Task<ChatResponse> SendAsync(string message, List<string>? approvedActionIds = null, CancellationToken ct = default)
+    public async Task<ChatResponse> SendAsync(string message, List<string>? approvedActionIds = null, string? voiceRoute = null, CancellationToken ct = default)
     {
         var response = await _api.SendChatAsync(new SendChatRequest
         {
             Message = message,
             SessionId = HudSessionId,
             ApprovedActionIds = approvedActionIds is { Count: > 0 } ? approvedActionIds : null,
+            VoiceRoute = voiceRoute,
         }, ct).ConfigureAwait(false);
         // A turn that asks for approval replaces whatever was pending: the backend re-evaluates
         // the same tool call on resubmission and its earlier token is no longer the one to send.

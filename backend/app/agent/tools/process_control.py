@@ -14,7 +14,7 @@ _CLOSE_WAIT_SECONDS = 5.0
 
 def list_processes(filter_name: Optional[str] = None, sort_by: str = "memory", group: bool = True) -> str:
     """
-    List running programs, one row per app with its process count, memory and CPU % (share of the whole CPU, as Task Manager shows it); sort_by="cpu" when the question is about CPU use, group=false for one row per PID.
+    List running programs, one row per app with its process count, memory and CPU % (share of the whole CPU, as Task Manager shows it): for *which programs* use the most (sort_by="cpu" for CPU), group=false for one row per PID. The machine's overall CPU/RAM/GPU usage comes from get_system_status, not from adding these up.
 
     Args:
         filter_name: Optional process name substring to filter results (case-insensitive).

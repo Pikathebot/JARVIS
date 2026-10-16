@@ -395,6 +395,13 @@ public sealed class JarvisApiClient
     public Task<HandsFreeStatus> FetchHandsFreeStatusAsync(CancellationToken ct = default) =>
         GetAsync<HandsFreeStatus>("/api/voice/hands-free", ct);
 
+    public Task<VoiceModeStatus> FetchVoiceModeAsync(CancellationToken ct = default) =>
+        GetAsync<VoiceModeStatus>("/api/voice/mode", ct);
+
+    /// <summary>Voice mode on/off. Swaps the chat model (and starts/stops Laya): ~10-20 s.</summary>
+    public Task<VoiceModeStatus> SetVoiceModeAsync(bool enabled, CancellationToken ct = default) =>
+        PostAsync<Dictionary<string, bool>, VoiceModeStatus>("/api/voice/mode", new() { ["enabled"] = enabled }, ct);
+
     // ==========================================
     // Ambient awareness
     // ==========================================

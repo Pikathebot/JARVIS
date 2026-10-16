@@ -100,7 +100,8 @@ public partial class ChatViewModel : ObservableObject
         _dispatcher = dispatcher;
     }
 
-    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null)
+    /// <param name="voiceRoute">Voice mode's route for a spoken turn ("chat" | "act"); null when typed.</param>
+    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null, string? voiceRoute = null)
     {
         var hasAttachments = attachments is { Count: > 0 };
         if (string.IsNullOrWhiteSpace(content) && !hasAttachments)
@@ -142,7 +143,7 @@ public partial class ChatViewModel : ObservableObject
             ["path"] = a.Path,
         }).ToList();
 
-        await RunStreamAsync(content, new List<string>(), attachmentPayload).ConfigureAwait(false);
+        await RunStreamAsync(content, new List<string>(), attachmentPayload, voiceRoute).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -492,7 +493,7 @@ public partial class ChatViewModel : ObservableObject
         };
     }
 
-    private async Task RunStreamAsync(string message, List<string> approvedActionIds, List<Dictionary<string, object?>>? attachments = null)
+    private async Task RunStreamAsync(string message, List<string> approvedActionIds, List<Dictionary<string, object?>>? attachments = null, string? voiceRoute = null)
     {
         _abort?.Cancel();
         _abort = new CancellationTokenSource();
@@ -532,6 +533,7 @@ public partial class ChatViewModel : ObservableObject
                 Ephemeral = IsEphemeral,
                 ApprovedActionIds = approvedActionIds.Count > 0 ? approvedActionIds : null,
                 Attachments = attachments,
+                VoiceRoute = voiceRoute,
                 Callbacks = callbacks,
             }, ct).ConfigureAwait(false);
         }

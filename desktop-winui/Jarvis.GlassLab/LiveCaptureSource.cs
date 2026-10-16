@@ -328,7 +328,18 @@ internal sealed class LiveCaptureSource : IDisposable
 
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
-        using var frame = sender.TryGetNextFrame();
+        // A frame in flight while Dispose closes the pool throws RO_E_CLOSED here; escaping a WinRT
+        // event handler that is a fail-fast (Jarvis's tray-quit crash, 2026-10-13).
+        Direct3D11CaptureFrame? frame;
+        try
+        {
+            frame = sender.TryGetNextFrame();
+        }
+        catch (Exception)
+        {
+            return;
+        }
+        using var _ = frame;
         if (frame is null)
         {
             return;

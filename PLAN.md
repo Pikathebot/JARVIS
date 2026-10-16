@@ -625,8 +625,36 @@ in chat doesn't stick.
 
 **b2. Settings window: done 2026-10-02** (device-checked; see `docs/MILESTONES.md`).
 
-**c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** (raised by the user
-2026-09-28): https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF
+**c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** -- **built and measured
+2026-10-14, not switched (the user decides; feel/persona unverified on device).**
+`models/defiant-fable-9b/Defiant-Fable-9B-IQ3_XXS.gguf`, 3745 MiB: requantized from the Q8_0
+(sha256 matches HF) with our own imatrix (`calibration.txt`: 350k chars of chat/tool turns from
+the DB + 350k of backend/C# code; docs kept out for the PPL test), output Q5_K and embeddings
+Q3_K like the current UD-IQ3_XXS. Results in `models/defiant-fable-9b/ab/`:
+PPL on repo prose (8x4k) 18.33 +/- 0.44 vs main 18.56 +/- 0.45 (same); llama-bench ABAB tg128
+53.7/55.2 vs 53.2/51.9 tok/s, pp512 1739/1849 vs 1776/1695 (same); `bench_tool_chain.py
+--thinking --ctx 32768` 5/5 in both orders for both, same chains and token counts, VRAM after
+load 4242-4254 vs 4329-4334 MiB; our `mmproj-Q8_0.gguf` works with it (same screenshot
+described as well or better). To switch: pick it for the main slot in Models (`mmproj-Q8_0.gguf` is
+already copied beside it, so it keeps vision). Over-refusal A/B (10 legitimate-but-edgy prompts, Jarvis
+persona, thinking on; `ab/refusal_prompts.json`, `ab/refusal_results.json`): the censored models
+(UD-IQ3_XXS, Unsloth UD-Q4_K_XL) never refused outright but thought through the whole 4096-token
+budget and answered *nothing* on villain/roast/dark jokes (+ medicine for the Q4), 130-150 s
+each; Defiant IQ3 and a Defiant Q4_K_M we made answered all 10 in 3-18 s. Q4s were more accurate
+(IQ3s of both families invented menus/commands), but ~6.5 GB with the projector doesn't fit
+beside the desktop. Defiant IQ3 once claimed telemetry it never measured ("I have queried the
+machine's vitals: 3.2 GB VRAM") -- **to check later** (same bait x10 on both IQ3s) before trusting
+it. Why the censored models went silent (`ab/refusal_reasoning.json`): not safety deliberation
+(2-6 policy words in ~15k chars) but a thinking loop -- re-checking Jarvis's own
+TOOL_PROTOCOL_RULES one by one ("*Wait, checking the rule:* ... Not applicable") and redrafting.
+Defiant barely thinks at all (0-1k chars per prompt vs 2-16k), hence fast and loop-free -- and
+possibly weaker on genuinely hard reasoning (untested; tool chains were equal). **Open issue
+either way: the backend sends no max_tokens, so a thinking loop on main runs until the 32k
+context fills** -- a per-request cap (or llama-server's reasoning budget) is worth adding.
+Recommended: Defiant IQ3 as main, current main kept as fallback. 2026-10-14 the Q8_0 and both
+Q4s went to the Recycle Bin (user: delete what we don't use). (`bench_tool_chain.py` still asked for `send_toast`, replaced by `remind_me` in batch 4:
+task 5 now ends with a reminder.)
+Original plan (raised by the user 2026-09-28): https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF
 -- a Qwen3.5-9B multi-fine-tune merge, "Heretic" (refusals removed), same architecture, so it
 runs on our llama-server as is.
 - **Its files don't fit the budget as shipped:** every quant keeps the output tensor at 16-bit
@@ -738,14 +766,198 @@ tools*, a **Laya** model fine-tuned for computer use and for Jarvis's own use ca
   training filler, i.e. template memorisation. The calibration temperature hit its 5.0 cap.
   The held-out set shares the templates' style, so real accuracy is lower: the true test is
   the user's own utterances once voice mode runs (log every plan).
+- **Built 2026-10-02 (steps 3-4), unverified on device:** Laya sidecar
+  (`scripts/laya_server.py` in the Laya venv, `app/voice/laya_sidecar.py`, port 8004, fp16:
+  same 96.7%, 86 ms, ~1.0 GB VRAM whole process; its VRAM is added to the governor's "ours");
+  `app/voice/voice_mode.py` (enable = switch_model("fast") + Laya, disable = back to main;
+  plan -> permission gate -> tool; spoken yes/no for asks; compound with a code backstop
+  (`looks_compound`) and a wait for the opened window before typing into it; compose written
+  by MiniCPM and typed; small talk -> route chat, questions/doubt/unplaced apps -> route act;
+  every plan logged to `backend/data/voice_plans.jsonl`); new tools `type_text`, `press_keys`,
+  `scroll` (`agent/tools/input_control.py`, gated: terminal/Run box focused or close/cut keys
+  ask); `/api/voice/mode` (GET/POST), `/api/voice/command` (typed test path), `/listen` runs
+  the brain when voice mode is on; `voice_route` on chat requests -> fast model, tools kept,
+  spoken-reply note on the user turn; any turn while voice mode is on runs on fast (never
+  swaps the 9B back in). Client: lightning button next to the mic (main window) and in the
+  HUD (`Services/VoiceModeService`), mic starts with voice mode, `speak_immediately` spoken
+  for voice-mode actions. Live dry run with real Laya (tools recorded, not run): 19 commands
+  right incl. confirm/cancel, 75-180 ms per command; fixed there: "open photoshop" opened
+  Photos (near-spelling bar 0.75 -> 0.84) and a missed compound.
+  **To check on device:** the swap times, the governor not evicting MiniCPM with Laya up,
+  typing landing in the right window, Kokoro saying the lines, MiniCPM's tool use on
+  "act" turns, and the yes/no flow by voice. Not done: Laya's labels for "addressed?";
+  compose can't see what it replies to (no screen/clipboard context yet).
+- **First device test 2026-10-03: speech to text was the weak link** (`voice_plans.jsonl`:
+  "I follow there", "You're a studio for low-fi."). Two causes, measured on 24 Kokoro-spoken
+  commands: the client started recording on the frame that crossed the threshold, so each
+  word's onset was lost (tiny.en WER 5% whole -> 25% with 150 ms cut: "pause" -> "How's",
+  "mute" -> "meet"); and the model was tiny.en. Fixed, **unverified on device**: 300 ms
+  pre-roll in `VoiceViewModel` (cleared while Jarvis speaks); `WHISPER_CPU_MODEL` default
+  small.en (4%, 1.3 s); voice mode loads `WHISPER_GPU_MODEL` large-v3-turbo on the GPU
+  (1.2%, 234 ms p50, ~1.2 GB VRAM, counted as ours for the governor), cuBLAS/cuDNN borrowed
+  from the Laya venv's torch (`WHISPER_CUDA_DLL_DIR`); it unloads when voice mode ends.
+  Synthetic voices are cleaner than the laptop mic: the real check is the user's utterances.
+- **Second device test 2026-10-04: speech to text fixed** (large-v3-turbo heard every command;
+  Laya 60-150 ms; no governor eviction; open/focus/search ran and Kokoro spoke; spoken yes/no
+  worked). Misses (`voice_plans.jsonl` + `backend.log`), fixed 2026-10-13/14, **unverified on
+  device**:
+  1. Follow-ups became confident Google searches ("search the link for **it**" -> "it", "can
+     you download it?", "I meant the mod, not the movie", "can you click into the X server?").
+     A search now needs a search cue and a real query (`search_is_grounded`); an unplaced site
+     falls back to a search only for "go to/open/visit ..." without it/that
+     (`site_fallback_is_grounded`); anything else goes to MiniCPM, which sees the conversation.
+  2. "Close it" pressed Alt+F4 in whatever had focus at the *yes* (16 s later) and asked in
+     jargon. Now the window is pinned when asking ("Close Visual Studio Code?"), closed by
+     handle (WM_CLOSE), "Closed Visual Studio Code." / "... is already closed.".
+  3. "What's the time?" -> MiniCPM said it couldn't tell (the time was in its context): plain
+     time/date questions are answered in code (`clock_answer`).
+  4. "Open the HUD" -> MiniCPM called `look_at_screen` (no vision model in voice mode): voice
+     turns don't offer it. Opening Jarvis's own HUD by voice isn't a command yet.
+  5. Wake word (user's rule, 2026-10-13): talking often needs no wake word, a long quiet does.
+     Follow-up window grows 15 -> 45 -> 90 s while the conversation continues, drops back after
+     a lapse; checked against when the utterance *started* (`VoiceSessionManager`).
+  6. Turning voice mode on took 64 s (swap 18 + Laya cold start 38 + Whisper 6, in series);
+     Laya now starts alongside the swap (expect ~45 s). Its VRAM is now its own count (torch
+     reserved from /health + 200 MiB context): the card-wide before/after read 2694 MiB once
+     MiniCPM loaded alongside.
+  7. **The first switch always "timed out"** (user, 2026-10-14): the app's requests give up at
+     30 s and the switch takes 45-65 s, so the app showed voice mode off while the backend went
+     on to turn it on (a second click "worked"). POST /api/voice/mode now returns at once with
+     `busy` and the app polls GET until it clears (10 min cap). On 2026-10-14 the first switch
+     also downloaded large-v3-turbo (1.6 GB, ~3 min): HF_HOME had moved to `D:\HF_HUB`, a one-off.
+  8. `domain_guess` glued words ("steam store page" -> steamstore.com, "rust docs" ->
+     rustdocs.com): only a one-word name becomes `<name>.com` now; the rest search.
+  9. "What's the CPU percentage?" -> per-process list. Replayed against MiniCPM with the device's
+     persona, history and 22 tools (`:8011`, 8 runs per question): `list_processes`' own
+     description ("sort_by=cpu when the question is about CPU use") sent 20/24 total-usage
+     questions to it. New description: get_system_status 16/24 + 2/24 rescued by a new
+     fallback (a reply that *opens* by announcing a read-only no-arg tool runs it,
+     `_ARGLESS_ANNOUNCEMENT`); the other 6 offered to check or made a number up. So in voice
+     mode plain CPU/RAM/GPU/temperature questions are answered in code from a fresh sample
+     (`status_answer`, like the clock); "which apps use the most CPU" still goes to MiniCPM
+     (list_processes 8/8).
 
 ### 4.10 Workspace location: done 2026-10-02 (device-checked; see `docs/MILESTONES.md`)
 
 Open: changing an existing workspace's location from the UI.
 
-### 4.11 Crash on Quit from the tray (seen 2026-10-02 09:37 and 09:53, unverified)
+### 4.11 Crash on Quit from the tray: fixed 2026-10-14, **unverified on device**
 
-Windows logged `0xc000027b` in CoreMessagingXP.dll both times the user quit Jarvis from the tray
-menu -- the same signature as the Settings-window close crash, i.e. an exception thrown from a
-XAML event handler during teardown. The GlassHost disposal guards added for that may have fixed
-it too; check the Application event log after a few tray quits before digging further.
+Windows logged `0xc000027b` in CoreMessagingXP.dll 9 times 2026-10-02..10-13 (the GlassHost
+disposal guards didn't cover it). The three crash dumps of 2026-10-13
+(`%LOCALAPPDATA%\CrashDumps\Jarvis.App.exe.*.dmp`, read with a minidump script: no debugger here)
+all carry one stowed exception, HRESULT `0x80000013` RO_E_CLOSED, raised on a thread already gone
+and failed-fast on the UI thread's message loop. Cause: `LiveCaptureSource.OnFrameArrived` (a
+free-threaded capture pool, frames on pool threads) called `TryGetNextFrame()` outside its
+try, so a frame in flight while the pool closed threw out of a WinRT event handler = fail-fast.
+And `ExitApp` never closed a window, so `GlassHost.Dispose` (capture/render teardown) never ran
+before `Application.Exit()`. Fixed: the call is guarded (also in GlassLab's copy); Dispose marks
+the source disposed under the copy lock so a late frame can't touch freed D3D; `ExitApp` closes
+HUD and main (-> Settings) first and logs each step (`exit: ...` in `jarvis-app.log`) -- a crash
+that survives this names its step there. Check: a few tray quits (with Settings opened once), then
+no new 1000 event / dump.
+
+### 4.12 MoE expert streaming: MiniCPM-V 4.7 35B-A3B (ON HOLD 2026-10-16, moved to `E:\JARVIS-MoE\`)
+
+**On hold by the user (2026-10-16), mid Phase 2.** Before going further, check that the 35B actually beats
+the 9B on Jarvis's real work (tool chains, voice requests, vision). Everything was moved off D: to
+`E:\JARVIS-MoE\` (copies verified file-for-file):
+- `llama.cpp-les\`: the fork, with Phase 2 uncommitted (new `src/llama-moe-io-win.{h,cpp}`, `src/CMakeLists.txt`, `src/llama-moe-slot.cpp`);
+- `models\minicpm-v4.7-35b-a3b\`;
+- `tools\llama-cpp-les\`: Phase 1 binaries;
+- `toolchain\{CUDA\v12.9,cmake,ninja}`;
+- `docs\MOE_*.md`: the five specs.
+
+The D: paths below are where things were before the move. To resume, move them back or fix the build
+script's paths (CUDA, CMake, Ninja).
+
+Phase 2 measurements so far (engine build, unbuffered + pinned staging, 4 threads):
+- KLD vs the full GGUF: 0.000000, top-1 100%.
+- Prefill reads 3.48 GB/s (legacy 1.28-1.43); 11.9 s/pass (legacy 28-33).
+- All-miss decode 5.9 tok/s steady, ≈0.81-0.88× the bandwidth model; skip-read ceiling now 54 tok/s.
+- Standby list flat.
+- 8 threads no better.
+- The 500-token RAM A/B was interrupted.
+
+Goal: run OpenBMB's 35B-A3B MoE the way they run it on iPhone/iPad. The 10,240 routed experts stay on the
+NVMe; a fixed VRAM cache holds the hot ones; the next layer's router is applied to the current layer's hidden
+state to predict which experts to keep and prefetch ("Lookahead Expert Scheduling", LES).
+
+OpenBMB's code (tc-mb/llama.cpp-omni, `src/llama-moe-slot.cpp`) only works with Apple unified memory, so we
+port it to CUDA/Windows in a local fork, `D:\src\llama.cpp-les`. Specs:
+- `docs/MOE_STREAMING_SPEC.md`: overview, estimate model, VRAM table, prior-art survey.
+- `docs/MOE_CUDA_SLOT_BANK_SPEC.md`
+- `docs/MOE_WINDOWS_IO_SPEC.md`
+- `docs/MOE_BENCH_PROTOCOL.md`
+- `docs/MOE_JARVIS_INTEGRATION_SPEC.md`
+
+User decisions (2026-10-16):
+- no RAM upgrade;
+- weights = OpenBMB `mix_q3gud_im` (15.5 GB), split by us;
+- opt-in main model, the 9B stays the default;
+- Claude runs the toolchain installers on D: (each approved at the prompt);
+- the fork stays local, never pushed.
+
+Estimate (to be replaced by measurements): decode ~18-21 tok/s central (11 pessimistic); TTFT ~3 s per
+tool-result round trip and ~8-10 s for a cold 6k prompt. TTFT is the main risk.
+
+Gates (numbers in the bench protocol):
+- **G0 (Phase 0):** CUDA 12.9 + CMake/Ninja installed; fork built into `tools/llama-cpp-les/` and running
+  the 9B within ±5%; weights downloaded and split; I/O microbench and stock `-ncmoe` baselines measured.
+  No-go if random-read bandwidth (3 in flight, 1.3 MB) < 1.5 GB/s or sequential < 3 GB/s.
+- **G1 (Phase 1):** CUDA slot bank correct with every expert a miss. KLD < 0.005, top-1 ≥ 99% vs the full
+  GGUF; skip-read ceiling ≥ 40 tok/s.
+- **G2 (Phase 2):** Windows I/O engine at ≥ 0.8× the bandwidth model, no standby-list growth.
+- **G3 (Phase 3), go/no-go:** persistent per-layer windows plus lookahead give ≥ 12 tok/s at 4k context with
+  hit rate ≥ 68%. Below 10 tok/s → stop.
+- **G4 (Phase 4), go/no-go:** TTFT ≤ 1.0 s (n ≤ 32 new tokens), ≤ 3.5 s (n ≤ 512); cold 6k ≤ 15 s.
+  n = 512 over 5 s → the user decides whether it ships at all.
+- **Phase 5:** Jarvis launch profile, governor CPU/RAM exemption, bench `--server`, TTFT bench; pytest
+  green; UI switch ×5 with no reload loop.
+- **Phase 6 (optional, each gated):** host L2 tier, LFU prewarm, lossy expert dropping, DSpark, DirectStorage.
+
+Needs the user: approving the installers and the ~16.6 GB download; closing Jarvis during benches;
+device checks at G3/G4/Phase 5; the call if a go/no-go gate fails.
+
+**Phase 0 results (2026-10-16, G0 PASS).** Fork `D:\src\llama.cpp-les`, branch `jarvis-cuda`, commit `6cf531e`
+(local, never pushed): restored the `llama-server` target (reverted tc-mb b9d15b8), a `_WIN32` iovec/ssize_t
+shim so `llama-moe-slot.cpp` compiles, fixed `tools/moe/experts.py verify`, added `moe-iobench`. Toolchain:
+CUDA 12.9.86 (redist zips) at `D:\CUDA\v12.9`, CMake/Ninja under `D:\tools`. Binaries in `tools\llama-cpp-les\`.
+Weights in `models\minicpm-v4.7-35b-a3b\`: full GGUF (kept as the G1 reference), mmproj f16, `experts\`
+(13.84 GB, verified), stripped GGUF (1.55 GiB). The GGUF has **no MTP layer** (40 layers, 256 experts, top-8,
+all Q3_K, expert record 1,351,680 B, 4 KiB-aligned).
+- I/O: 3 reads in flight 3.30 GB/s, peak 3.75 at 8; sequential 3.95 GB/s (~88 ms/layer); H2D pinned ~12.4 GB/s.
+- Fork vs prebuilt on the 9B (bare server, same flags): 49.5 vs 50.7 tok/s, -2.5%. (The 25-29 tok/s figure is
+  Jarvis end to end; the bare server does ~50.)
+- Stock `-ngl 99 -ncmoe 40` mmap on the 35B: warm decode 16.7 / 29.0 / 31.9 tok/s after 32 / 512 / 4k-token
+  prompts, prompt time 1.0 / 13.1 / 32.3 s (cold: 3.8 / 30.1 / 50.6 s). But its working set reaches 10.5 GB and
+  free RAM falls to ~110 MB: **the user found the PC unusable during the run and apps died out of memory.**
+  So stock `-ncmoe` is ruled out; LES is what we build, and its case is RAM (~3 GB) and TTFT, not decode speed.
+- The Phase 1 "`readv_span` reads only `cur[0]`" bug is not real (the loop reads every family, slowly, one
+  call at a time under a global lock). Dropped from Phase 1; Phase 2 replaces that path anyway.
+
+User decisions 2026-10-16 (after Phase 0): G3's 12 tok/s floor stays; 12-16 tok/s is acceptable. Speculative
+decoding uses OpenBMB's DSpark draft in place of MTP (`dspark-MiniCPM-V-4_7-35B-A3B-F16.gguf`, 789 MB, same HF
+repo, not downloaded; fork flag `--spec-type draft-dspark`), in Phase 6.
+
+**Phase 1 results (2026-10-16, G1 passed on correctness; ceiling 6% short).** Fork changes (commit `eb1eb25` on
+`jarvis-cuda`, local only): `make_alloc_only_buft` returns the CUDA default buft when a GPU can't wrap host memory, so the
+stripped GGUF loads with the slot bank in VRAM; the slot runtime detects non-host-addressable slots ("upload
+mode"), zeroes the bank once, reads each expert's packed span in one call into per-thread staging and copies
+each family in with `ggml_backend_tensor_set`; lookahead prefetch and A2 matmul split are forced off in upload
+mode (Phase 3 brings prefetch back with the copy backend and `slot_step` guard). `attach_backends`/pinned
+staging were not needed yet; they come with Phase 2's async ring.
+- **The trap found:** CUDA's fused topk-moe kernel fires in our graph (the CPU slot op changes the split
+  layout) but never on real batches in the stock graph, and when it fires the output drifts (KLD 0.010, top-1
+  94%). With only that fusion off, ours is bit-identical to the full GGUF (KLD 0.000, top-1 100%, also with
+  bank 320, and deterministic run to run). The runtime now sets `GGML_CUDA_NO_TOPK_MOE=1` in upload mode
+  (new switch in `ggml-cuda.cu`). Why the fused kernel drifts there is not understood; revisit if decode
+  speed needs the fusion back.
+- Greedy 5 × 256: 0/5 identical to the `-ncmoe 40` reference, but stock `-ncmoe 30` vs `-ncmoe 40` is 1/5 too
+  (at batch 1 the reference runs experts on the CPU). Divergence is late and synonym-level. Accepted.
+- Decode: all-miss 7.1-7.7 tok/s (gate ≥ 3). Skip-read ceiling 37.6 tok/s (gate 40; 39.3 with the fusion on;
+  `-t 1` no better) -- the cost is the 40 CPU/GPU round trips per token, which Phase 3 can't remove. With
+  12-16 tok/s as the target it leaves plenty of headroom, so not chased.
+- Run flags that matter: `-fit off` (fit allocates nothing and doesn't know the bank), `-ngl 99 -np 1`,
+  `--moe-slot-bank 256`, and `D:\CUDA\v12.9\bin` on PATH when running from `build\bin` (0xC0000135 otherwise).
+- Results rows: `docs/MOE_BENCH_PROTOCOL.md` §6. Next: Phase 2 (Windows I/O engine, gate G2).

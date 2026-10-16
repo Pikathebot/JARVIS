@@ -125,7 +125,9 @@ public sealed partial class MainWindow : Window
                 DispatcherQueue.TryEnqueue(UpdateVoiceStateText);
             }
         };
-        VoiceViewModel.CommandReceived += query => DispatcherQueue.TryEnqueue(async () => await HandleVoiceCommandAsync(query));
+        VoiceViewModel.CommandReceived += (query, route) => DispatcherQueue.TryEnqueue(async () => await HandleVoiceCommandAsync(query, route));
+        Services.VoiceModeService.Changed += () => DispatcherQueue.TryEnqueue(UpdateVoiceModeButton);
+        _ = Services.VoiceModeService.RefreshAsync(api);
         ChatViewModel.MessageCompleted += finished =>
         {
             if (VoiceViewModel.IsActive)
@@ -162,6 +164,7 @@ public sealed partial class MainWindow : Window
         SessionsViewModel.SessionSelected += async sessionId =>
         {
             CloseSidebarOverlay();
+            ShowPagesIfIdle();
             await ChatViewModel.LoadSessionAsync(sessionId);
         };
         ProjectsViewModel.ActiveProjectChanged += project =>
@@ -1119,6 +1122,30 @@ public sealed partial class MainWindow : Window
         UpdateVoiceStateText();
     }
 
+    /// <summary>Voice mode on/off (PLAN 4.9). Turning it on also turns the mic on: the mode is
+    /// for talking.</summary>
+    private async void VoiceModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var turnOn = !Services.VoiceModeService.Enabled;
+        await Services.VoiceModeService.SetAsync(_api, turnOn);
+        if (turnOn && Services.VoiceModeService.Enabled && !VoiceViewModel.IsActive)
+        {
+            await VoiceViewModel.StartAsync();
+        }
+        UpdateVoiceStateText();
+    }
+
+    private void UpdateVoiceModeButton()
+    {
+        var on = Services.VoiceModeService.Enabled;
+        var switching = Services.VoiceModeService.Switching;
+        VoiceModeButton.IsEnabled = !switching;
+        VoiceModeIcon.Foreground = Themes.JarvisTheme.Brush(switching ? "LabelTertiary" : on ? "Accent" : "Label");
+        ToolTipService.SetToolTip(VoiceModeButton,
+            switching ? "Switching models…" : on ? "Voice mode on: click to bring the main model back" : "Voice mode: fast spoken commands");
+        UpdateComposerCaption();
+    }
+
     /// <summary>The mic button lights while voice is on, and the line under the composer says
     /// what it is doing (listening, working, speaking).</summary>
     private void UpdateVoiceStateText()
@@ -1134,6 +1161,18 @@ public sealed partial class MainWindow : Window
     /// this chat is kept, else where the model runs.</summary>
     private void UpdateComposerCaption()
     {
+        if (Services.VoiceModeService.Switching)
+        {
+            ComposerCaption.Text = Services.VoiceModeService.Enabled ? "Bringing the main model back…" : "Switching to voice mode…";
+            ComposerCaption.Foreground = Themes.JarvisTheme.Brush("Accent");
+            return;
+        }
+        if (!string.IsNullOrEmpty(Services.VoiceModeService.Error))
+        {
+            ComposerCaption.Text = Services.VoiceModeService.Error;
+            ComposerCaption.Foreground = Themes.JarvisTheme.Brush("LabelSecondary");
+            return;
+        }
         if (VoiceViewModel.IsActive)
         {
             ComposerCaption.Text = VoiceViewModel.State switch
@@ -1143,7 +1182,7 @@ public sealed partial class MainWindow : Window
                 Jarvis.Core.Models.VoiceState.Thinking => "Working",
                 Jarvis.Core.Models.VoiceState.Speaking => "Speaking",
                 _ => "Voice on",
-            };
+            } + (Services.VoiceModeService.Enabled ? " · voice mode" : "");
             ComposerCaption.Foreground = Themes.JarvisTheme.Brush("Accent");
             return;
         }
@@ -1153,10 +1192,10 @@ public sealed partial class MainWindow : Window
             : "Runs on this PC · nothing leaves it";
     }
 
-    private async Task HandleVoiceCommandAsync(string query)
+    private async Task HandleVoiceCommandAsync(string query, string? voiceRoute = null)
     {
         ComposerBox.Text = "";
-        await ChatViewModel.SendMessageAsync(query);
+        await ChatViewModel.SendMessageAsync(query, voiceRoute: voiceRoute);
     }
 
     private async void ToggleRightPanel_Click(object sender, RoutedEventArgs e)

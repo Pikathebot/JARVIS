@@ -53,7 +53,8 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
   `LLAMA_*_MODEL_PATH` / `MAIN_MODEL` still name the older Q3_K_XL and 4B -- stale, not live.
   `GET /api/models` is the truth at runtime.
 - **Ports:** 8000 backend, 8001 llama-server (the chat model), 8002 image-captioner sidecar,
-  8003 embedding sidecar. Both sidecars are CPU-only llama-servers launched with
+  8003 embedding sidecar, 8004 Laya sidecar (voice mode only: a GPU Python process in
+  `tools/laya-venv`, started/stopped by `/api/voice/mode`). Both sidecars are CPU-only llama-servers launched with
   `CUDA_VISIBLE_DEVICES=-1`, cold-started on first use and stopped after 300 s idle.
 - **State paths** (the backend's cwd is `backend/`, so relative paths resolve there):
   `data/{models,persona,routines}.json` at the **repo root** (resolved from `__file__`);

@@ -141,6 +141,11 @@ public sealed class ChatRequest
     /// <summary>Scratchpad turn: the backend keeps the conversation in memory only and writes
     /// nothing to its database or session list.</summary>
     public bool Ephemeral { get; set; }
+
+    /// <summary>Voice mode's route for this turn ("chat" | "act"), from /api/voice/listen; null
+    /// for a typed turn.</summary>
+    [JsonPropertyName("voice_route")]
+    public string? VoiceRoute { get; set; }
 }
 
 public sealed class ChatResponse

@@ -100,6 +100,59 @@ def test_empty_and_noise_transcripts_are_dropped(manager):
     assert manager.get("s1").is_armed()
 
 
+class _Clock:
+    def __init__(self):
+        self.t = 1_000_000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_follow_up_window_grows_while_talking_and_resets_after_a_lapse(manager, monkeypatch):
+    """The user's rule (2026-10-13): talking often needs no wake word; a long quiet does.
+    The manager fixture's base window is 10 s, so the rungs are 10 / 30 / 60."""
+    import app.voice.session as session_mod
+
+    clock = _Clock()
+    monkeypatch.setattr(session_mod.time, "time", clock)
+
+    def reply_then_wait(seconds):
+        manager.arm_follow_up("s1")  # the client calls this when the reply finishes playing
+        clock.t += seconds
+
+    assert manager.evaluate_utterance("s1", "Jarvis, open discord").should_respond
+    reply_then_wait(8)  # rung 0: 10 s
+    assert manager.evaluate_utterance("s1", "focus task manager").should_respond
+    reply_then_wait(25)  # rung 1: 30 s
+    assert manager.evaluate_utterance("s1", "what's the cpu at").should_respond
+    reply_then_wait(52)  # rung 2: 60 s -- the gap that was ignored on device
+    assert manager.evaluate_utterance("s1", "open the hud").should_respond
+    reply_then_wait(65)  # past the ceiling: the conversation is over
+    assert manager.evaluate_utterance("s1", "open the hud").should_respond is False
+    assert manager.get("s1").streak == 0
+    # Back with the wake word: a fresh conversation starts on the short rung.
+    assert manager.evaluate_utterance("s1", "Jarvis, open the hud").should_respond
+    reply_then_wait(15)
+    assert manager.evaluate_utterance("s1", "and close it").should_respond is False
+
+
+def test_a_sentence_begun_inside_the_window_counts(manager, monkeypatch):
+    import app.voice.session as session_mod
+
+    clock = _Clock()
+    monkeypatch.setattr(session_mod.time, "time", clock)
+    manager.arm_follow_up("s1")
+    clock.t += 12  # 2 s past the window when the upload lands...
+    assert manager.evaluate_utterance("s1", "search for the mod link", spoken_seconds=3.5).should_respond
+
+
+def test_speech_while_jarvis_is_answering_does_not_end_the_conversation(manager):
+    manager.arm_follow_up("s1")
+    manager.evaluate_utterance("s1", "what's the weather")  # in the window: streak 1, now THINKING
+    assert manager.evaluate_utterance("s1", "uh huh").should_respond is False
+    assert manager.get("s1").streak == 1
+
+
 def test_sessions_are_isolated(manager):
     manager.evaluate_utterance("s1", "Jarvis")
 

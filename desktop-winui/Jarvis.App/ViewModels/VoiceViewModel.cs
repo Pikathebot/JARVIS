@@ -45,6 +45,10 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
     // 240 ms sat behind echo cancellation this capture path doesn't have.
     private const int BargeInMs = 600;
     private const float BargeInRatio = 1.5f;
+    // Speech crosses the threshold on the vowel, not on the word's first consonant: without
+    // the quiet frames just before it, "pause" reached Whisper as "-ause" and short commands
+    // came back as other words. The last ~300 ms before the trigger is kept and prepended.
+    private const int PreRollMs = 300;
 
     private readonly JarvisApiClient _api;
     private readonly DispatcherQueue _dispatcher;
@@ -56,6 +60,8 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
     private string? _tempAudioPath;
 
     private readonly List<float> _captureBuffer = new();
+    private readonly Queue<float[]> _preRoll = new();
+    private double _preRollMs;
     private bool _isRecording;
     private double _silenceAccumMs;
     private double _recordingMs;
@@ -90,8 +96,9 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? ErrorMessage { get; set; }
 
-    /// <summary>Fires with the query text when the backend decides an utterance should be answered.</summary>
-    public event Action<string>? CommandReceived;
+    /// <summary>Fires with the query text when the backend decides an utterance should be answered,
+    /// and voice mode's route for it ("chat" | "act"; null outside voice mode).</summary>
+    public event Action<string, string?>? CommandReceived;
 
     public VoiceViewModel(JarvisApiClient api, DispatcherQueue dispatcher, string sessionId)
     {
@@ -243,6 +250,8 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
 
         if (State == VoiceState.Speaking)
         {
+            // Our own voice leaking into the mic must not become the next utterance's pre-roll.
+            ClearPreRoll();
             // Barge-in watch: sustained speech while our own TTS is playing cuts it off.
             if (rms >= threshold * BargeInRatio)
             {
@@ -305,6 +314,21 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
                 }
             }
         }
+        else
+        {
+            _preRoll.Enqueue(samples);
+            _preRollMs += quantumMs;
+            while (_preRoll.Count > 1 && _preRollMs - _preRoll.Peek().Length / (double)_sampleRate * 1000.0 >= PreRollMs)
+            {
+                _preRollMs -= _preRoll.Dequeue().Length / (double)_sampleRate * 1000.0;
+            }
+        }
+    }
+
+    private void ClearPreRoll()
+    {
+        _preRoll.Clear();
+        _preRollMs = 0;
     }
 
     /// <summary>Every ~100 quanta (1 s) with no usable frame, say so -- otherwise a dead
@@ -318,7 +342,12 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
     private void BeginRecording()
     {
         _isRecording = true;
-        _captureBuffer.Clear();
+        lock (_captureBuffer)
+        {
+            _captureBuffer.Clear();
+            foreach (var chunk in _preRoll) _captureBuffer.AddRange(chunk);
+        }
+        ClearPreRoll();
         _recordingMs = 0;
         _silenceAccumMs = 0;
     }
@@ -384,7 +413,12 @@ public partial class VoiceViewModel : ObservableObject, IDisposable
 
                 if (result.ShouldRespond && !string.IsNullOrWhiteSpace(result.Query))
                 {
-                    CommandReceived?.Invoke(result.Query);
+                    CommandReceived?.Invoke(result.Query, result.VoiceRoute);
+                }
+                else if (result.Reason == "voice_mode_action" && !string.IsNullOrWhiteSpace(result.SpeakImmediately))
+                {
+                    // Voice mode ran the command itself ("Opening Chrome.") or is asking yes/no.
+                    _ = SpeakAsync(result.SpeakImmediately);
                 }
                 else if (State == VoiceState.Thinking)
                 {
