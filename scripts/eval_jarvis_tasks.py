@@ -40,6 +40,7 @@ import bench_tool_chain as btc  # noqa: E402  (Server, World, the five chain tas
 
 NOW = datetime(2026, 10, 16, 18, 30)
 MAX_ROUNDS = 8
+PRE_RESEARCH = True  # --no-pre-research measures the research tool alone
 SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "seed": 42}
 
 
@@ -127,6 +128,23 @@ class World(btc.World):
     def fetch_url(self, url: str = "", **_: Any) -> str:
         self.fetched.append(url)
         return PAGES.get(url.rstrip("/"), PAGES.get(url, f"Error: 404 for {url}"))
+
+    def research(self, question: str = "", query: str = "", **_: Any) -> str:
+        """The backend's own pipeline (app.agent.research) over this simulated web."""
+        from app.agent import research as rs
+
+        def search(q: str, news: bool) -> list[Any]:
+            self.searches.append(q)
+            for key, results in WEB.items():
+                if key in q.lower():
+                    return [rs.Hit(r["title"], r["url"], r.get("snippet", "")) for r in results]
+            return []
+
+        def fetch(url: str) -> str | None:
+            self.fetched.append(url)
+            return PAGES.get(url.rstrip("/"), PAGES.get(url))
+
+        return rs.research(question, search, fetch, query=query)[0]
 
     # --- OS
     def get_system_status(self, **_: Any) -> str:
@@ -393,6 +411,11 @@ def with_context(user_text: str, ctx: str) -> str:
             + ctx + "]").strip()
 
 
+def wants_research(message: str) -> bool:
+    from app.agent.research import wants_research as w
+    return w(message)
+
+
 def thinking_for(message: str) -> bool:
     """With main loaded: a 'fast' verdict runs on main with thinking off; anything else as launched (on)."""
     from app.agent.model_router import ModelRouter
@@ -448,9 +471,9 @@ def auto_layer(task: Task, run: Run, err: str) -> str:
     if task.acts and not (calls & ACTION_TOOLS):
         return "model"                      # asked to act, no state-changing tool ran
     if task.group == "web":
-        if "web_search" not in calls and "fetch_url" not in calls:
+        if not calls & {"web_search", "fetch_url", "research"}:
             return "model"                  # never looked
-        if "fetch_url" not in calls:
+        if not calls & {"fetch_url", "research"}:
             return "evidence"               # snippets only, page never opened
         return "answer"                     # read the page, still answered wrong
     if task.group == "closed":
@@ -476,11 +499,20 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
         for user_text in task.turns:
             think = thinking_for(user_text)
             think_flags.append(think)
+            turn_tools: list[dict[str, Any]] = []
+            turn_ctx = ctx
+            if PRE_RESEARCH and wants_research(user_text):
+                # the orchestrator's pre-run (PLAN 4.13 #7): research before the model, into the turn context
+                out = run.world.research(user_text)
+                run.calls.append("research")
+                turn_tools.append({"tool": "research", "args": {"question": user_text}, "status": "success"})
+                nets.append("pre-research")
+                if "found nothing usable" not in out:
+                    turn_ctx = ctx + "\n\n" + o._pre_research_block(out)
             # the stored history keeps the user's own words; only the live turn carries the context
-            live = messages + [{"role": "user", "content": with_context(user_text, ctx)}]
+            live = messages + [{"role": "user", "content": with_context(user_text, turn_ctx)}]
             final = ""
             nudged = claim_checked = False
-            turn_tools: list[dict[str, Any]] = []
             for _ in range(MAX_ROUNDS):
                 req = {"messages": live, "tool_choice": "auto", "max_tokens": 4096, "cache_prompt": True,
                        "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
@@ -554,7 +586,10 @@ def main() -> None:
     ap.add_argument("--only", default="", help="comma-separated groups or task ids")
     ap.add_argument("--repeats", type=int, default=1, help="run each task N times (seed varies)")
     ap.add_argument("--json", type=Path)
+    ap.add_argument("--no-pre-research", action="store_true", help="don't research before the model on recency triggers")
     a = ap.parse_args()
+    global PRE_RESEARCH
+    PRE_RESEARCH = not a.no_pre_research
 
     sel = {s.strip() for s in a.only.split(",") if s.strip()}
     tasks = [t for t in TASKS if not sel or t.group in sel or t.id in sel]

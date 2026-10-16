@@ -969,6 +969,21 @@ staging were not needed yet; they come with Phase 2's async ring.
 
 ### 4.13 Harness review: what to take from Odysseus (started 2026-10-16)
 
+**Handoff (end of 2026-10-16 session) -- start here.**
+- Done and committed: plan + eval `06f0611`; part 1 `0e014ae` (#13, claim detector, #1, #3, #9, #4); part 2
+  `3473319` (#6). All build/test-verified only (836 backend tests, WinUI builds); **nothing seen on device**.
+- #7 research built 2026-10-16 late (see #7 below), **uncommitted**; 864 tests, WinUI builds; eval re-run done.
+- Next to build, in order: #8 offline review page (then the in-app compare), #2
+  sealed set as new real requests come in, #12 notes/tasks -> calendar -> email, #10 fine-tune (Soup smoke test).
+- Device checks for the user: the metrics footer under replies; "summarise <url>" then "save it to a file"
+  should ask once; "did you do it?" follow-ups; tray quit; voice mode (9a0465b).
+- Eval re-run after #7 done (9B 93/123, Defiant 100/123; results in `scripts/eval_results/2026-10-16-research/`);
+  the review page decides Qwen vs Defiant. Benches since 2026-10-16 evening run in Whisper mode.
+  Tonight's raw answers (both models, 3 seeds, before the claim fix) are in `scripts/eval_results/2026-10-16/`:
+  the review page can start from them.
+- Small loose ends: the eval doesn't yet include the recent-actions block; the governor "comes back by itself"
+  check (below); MoE on hold at `E:\JARVIS-MoE\`.
+
 Raised by the user 2026-10-16: can the 9B get "MoE-level" ability without the MoE? Answer so far: knowledge
 breadth, no (it lives in parameter count; retrieval covers it); behaviour on Jarvis's own tasks, yes
 (distillation / fine-tuning). First find where the 9B actually fails, then decide harness fix vs model fix.
@@ -1038,6 +1053,35 @@ carry planted facts, so only a real search + read passes the current-events task
    "latest / new / news / current / this week", a date or year past the model's cutoff), putting the results in
    the turn context like RAG. Triggers start conservative and widen only from eval misses; closed-book tasks
    (`strawberry`, `mvc-talk`, ...) must not trigger it. Results count as outside content for #6.
+   **Built 2026-10-16 (build/test-verified, live web smoke-tested; unverified on device).** Pipeline in
+   `backend/app/agent/research.py` (search and fetch are passed in, so the eval runs the same code on its
+   simulated web); tool `research(question, query="")` in `agent/tools/research.py`, LOW_RISK, offered in both
+   spaces, a taint source and a URL source (its links can be fetched without asking).
+   - Pipeline: DDG search (news search first for news/headlines/today questions) -> up to 6 results, one per
+     site, social/video hosts skipped (TikTok's India block page, login walls) -> all fetched in parallel
+     through `fetch_url` (its redirect and local-network guards; a result pointing at a local address is never
+     opened), 8 s cap, slow pages dropped -> pages sharing no word with the question dropped -> per page the
+     ~1400 chars of paragraphs sharing most words with the question -> numbered sources; results that
+     refused us (403) keep their snippet, marked as such; news questions also list up to 8 headlines.
+     Live: ~3 s per question, 2.5-5k chars.
+   - Pre-run: `wants_research` (explicit latest / news / headlines / "new <arc|season|features|...>" /
+     "current <news|prices|...>" / a year after 2024; never with a link, a file/app/workspace word or an action
+     verb like open/play/remind). Runs in `run_stream` and `run` when the turn offers tools (not the fast model,
+     not voice, not an approval continuation); shows as a normal tool card ("Looked up: ..."), is recorded in
+     recent actions, taints the turn, and its result rides in the turn context as `WEB RESEARCH (...)` -- never
+     the cached prefix. Found nothing: the card says so and the turn goes on as before.
+     On the eval's prompts it fires on ue58, bleach, tn-headlines and python313 ("latest"), not on the closed set.
+   - `web_search`'s description now says snippets are too little to answer from (use `research` or `fetch_url`).
+   - Eval: `World.research` runs the real pipeline; the pre-run is mirrored (`--no-pre-research` turns it off).
+   - Eval after #7 (3 seeds, `scripts/eval_results/2026-10-16-research/`): live 9B 93/123 (web 13/15, was
+     8/15; bleach-arc 3/3, was 0/3), Defiant 100/123 (web 12/15). Chain/system unchanged (15/15, 27/27).
+     Remaining web miss = **wukong-mod**: no recency word, so no pre-run, and both models still pick
+     `web_search` over `research`, read the snippet and invent or hedge (9B 1/3 fail, Defiant 3/3). Next
+     step if wanted: when a turn's only web call was `web_search` and the reply names something the snippets
+     don't, research before answering -- or widen the description. python313 fails as before (knowledge; the
+     simulated web has no Python page, so the pre-run finds nothing there). New "rendering" fails are 8-round
+     loops of repeated `web_search` (wukong-studio, ishiguro, thirparappu) and directory listings (enhance-prompt,
+     find-md): hit MAX_ROUNDS with no answer -- worth a loop guard, not #7.
 8. Blind A/B compare in the app: two models answer, the user picks, without knowing which is which.
    **Decided 2026-10-16: B (offline review page) now.** A local page reads two eval result files (answers are
    generated in advance by the unattended eval runs), shows each prompt's two answers unlabelled in random

@@ -6,7 +6,7 @@ logger = logging.getLogger("jarvis.agent.tools.web_search")
 
 def web_search(query: str, max_results: int = 5, news: bool = False) -> str:
     """
-    Search the web (DuckDuckGo) for current facts, documentation, releases or prices; news=true searches recent news articles, with each one's date and source. End an answer that used the web with the links you used.
+    Find web pages (DuckDuckGo): titles, links and a one-line snippet each, too little to answer from -- to answer a question use research, or open a result with fetch_url. news=true searches recent news articles, with each one's date and source.
 
     Args:
         query: Short search terms (e.g. 'Python 3.13 features'), never pasted document or chat text.

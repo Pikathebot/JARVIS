@@ -53,6 +53,7 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "patch_file": RiskTier.LOW_RISK,
     "web_search": RiskTier.LOW_RISK,
     "fetch_url": RiskTier.LOW_RISK,
+    "research": RiskTier.LOW_RISK,
     "execute_command": RiskTier.CONFIRMATION_REQUIRED,
     "delete_file": RiskTier.HIGH_RISK,
     # Artifact Tools (Build Plan §15)
@@ -357,7 +358,7 @@ def evaluate_url_risk(url: str) -> RiskTier:
 # web_search / fetch_url returned this session. A URL the model composed itself can carry chat or
 # file content out in its path or query (`https://x.example/?q=<document text>`) -- the way a
 # prompt injection on a fetched page would exfiltrate data -- so that one asks first.
-URL_SOURCE_TOOLS = ("web_search", "fetch_url")
+URL_SOURCE_TOOLS = ("web_search", "fetch_url", "research")
 
 
 def _url_key(url: str) -> str:

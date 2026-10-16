@@ -39,6 +39,7 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "web.extract": 60.0,
     "web_search": 45.0,
     "fetch_url": 60.0,
+    "research": 60.0,
 }
 
 

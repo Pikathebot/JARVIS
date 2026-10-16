@@ -8,6 +8,7 @@ from app.agent.tools.list_directory import list_directory
 from app.agent.tools.sample_tools import execute_command, delete_file
 from app.agent.tools.web_search import web_search
 from app.agent.tools.fetch_url import fetch_url
+from app.agent.tools.research import research
 from app.agent.tools.write_file import write_file
 from app.agent.tools.patch_file import patch_file
 from app.agent.tools.file_search import find_files, grep_in_files
@@ -30,6 +31,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "list_directory": list_directory,
     "web_search": web_search,
     "fetch_url": fetch_url,
+    "research": research,
     "write_file": write_file,
     "patch_file": patch_file,
     "find_files": find_files,
@@ -77,6 +79,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     list_directory,
     web_search,
     fetch_url,
+    research,
     write_file,
     patch_file,
     find_files,
@@ -152,6 +155,11 @@ class FetchUrlArgs(BaseModel):
     url: str = Field(..., description="Web URL to fetch")
     max_chars: int = Field(default=8000, ge=500, le=25000, description="Max character budget")
     offset: int = Field(default=0, ge=0, description="Continue from this character position (from the previous result's note)")
+
+
+class ResearchArgs(BaseModel):
+    question: str = Field(..., description="The user's question, in full")
+    query: str = Field(default="", description="Optional short search terms, if the question itself searches badly")
 
 
 class WriteFileArgs(BaseModel):
@@ -344,6 +352,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "delete_file": DeleteFileArgs,
     "web_search": WebSearchArgs,
     "fetch_url": FetchUrlArgs,
+    "research": ResearchArgs,
     "write_file": WriteFileArgs,
     "patch_file": PatchFileArgs,
     "find_files": FindFilesArgs,

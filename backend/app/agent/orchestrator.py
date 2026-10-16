@@ -33,6 +33,7 @@ from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
 from app.agent import recent_objects, taint
+from app.agent.research import wants_research
 from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
@@ -518,6 +519,14 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
     if skill_injection and skill_injection.strip():
         sections.append(skill_injection.strip())
     return "\n\n".join(sections)
+
+
+PRE_RESEARCH_TIMEOUT_SECONDS = 30.0
+
+
+def _pre_research_block(result: str) -> str:
+    return ("WEB RESEARCH (run before you for this message, from real pages opened just now; "
+            "use it rather than memory for anything current):\n" + result.strip())
 
 
 # Fire-and-forget tasks started after a reply (memory capture); held so they aren't collected mid-run.
@@ -1109,6 +1118,14 @@ class AgentOrchestrator:
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
+        # A clearly recent question: research before the model (PLAN 4.13 #7)
+        pre_tools: list[dict[str, Any]] = []
+        if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
+            item, found = await self._pre_research(active_session_id, user_message, tool_context)
+            pre_tools.append(item)
+            if found:
+                turn_context = "\n\n".join([turn_context, _pre_research_block(found)])
+
         # 3. Compaction Evaluation (Step 4C)
         history = self.memory_store.get_messages(active_session_id)
         current_turn = {"role": "user", "content": user_message}
@@ -1234,6 +1251,7 @@ class AgentOrchestrator:
             workspace_path=workspace_path,
             tool_context=tool_context,
             thinking=thinking,
+            prior_tools=pre_tools,
         )
         result.compaction_performed = compaction_info
         result.active_skills = active_skill_names
@@ -1256,6 +1274,7 @@ class AgentOrchestrator:
         workspace_path: Optional[str | Path] = None,
         tool_context: Optional[dict[str, Any]] = None,
         thinking: Optional[bool] = None,
+        prior_tools: Optional[list[dict[str, Any]]] = None,
     ) -> OrchestratorResult:
         """
         Execute deterministic agent loop against ModelProvider with schema validation,
@@ -1270,6 +1289,10 @@ class AgentOrchestrator:
         # its paused turn parked.
         taint_ctx = {**tool_ctx, "session_id": session_id}
         tainted_by = taint.resume(session_id) if approved_action_ids else None
+        prior = list(prior_tools or [])  # the pre-run research: taints the turn like any read
+        for item in prior:
+            if item.get("status") == "success":
+                tainted_by = tainted_by or taint.source_of(item["tool"], item.get("args") or {}, taint_ctx)
         call_history = CallHistory(window=3)
         total_turn_tool_calls = 0
         tool_turn_counts: dict[str, int] = {}
@@ -1278,7 +1301,7 @@ class AgentOrchestrator:
 
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
-        tools_used: list[dict[str, Any]] = []
+        tools_used: list[dict[str, Any]] = prior
         claim_checked = False
 
         for iteration in range(max_iterations):
@@ -1731,6 +1754,17 @@ class AgentOrchestrator:
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
+        # 2b. A clearly recent question: research before the model (PLAN 4.13 #7)
+        pre_tools: list[dict[str, Any]] = []
+        if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
+            item = {"tool": "research", "args": {"question": user_message}}
+            yield {"event": "tool_start", "data": dict(item)}
+            item, found = await self._pre_research(active_session_id, user_message, tool_context)
+            yield {"event": "tool_end", "data": item}
+            pre_tools.append(item)
+            if found:
+                turn_context = "\n\n".join([turn_context, _pre_research_block(found)])
+
         # 3. RAG Retrieval in WORKSPACE mode
         retrieved_chunks = []
         active_rag_project_id = resolved_project_id or project_id
@@ -1823,6 +1857,7 @@ class AgentOrchestrator:
             workspace_path=workspace_path,
             tool_context=tool_context,
             thinking=thinking,
+            prior_tools=pre_tools,
         ):
             if ev.get("event") == "tool_start" and (ev.get("data") or {}).get("tool") == "remember":
                 saved_in_turn = True
@@ -1842,6 +1877,37 @@ class AgentOrchestrator:
 
         if cue == "save" and finished and not saved_in_turn:
             self._start_memory_capture(target_provider, decision.model, user_message, tool_context)
+
+    def _should_pre_research(self, user_message: str, tools: list[Any], voice_route: Optional[str],
+                             approved_action_ids: Optional[list[str]]) -> bool:
+        """Research before the model only on a turn that offers the tool (not the fast model, not
+        voice: both answer in a second or two), and not on an approval continuation, which re-sends
+        the message and was researched the first time."""
+        if voice_route or approved_action_ids or not wants_research(user_message):
+            return False
+        return "research" in self._tool_names(tools)
+
+    async def _pre_research(self, session_id: str, user_message: str,
+                            tool_context: Optional[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+        """Run ``research`` on the message through the tool pipeline. Returns the tool card item
+        (recorded in the session's recent actions like any call) and the full result, or "" when
+        it failed or found nothing -- the model then searches itself if it wants to."""
+        args = {"question": user_message}
+        ctx = {**(tool_context or {}), "permission_checked": True}
+        try:
+            outcome = await asyncio.wait_for(self._run_tool("research", args, ctx), PRE_RESEARCH_TIMEOUT_SECONDS)
+            item = outcome.to_event()
+            item["args"] = args
+            found = outcome.result if outcome.ok and not outcome.result.startswith("Error") else ""
+        except asyncio.TimeoutError:
+            item = {"tool": "research", "args": args, "status": "timeout", "result": "Error: research timed out.",
+                    "timed_out": True}
+            found = ""
+        if "found nothing usable" in found:
+            found = ""  # the card says so; the model answers as it would have, or searches itself
+        item["pre_run"] = True
+        recent_objects.record(session_id, item)
+        return item, found
 
     def _start_memory_capture(
         self,
@@ -1874,6 +1940,7 @@ class AgentOrchestrator:
         workspace_path: Optional[str | Path] = None,
         tool_context: Optional[dict[str, Any]] = None,
         thinking: Optional[bool] = None,
+        prior_tools: Optional[list[dict[str, Any]]] = None,
     ):
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
         tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
@@ -1883,10 +1950,16 @@ class AgentOrchestrator:
         # its paused turn parked.
         taint_ctx = {**tool_ctx, "session_id": session_id}
         tainted_by = taint.resume(session_id) if approved_action_ids else None
+        # Calls the harness ran before the model this turn (the pre-run research) count as this
+        # turn's: they taint it and they are what the model answers from.
+        prior = list(prior_tools or [])
+        for item in prior:
+            if item.get("status") == "success":
+                tainted_by = tainted_by or taint.source_of(item["tool"], item.get("args") or {}, taint_ctx)
         call_history = CallHistory(window=3)
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
-        tools_used: list[dict[str, Any]] = []
+        tools_used: list[dict[str, Any]] = prior
         nudged = False
         claim_checked = False
         metrics = TurnMetrics()
