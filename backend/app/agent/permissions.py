@@ -613,9 +613,12 @@ def evaluate_tool_permission(
     workspace_path: Optional[str | Path] = None,
     url_provenance: Optional[str] = None,
     user_message: Optional[str] = None,
+    tainted_by: Optional[str] = None,
 ) -> PermissionDecision:
     """
     Evaluate permission for a single tool call.
+    ``tainted_by`` names outside content this turn has read (``app.agent.taint``): the tools that
+    could carry injected instructions out (typing, keys, file writes, clipboard, memory) then ask.
     Default policy: If tool is not in BASE_TOOL_RISK_MAP, default to CONFIRMATION_REQUIRED.
     ``url_provenance`` (from ``url_provenance_text``) enables the fetch_url origin check; None
     skips it. ``user_message`` is what the user typed this turn: reading the clipboard runs
@@ -745,6 +748,15 @@ def evaluate_tool_permission(
     if model_reason and tool_name in REASON_TOOLS:
         custom_reason = f"{custom_reason or ''} Jarvis: {model_reason[:200]}".strip()
 
+    # Outside text read this turn could be steering the call (PLAN 4.13 #6).
+    if tainted_by and effective_tier == RiskTier.LOW_RISK:
+        from app.agent.taint import SINKS
+
+        if tool_name in SINKS:
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            custom_reason = (f"This turn read {tainted_by}, and text from there could be steering this. "
+                             + (custom_reason or "")).strip()
+
     # 3. Check if user already provided explicit approval token (strictly per action_id)
     if action_id in approved_ids:
         return PermissionDecision(
@@ -784,6 +796,7 @@ def evaluate_tool_calls_batch(
     workspace_path: Optional[str | Path] = None,
     url_provenance: Optional[str] = None,
     user_message: Optional[str] = None,
+    tainted_by: Optional[str] = None,
 ) -> BatchPermissionResult:
     """
     Batch evaluate multiple tool calls in a single pass to prevent fragmented confirmation prompts.
@@ -802,6 +815,7 @@ def evaluate_tool_calls_batch(
             workspace_path=workspace_path,
             url_provenance=url_provenance,
             user_message=user_message,
+            tainted_by=tainted_by,
         )
 
         if decision.allowed:

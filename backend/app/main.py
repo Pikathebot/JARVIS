@@ -806,8 +806,9 @@ async def get_session_compactions(session_id: str):
 async def delete_session(session_id: str):
     """Delete a conversation session and all its stored messages. For an ephemeral session this
     is the purge: its in-memory context and any files uploaded into it are dropped at once."""
-    from app.agent import recent_objects
+    from app.agent import recent_objects, taint
     recent_objects.forget(session_id)
+    taint.forget(session_id)
     if ephemeral_registry.purge(session_id):
         return {"deleted": True, "session_id": session_id, "ephemeral": True}
     deleted = await asyncio.to_thread(memory_store.delete_session, session_id)

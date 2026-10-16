@@ -1111,6 +1111,13 @@ first-token time -> `metrics` on `done` -> the bubble's footer line); #4 recent-
 context, fed by chat and voice-mode tool results, cleared on session delete. 831 backend tests pass; WinUI builds.
 Not yet mirrored in the eval: the recent-objects block (the eval builds turn context without a session).
 
+**Built 2026-10-16 (part 2), unverified on device:** #6 taint gate (`app/agent/taint.py`). Sources: fetch_url,
+web_search, look_at_screen, get_clipboard, reads of uploads (`attachments_dir`) and of files written while
+tainted. Sinks escalate to approval with "This turn read <source> ...": type_text, press_keys, write_file,
+patch_file, set_clipboard, remember. An approval continuation (the client re-sends the message with the ids)
+resumes the taint the paused turn parked (120 s). Voice mode's direct plans pass no taint, so they're unchanged.
+`test_taint.py`; 836 backend tests pass.
+
 **Build order for the batch (agreed items):** 13 + claim detector (small) -> 1 (eval layers) -> 3 (fail-fast
 refusals) -> 9 (metrics footer) -> 4 (recent objects) -> 6 (taint gate) -> 7 (research) -> 8 (review page, then
 in-app compare) -> 2 (sealed set, as new requests come in) -> 12 (notes/tasks, calendar, email) -> 10 (fine-tune).

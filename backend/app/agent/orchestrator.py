@@ -32,7 +32,7 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
-from app.agent import recent_objects
+from app.agent import recent_objects, taint
 from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
@@ -1266,6 +1266,10 @@ class AgentOrchestrator:
         tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
         # Every call this loop runs has passed the permission gate first.
         tool_ctx["permission_checked"] = True
+        # Outside text read this turn (PLAN 4.13 #6); an approval continuation picks up the taint
+        # its paused turn parked.
+        taint_ctx = {**tool_ctx, "session_id": session_id}
+        tainted_by = taint.resume(session_id) if approved_action_ids else None
         call_history = CallHistory(window=3)
         total_turn_tool_calls = 0
         tool_turn_counts: dict[str, int] = {}
@@ -1522,6 +1526,7 @@ class AgentOrchestrator:
                 workspace_path=str(ws_root),
                 url_provenance=url_provenance_text(messages),
                 user_message=(tool_context or {}).get("user_message"),
+                tainted_by=tainted_by,
             )
 
             if not batch_permission.all_allowed:
@@ -1556,6 +1561,7 @@ class AgentOrchestrator:
                 )
                 registry = get_confirmation_registry()
                 registry.ask(session_id, pending_list)
+                taint.park(session_id, tainted_by)
                 prompt = build_confirmation_prompt(
                     pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
                 )
@@ -1617,6 +1623,9 @@ class AgentOrchestrator:
                     "timed_out": outcome.timed_out,
                 })
                 recent_objects.record(session_id, tools_used[-1])
+                if not str(tool_output or "").lstrip().startswith("Error") and not outcome.timed_out:
+                    taint.note_write(fn_name, fn_args, taint_ctx, tainted_by)
+                    tainted_by = tainted_by or taint.source_of(fn_name, fn_args, taint_ctx)
 
                 messages.append({
                     "role": "tool",
@@ -1870,6 +1879,10 @@ class AgentOrchestrator:
         tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
         # Every call this loop runs has passed the permission gate first.
         tool_ctx["permission_checked"] = True
+        # Outside text read this turn (PLAN 4.13 #6); an approval continuation picks up the taint
+        # its paused turn parked.
+        taint_ctx = {**tool_ctx, "session_id": session_id}
+        tainted_by = taint.resume(session_id) if approved_action_ids else None
         call_history = CallHistory(window=3)
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
@@ -2017,6 +2030,7 @@ class AgentOrchestrator:
                 workspace_path=str(ws_root),
                 url_provenance=url_provenance_text(messages),
                 user_message=(tool_context or {}).get("user_message"),
+                tainted_by=tainted_by,
             )
 
             if not batch_result.all_allowed:
@@ -2032,6 +2046,7 @@ class AgentOrchestrator:
                 ]
                 registry = get_confirmation_registry()
                 registry.ask(session_id, pending_list)
+                taint.park(session_id, tainted_by)
                 prompt = build_confirmation_prompt(
                     pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
                 )
@@ -2085,6 +2100,9 @@ class AgentOrchestrator:
                     }
                 tools_used.append(tool_item)
                 recent_objects.record(session_id, tool_item)
+                if tool_item.get("status") == "success":
+                    taint.note_write(t_name, t_args, taint_ctx, tainted_by)
+                    tainted_by = tainted_by or taint.source_of(t_name, t_args, taint_ctx)
                 yield {"event": "tool_end", "data": tool_item}
 
                 messages.append({
