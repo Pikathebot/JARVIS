@@ -266,7 +266,12 @@ public sealed partial class MessageBubbleControl : UserControl
             return;
         }
         MetadataFooter.Visibility = Visibility.Visible;
-        MetadataFooter.Text = string.Join(" · ", new[] { message.Provider, message.Model }.Where(s => !string.IsNullOrEmpty(s)));
+        // Live replies carry the turn's metrics (PLAN 4.13 #9): model, first-token time, speed,
+        // rounds, tools, prompt/cache sizes and any safety net that fired. Reloaded history has
+        // none, and keeps the old provider · model line.
+        MetadataFooter.Text = message.Metrics is not null
+            ? TurnMetrics.Format(message.Model, message.Metrics)
+            : string.Join(" · ", new[] { message.Provider, message.Model }.Where(s => !string.IsNullOrEmpty(s)));
         // The alias alone ("main"/"fast") doesn't say which actual GGUF answered or why -- the
         // router's own reason string does (e.g. "...routed to FAST_MODEL (Qwen3.5-4B-...)."), so
         // surface it as a tooltip rather than cluttering the footer text itself.

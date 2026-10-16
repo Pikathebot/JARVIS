@@ -32,6 +32,15 @@ def _resolve_repo(repo_path: Optional[str], workspace_path: Optional[str]) -> Pa
         return f"Error: Access denied. '{repo_path}' resolves outside the active project workspace boundary ('{ws_root}')."
     if not resolved.is_dir():
         return f"Error: Directory not found at '{repo_path}' within workspace '{ws_root}'."
+    # The git tools are offered in every workspace (a fixed list keeps the prompt prefix cached), so
+    # a folder that isn't a repository must get one clear answer, not git's raw "fatal: ..." -- or,
+    # for push, a misleading "detached HEAD" (PLAN 4.13 #3).
+    code, out = _git(["rev-parse", "--is-inside-work-tree"], resolved)
+    if code == -1:
+        return out
+    if code != 0 or out.strip() != "true":
+        return ("Error: not available here because this workspace folder is not a git repository. "
+                "Don't retry; tell the user (they can turn it into one with `git init`).")
     return resolved
 
 

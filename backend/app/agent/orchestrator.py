@@ -32,6 +32,7 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
+from app.agent import recent_objects
 from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
@@ -236,6 +237,10 @@ _NUDGE_TO_ACT = (
     "otherwise give your answer. Do not describe what you are about to do."
 )
 
+# The same stop after tools *did* run: the answer usually sits in the reasoning. "You stopped before
+# doing anything" is false then, and drew apologies ("I apologize for the confusion") on 2026-10-16.
+_NUDGE_TO_ANSWER = "Now give the user your answer."
+
 # A reply that says it did something on the machine when no tool ran this turn. 2026-09-29:
 # "open qwen" -> "I attempted to open Qwen, but the application isn't currently available"
 # with no call at all (launch_app("qwen") would have worked). Rule 19 alone didn't stop it.
@@ -247,14 +252,108 @@ _UNRUN_ACTION_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 
-_NUDGE_UNRUN_CLAIM = (
-    "No tool ran in this turn, so what you just described did not happen. If the user asked for "
-    "an action, call the tool now. Otherwise say plainly, in one sentence, that you have not done it."
+# The same claims without the "I", opening a sentence. 2026-10-16, Defiant Fable 9B: "Bumped version
+# to 1.4.4 and saved." after only a read_file. Verbs that open factual prose too ("Set", "Added",
+# "Started") are left out.
+_SUBJECTLESS_CLAIM_RE = re.compile(
+    r"(?:^|[.!?\n]\s*)(?:done[,.!:\s-]+)?"
+    r"(?:bumped|saved|updated|created|wrote|deleted|removed|copied|opened|launched|closed|killed|"
+    r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled)\b"
+    # ...or mid-sentence with a concrete target: "Action items copied to clipboard:" (2026-10-16)
+    r"|\b(?:copied|saved|written|added|moved)\s+to\s+(?:your\s+|the\s+)?"
+    r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)",
+    re.IGNORECASE,
 )
+
+# A promise to act that no tool backs: "I'll remind you of this in 10 minutes." (2026-10-16, no
+# remind_me call). Questions and offers ("I'll open it if you want") are not promises.
+_PROMISE_RE = re.compile(
+    r"\bI(?:'ll| will)\s+(?:now\s+|also\s+|go ahead and\s+)?"
+    r"(?:remind|save|copy|write|open|launch|delete|remove|close|kill|mute|unmute|pause|create|"
+    r"commit|send|schedule|update|set)\b",
+    re.IGNORECASE,
+)
+_OFFER_RE = re.compile(
+    r"\?|\bif you\b|\b(?:when|whenever|once) you\b|\bwant me\b|\bwould you\b|\bshall i\b|\bshould i\b|"
+    r"\blet me know\b",
+    re.IGNORECASE,
+)
+
+_NUDGE_UNRUN_CLAIM = (
+    "No tool that changes anything ran in this turn, so what you just described did not happen. If the "
+    "user asked for an action, call the tool now. Otherwise say plainly, in one sentence, that you "
+    "have not done it."
+)
+
+# Tools that only look. A turn that ran nothing else has changed nothing, so a claim is still
+# unbacked (the 2026-10-16 "saved" came after a read_file, which the old any-tool check let through).
+_READ_ONLY_TOOLS = frozenset({
+    "read_file", "list_directory", "find_files", "grep_in_files", "web_search", "fetch_url",
+    "read_artifact", "get_clipboard", "list_processes", "look_at_screen", "get_system_status",
+    "git_status", "git_diff", "git_log",
+})
 
 
 def claims_unrun_action(content: str) -> bool:
-    return bool(_UNRUN_ACTION_CLAIM_RE.search(content or ""))
+    text = content or ""
+    if _UNRUN_ACTION_CLAIM_RE.search(text) or _SUBJECTLESS_CLAIM_RE.search(text):
+        return True
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if _PROMISE_RE.search(sentence) and not _OFFER_RE.search(sentence):
+            return True
+    return False
+
+
+def changed_something(tools_used: list[Any]) -> bool:
+    """Whether a tool that changes state ran successfully this turn (reads and failures don't count)."""
+    for item in tools_used or []:
+        if not isinstance(item, dict) or item.get("status") in ("error", "timeout"):
+            continue
+        name = item.get("tool") or item.get("name") or ""
+        if name == "reminders" and (item.get("args") or {}).get("action", "list") == "list":
+            continue
+        if name not in _READ_ONLY_TOOLS:
+            return True
+    return False
+
+
+class TurnMetrics:
+    """
+    The numbers behind the reply's metrics line (PLAN 4.13 #9): first-token time and prompt / cache
+    sizes from the first model round (where the KV-cache prefix contract shows), generation speed
+    over every round, plus the rounds, tools and safety nets the turn needed.
+    """
+
+    def __init__(self) -> None:
+        self.rounds = 0
+        self.ttft_ms: Optional[float] = None
+        self.prompt_tokens: Optional[int] = None
+        self.cached_tokens: Optional[int] = None
+        self.gen_tokens = 0
+        self.gen_ms = 0.0
+        self.nets: list[str] = []
+
+    def add_round(self, raw: dict[str, Any]) -> None:
+        self.rounds += 1
+        timings = raw.get("timings") or {}
+        if self.rounds == 1:
+            self.ttft_ms = raw.get("ttft_ms")
+            if timings.get("prompt_n") is not None:
+                self.cached_tokens = int(timings.get("cache_n") or 0)
+                self.prompt_tokens = self.cached_tokens + int(timings.get("prompt_n") or 0)
+        self.gen_tokens += int(timings.get("predicted_n") or 0)
+        self.gen_ms += float(timings.get("predicted_ms") or 0.0)
+
+    def payload(self, tools_used: list[Any]) -> dict[str, Any]:
+        return {
+            "rounds": self.rounds,
+            "tools": len(tools_used or []),
+            "ttft_ms": round(self.ttft_ms) if self.ttft_ms is not None else None,
+            "tokens_per_second": round(self.gen_tokens * 1000.0 / self.gen_ms, 1) if self.gen_ms > 0 else None,
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "nets": list(self.nets),
+        }
 
 
 # A request to *do* something on the machine or in the workspace. Only routing uses it -- such a
@@ -393,7 +492,8 @@ def memory_cue(user_message: str) -> str:
     return ""
 
 
-def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None, profile_context: str = "") -> str:
+def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None, profile_context: str = "",
+                       recent: str = "") -> str:
     """
     The per-turn block: the current date and time, the user's profile on an ephemeral turn (see
     ``app.memory.ephemeral``), and whatever skills this message matched.
@@ -412,6 +512,9 @@ def build_turn_context(skill_injection: str = "", now: Optional[datetime] = None
     ]
     if profile_context and profile_context.strip():
         sections.append(profile_context.strip())
+    # What this session really did (app.agent.recent_objects): follow-ups resolve against it.
+    if recent and recent.strip():
+        sections.append(recent.strip())
     if skill_injection and skill_injection.strip():
         sections.append(skill_injection.strip())
     return "\n\n".join(sections)
@@ -966,7 +1069,9 @@ class AgentOrchestrator:
 
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
+        recent_objects.begin_turn(session_id)
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
+                                          recent=recent_objects.describe(session_id))
         cue = "" if self.is_ephemeral else memory_cue(user_message)
         # Only "forget" is nudged inside the turn (it needs the listed ids); saving is left to the
         # post-reply capture, which judged better than an in-turn nudge: that one fired on "always"
@@ -1208,7 +1313,7 @@ class AgentOrchestrator:
                     content = synth_response.get("message", {}).get("content", "") or ""
 
                 # As in the streaming loop: a claimed action with no tool run gets one retry.
-                if tools and not tools_used and not claim_checked and claims_unrun_action(content):
+                if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
                     claim_checked = True
                     logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
                     messages.append({"role": "assistant", "content": content})
@@ -1511,6 +1616,7 @@ class AgentOrchestrator:
                     "duration_ms": outcome.duration_ms,
                     "timed_out": outcome.timed_out,
                 })
+                recent_objects.record(session_id, tools_used[-1])
 
                 messages.append({
                     "role": "tool",
@@ -1577,7 +1683,9 @@ class AgentOrchestrator:
         active_skill_names = [s.name for s in matched_skills]
         skill_prompt_injection = self.skills_loader.build_skill_prompt_injection(matched_skills)
         base_system_prompt = system_prompt or build_system_prompt()
-        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path))
+        recent_objects.begin_turn(session_id)
+        turn_context = build_turn_context(skill_prompt_injection, profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
+                                          recent=recent_objects.describe(session_id))
         cue = "" if self.is_ephemeral else memory_cue(user_message)
         # Only "forget" is nudged inside the turn (it needs the listed ids); saving is left to the
         # post-reply capture, which judged better than an in-turn nudge: that one fired on "always"
@@ -1768,6 +1876,7 @@ class AgentOrchestrator:
         tools_used: list[dict[str, Any]] = []
         nudged = False
         claim_checked = False
+        metrics = TurnMetrics()
 
         for iteration in range(max_iterations):
             logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
@@ -1801,6 +1910,7 @@ class AgentOrchestrator:
                     return
 
             raw_done = done_event.get("raw", {}) if done_event else {}
+            metrics.add_round(raw_done)
             content = raw_done.get("content", "") or ""
             tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
             full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
@@ -1816,13 +1926,16 @@ class AgentOrchestrator:
                 if not content.strip():
                     # Thinking models sometimes close their reasoning ("Found it. Now I'll delete
                     # the file.") and stop without the call. Once, ask for the action itself --
-                    # with the tools still on the table -- before settling for prose.
+                    # with the tools still on the table -- before settling for prose. After tools
+                    # ran, the answer is usually in the reasoning: ask for it, not for an action.
                     if tools and full_reasoning.strip() and not nudged:
                         nudged = True
                         logger.info("Model '%s' stopped after reasoning only; nudging it to act.", model)
+                        metrics.nets.append("nudged")
                         messages.append({"role": "assistant", "content": full_reasoning.strip()})
-                        messages.append({"role": "user", "content": _NUDGE_TO_ACT})
+                        messages.append({"role": "user", "content": _NUDGE_TO_ANSWER if tools_used else _NUDGE_TO_ACT})
                         continue
+                    metrics.nets.append("re-asked")
                     synth_response = await provider.chat(model=model, messages=messages, profile=profile, thinking=thinking)
                     content = synth_response.get("message", {}).get("content", "") or full_reasoning.strip()
                     yield {"event": "token", "data": {"delta": content}}
@@ -1830,9 +1943,10 @@ class AgentOrchestrator:
                 # Said it acted, but nothing ran this turn: once, send it back with the tools
                 # still offered. The claim has already streamed, so the retry follows it after a
                 # paragraph break; only the retry's text is kept in history.
-                if tools and not tools_used and not claim_checked and claims_unrun_action(content):
+                if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
                     claim_checked = True
                     logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
+                    metrics.nets.append("claim-checked")
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
@@ -1854,7 +1968,8 @@ class AgentOrchestrator:
                         "fallback_used": False,
                         "compaction_performed": compaction_info,
                         "active_skills": active_skills or [],
-                        "tools_used": tools_used
+                        "tools_used": tools_used,
+                        "metrics": metrics.payload(tools_used),
                     }
                 }
                 return
@@ -1889,7 +2004,8 @@ class AgentOrchestrator:
                         "session_id": session_id,
                         "route_reason": route_reason,
                         "fallback_used": False,
-                        "tools_used": tools_used
+                        "tools_used": tools_used,
+                        "metrics": metrics.payload(tools_used),
                     }
                 }
                 return
@@ -1968,6 +2084,7 @@ class AgentOrchestrator:
                         "result": result_str[:2000],
                     }
                 tools_used.append(tool_item)
+                recent_objects.record(session_id, tool_item)
                 yield {"event": "tool_end", "data": tool_item}
 
                 messages.append({

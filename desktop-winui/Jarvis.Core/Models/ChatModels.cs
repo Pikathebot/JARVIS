@@ -85,6 +85,9 @@ public partial class ChatMessage : ObservableObject
     /// there is no separate "which model will answer" indicator before sending.</summary>
     public string? RouteReason { get; set; }
     public List<Dictionary<string, object?>> ToolsUsed { get; set; } = new();
+
+    /// <summary>The live turn's numbers for the metrics footer; null on history reloaded from the backend.</summary>
+    public TurnMetrics? Metrics { get; set; }
     public List<string> ActiveSkills { get; set; } = new();
     public List<PendingConfirmation> PendingConfirmations { get; set; } = new();
 

@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import urlsplit
 import httpx
@@ -493,6 +494,12 @@ class LlamaCppProvider(ModelProvider):
         accumulated_reasoning: list[str] = []
         tool_calls_map: dict[int, dict[str, Any]] = {}
         think_scanner = ThinkTagStreamScanner()
+        # For the reply's metrics line (PLAN 4.13 #9): time to the first streamed delta, and the
+        # server's own per-request timings (prompt / cached / generated tokens), which arrive on
+        # the final chunk.
+        t_request = time.perf_counter()
+        first_delta_ms: Optional[float] = None
+        server_timings: dict[str, Any] = {}
 
         client_timeout = httpx.Timeout(connect=30.0, read=300.0, write=60.0, pool=None)
         if isinstance(req_timeout, (int, float)):
@@ -530,10 +537,15 @@ class LlamaCppProvider(ModelProvider):
                             except Exception:
                                 continue
 
+                            if isinstance(chunk.get("timings"), dict):
+                                server_timings = chunk["timings"]
                             choices = chunk.get("choices", [])
                             if not choices:
                                 continue
                             delta = choices[0].get("delta", {})
+                            if first_delta_ms is None and (delta.get("content") or delta.get("reasoning_content")
+                                                           or delta.get("tool_calls")):
+                                first_delta_ms = (time.perf_counter() - t_request) * 1000.0
 
                             content_delta = delta.get("content")
                             if content_delta:
@@ -620,6 +632,8 @@ class LlamaCppProvider(ModelProvider):
             "raw": {
                 "content": full_content,
                 "reasoning": full_reasoning,
-                "tool_calls": final_tool_calls if final_tool_calls else None
+                "tool_calls": final_tool_calls if final_tool_calls else None,
+                "timings": server_timings,
+                "ttft_ms": first_delta_ms,
             }
         }

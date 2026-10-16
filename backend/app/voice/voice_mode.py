@@ -425,8 +425,11 @@ class VoiceModeController:
     async def _run_steps(self, steps: list[Step], session_id: str, utterance: str, approved_first: bool = False) -> str:
         """Run steps in order through the permission gate. ``approved_first``: the user just said
         yes to steps[0], so it runs without asking again; later steps are still checked."""
+        from app.agent import recent_objects
         from app.agent.permissions import evaluate_tool_permission
 
+        if not approved_first:
+            recent_objects.begin_turn(session_id)
         said: list[str] = []
         for i, step in enumerate(steps):
             gate_tool = "launch_app" if step.tool == "open_app" else step.tool
@@ -443,6 +446,9 @@ class VoiceModeController:
                     reason = (decision.reason or "That needs your okay.").rstrip(".")
                     return " ".join(said + [f"{reason}. Should I go ahead?"])
             result = await asyncio.to_thread(self._execute, step)
+            # The same record chat reads (PLAN 4.13 #4): a typed follow-up after a spoken
+            # "pause it" can tell whether the pause really happened.
+            recent_objects.record(session_id, {"tool": gate_tool, "args": gate_args, "result": result})
             if result.startswith("Error"):
                 said.append("I couldn't do that: " + result.removeprefix("Error:").strip().split(". ")[0] + ".")
                 break

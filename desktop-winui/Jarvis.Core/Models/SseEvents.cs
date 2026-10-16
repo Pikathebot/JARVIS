@@ -208,6 +208,50 @@ public sealed class SseDoneEvent
 
     [JsonPropertyName("tools_used")]
     public List<Dictionary<string, object?>> ToolsUsed { get; set; } = new();
+
+    /// <summary>The turn's numbers for the reply's metrics line (PLAN 4.13 #9); null from paths
+    /// that don't report them (cloud, the duplicate-loop stop).</summary>
+    public TurnMetrics? Metrics { get; set; }
+}
+
+/// <summary>What one reply cost: first-token time and prompt/cache sizes from the first model round,
+/// generation speed over all rounds, and the rounds, tools and backend safety nets it needed.</summary>
+public sealed class TurnMetrics
+{
+    public int Rounds { get; set; }
+    public int Tools { get; set; }
+    public double? TtftMs { get; set; }
+    public double? TokensPerSecond { get; set; }
+    public int? PromptTokens { get; set; }
+    public int? CachedTokens { get; set; }
+    public List<string> Nets { get; set; } = new();
+
+    /// <summary>The footer line, e.g. "main · 0.4 s first token · 27 tok/s · 3 rounds · 2 tools ·
+    /// 1.6k prompt (1.4k cached) · nudged". Parts the turn didn't produce are left out.</summary>
+    public static string Format(string? model, TurnMetrics? m)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(model)) parts.Add(model);
+        if (m is not null)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            if (m.TtftMs is double t) parts.Add((t / 1000.0).ToString("0.0", inv) + " s first token");
+            if (m.TokensPerSecond is double s) parts.Add(Math.Round(s).ToString(inv) + " tok/s");
+            if (m.Rounds > 1) parts.Add($"{m.Rounds} rounds");
+            if (m.Tools > 0) parts.Add(m.Tools == 1 ? "1 tool" : $"{m.Tools} tools");
+            if (m.PromptTokens is int p)
+                parts.Add(Kilo(p, inv) + " prompt" + (m.CachedTokens is int c && c > 0 ? $" ({Kilo(c, inv)} cached)" : ""));
+            foreach (var net in m.Nets.Distinct())
+            {
+                var n = m.Nets.Count(x => x == net);
+                parts.Add(n > 1 ? $"{net} ×{n}" : net);
+            }
+        }
+        return string.Join(" · ", parts);
+    }
+
+    private static string Kilo(int tokens, IFormatProvider inv) =>
+        tokens >= 1000 ? (tokens / 1000.0).ToString("0.0", inv) + "k" : tokens.ToString(inv);
 }
 
 public sealed class SseErrorEvent

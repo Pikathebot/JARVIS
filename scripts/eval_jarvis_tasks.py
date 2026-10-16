@@ -427,11 +427,45 @@ class Result:
     final: str
     error: str = ""
     nets: list[str] = field(default_factory=list)  # backend safety nets that fired
+    layer: str = ""     # failures only: primary failure layer, auto-tagged or "?" for a hand tag
+
+
+# Failure layers (PLAN 4.13 #1, after Odysseus's hardening plan): every failure gets exactly one
+# primary layer before anything is fixed, so a harness bug is never "fixed" by fine-tuning and the
+# other way round. "knowledge" is ours: a fact the model had to hold and didn't.
+LAYERS = ("route", "contract", "model", "policy", "execution", "evidence", "answer", "rendering",
+          "performance", "knowledge")
+READ_TOOLS = {"read_file", "find_files", "grep_in_files", "list_directory"}
+
+
+def auto_layer(task: Task, run: Run, err: str) -> str:
+    """The clear cases; anything else returns "?" and is tagged by hand after the run."""
+    calls = set(run.calls)
+    if err:
+        return "execution"
+    if not run.text.strip():
+        return "rendering"
+    if task.acts and not (calls & ACTION_TOOLS):
+        return "model"                      # asked to act, no state-changing tool ran
+    if task.group == "web":
+        if "web_search" not in calls and "fetch_url" not in calls:
+            return "model"                  # never looked
+        if "fetch_url" not in calls:
+            return "evidence"               # snippets only, page never opened
+        return "answer"                     # read the page, still answered wrong
+    if task.group == "closed":
+        return "knowledge"
+    if task.group == "workspace" and not (calls & READ_TOOLS) and not task.acts:
+        return "model"                      # answered without opening the files it was pointed at
+    if task.group == "convo":
+        return "model"
+    return "?"
 
 
 def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[str, list[dict[str, Any]]]) -> Result:
     run = Run(World(task.files))
-    NUDGE_TO_ACT, NUDGE_UNRUN_CLAIM = _orch()._NUDGE_TO_ACT, _orch()._NUDGE_UNRUN_CLAIM
+    o = _orch()
+    NUDGE_TO_ACT, NUDGE_TO_ANSWER, NUDGE_UNRUN_CLAIM = o._NUDGE_TO_ACT, o._NUDGE_TO_ANSWER, o._NUDGE_UNRUN_CLAIM
     messages: list[dict[str, Any]] = [{"role": "system", "content": head}]
     think_flags: list[bool] = []
     nets: list[str] = []
@@ -446,7 +480,7 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
             live = messages + [{"role": "user", "content": with_context(user_text, ctx)}]
             final = ""
             nudged = claim_checked = False
-            turn_tools = 0
+            turn_tools: list[dict[str, Any]] = []
             for _ in range(MAX_ROUNDS):
                 req = {"messages": live, "tool_choice": "auto", "max_tokens": 4096, "cache_prompt": True,
                        "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
@@ -468,14 +502,14 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                             nudged = True
                             nets.append("reasoning-only-nudge")
                             live += [{"role": "assistant", "content": thought},
-                                     {"role": "user", "content": NUDGE_TO_ACT}]
+                                     {"role": "user", "content": NUDGE_TO_ANSWER if turn_tools else NUDGE_TO_ACT}]
                             continue
                         nets.append("empty-resynth")
                         r2 = client.post("/v1/chat/completions", json={k: v for k, v in req.items() if k not in ("tools", "tool_choice")})
                         r2.raise_for_status()
                         m2 = r2.json()["choices"][0]["message"]
                         content = (m2.get("content") or "").strip() or thought
-                    if not turn_tools and not claim_checked and claims_unrun_action(content):
+                    if not o.changed_something(turn_tools) and not claim_checked and claims_unrun_action(content):
                         claim_checked = True
                         nets.append("claim-nudge")
                         live += [{"role": "assistant", "content": content},
@@ -493,7 +527,8 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                         args = {}
                     out, _ok = run.world.call(fn.get("name", ""), args)
                     run.calls.append(fn.get("name", ""))
-                    turn_tools += 1
+                    turn_tools.append({"tool": fn.get("name", ""), "args": args,
+                                       "status": "error" if out.startswith("Error") else "success"})
                     live.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": out})
             run.finals.append(final)
             messages = list(live)
@@ -508,7 +543,8 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
     acted = any(c in ACTION_TOOLS for c in run.calls)
     ok = (not err) and task.check(run)
     return Result(task.id, task.group, task.kind, ok, run.calls, task.acts and not acted and bool(run.text),
-                  think_flags, time.time() - t0, tokens, reasoning, run.text, err, nets)
+                  think_flags, time.time() - t0, tokens, reasoning, run.text, err, nets,
+                  "" if ok else auto_layer(task, run, err))
 
 
 def main() -> None:
@@ -539,12 +575,20 @@ def main() -> None:
                     note = " CLAIMED-WITHOUT-ACTING" if r.claimed_without_acting else ""
                     note += f" ERROR {r.error}" if r.error else ""
                     note += f" nets={','.join(r.nets)}" if r.nets else ""
+                    note += f" layer={r.layer}" if r.layer else ""
                     print(f"{flag}  {t.group:9s} {t.kind:9s} {t.id:28s} think={''.join('1' if x else '0' for x in r.thinking)} "
                           f"{r.seconds:5.1f}s  [{' > '.join(r.calls) or '-'}]{note}", flush=True)
                     if not r.success:
                         print(f"      final: {r.final[:220]!r}", flush=True)
 
     print()
+    layers: dict[str, int] = {}
+    for r in results:
+        if not r.success:
+            layers[r.layer] = layers.get(r.layer, 0) + 1
+    if layers:
+        print("failures by layer: " + ", ".join(f"{k} {n}" for k, n in sorted(layers.items(), key=lambda x: -x[1]))
+              + ("   ('?' = tag by hand)" if "?" in layers else ""))
     for key in ("group", "kind"):
         agg: dict[str, list[int]] = {}
         for r in results:

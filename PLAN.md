@@ -1103,6 +1103,14 @@ for now; re-run both after the claim detector fix, then let the blind votes (#8)
 **Raised, not yet discussed:** check the governor against §0's "turns itself back on when the heavy work is
 finished": after an eviction, does the model come back on its own once the external load ends, and how fast?
 
+**Built 2026-10-16 (part 1), unverified on device:** #13 nudge wording; claim detector (state-changing tools
+only back a claim, subject-less claims, "I'll ..." promises, "copied to clipboard" -- Defiant's chains 12/15 ->
+14/15 on a re-run); #1 auto failure layers in the eval (all failures in both models' runs auto-tagged); #3 git
+tools refuse cleanly outside a repo + `test_tool_contract.py`; #9 metrics footer (llama-server `timings` +
+first-token time -> `metrics` on `done` -> the bubble's footer line); #4 recent-objects record in the turn
+context, fed by chat and voice-mode tool results, cleared on session delete. 831 backend tests pass; WinUI builds.
+Not yet mirrored in the eval: the recent-objects block (the eval builds turn context without a session).
+
 **Build order for the batch (agreed items):** 13 + claim detector (small) -> 1 (eval layers) -> 3 (fail-fast
 refusals) -> 9 (metrics footer) -> 4 (recent objects) -> 6 (taint gate) -> 7 (research) -> 8 (review page, then
 in-app compare) -> 2 (sealed set, as new requests come in) -> 12 (notes/tasks, calendar, email) -> 10 (fine-tune).

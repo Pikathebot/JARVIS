@@ -11,8 +11,8 @@ import pytest
 from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
 from app.agent.orchestrator import (
-    AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_UNRUN_CLAIM, _with_system_prompt, claims_unrun_action,
-    looks_like_action,
+    AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_TO_ANSWER, _NUDGE_UNRUN_CLAIM, _with_system_prompt,
+    TurnMetrics, changed_something, claims_unrun_action, looks_like_action,
 )
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
@@ -176,9 +176,37 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     ("Python passes object references by value.", False),
     ("I can open it if you tell me the exact name.", False),
     ("I haven't opened anything yet.", False),
+    # 2026-10-16, Defiant Fable 9B: claims without "I", and a promise no tool backed
+    ("Bumped version to 1.4.4 and saved.", True),
+    ("Done. Saved the summary to todo_summary.txt.", True),
+    ("Copied the action items to your clipboard.", True),
+    ("worker.log has more ERROR lines (4 vs. 2).\n\nI'll remind you of this in 10 minutes.", True),
+    ("I will now delete the drafts folder.", True),
+    ("Action items copied to clipboard:\n- Bob: book the venue", True),
+    ("The summary is saved to todo_summary.txt.", True),
+    ("Changes are saved to disk when the buffer flushes.", False),
+    # offers, questions and plain facts are not claims
+    ("I'll open it if you want.", False),
+    ("Want me to set a reminder? I'll remind you whenever you say.", False),
+    ("Should I save it?", False),
+    ("I'll need the exact file name first.", False),
+    ("Python 3.13 was released in October 2024.", False),
+    ("The falls are in Kanniyakumari district; the river was dammed in 1906.", False),
 ])
 def test_claims_unrun_action(text, claims):
     assert claims_unrun_action(text) is claims
+
+
+def test_only_successful_state_changing_tools_back_a_claim():
+    assert not changed_something([])
+    assert not changed_something([{"tool": "read_file", "status": "success"},
+                                  {"tool": "web_search", "status": "success"},
+                                  {"tool": "reminders", "args": {"action": "list"}, "status": "success"}])
+    assert not changed_something([{"tool": "write_file", "status": "error"},
+                                  {"tool": "kill_process", "status": "timeout"}])
+    assert changed_something([{"tool": "read_file"}, {"tool": "write_file"}])  # non-stream items carry no status
+    assert changed_something([{"tool": "reminders", "args": {"action": "cancel"}, "status": "success"}])
+    assert changed_something([{"tool": "remind_me", "status": "success"}])
 
 
 def _text_turn(text):
@@ -208,6 +236,72 @@ async def test_a_claimed_action_with_no_tool_call_is_sent_back_once(tmp_path):
     second = provider.calls[1]["messages"]
     assert second[-1] == {"role": "user", "content": _NUDGE_UNRUN_CLAIM}
     assert "attempted to open Qwen" in second[-2]["content"]
+
+
+def _read_turn(path):
+    return [
+        {"event": "tool_call", "tool_call": {"id": "r1", "type": "function",
+                                              "function": {"name": "read_file", "arguments": {"file_path": path}}}},
+        {"event": "done", "raw": {"content": "", "reasoning": "", "tool_calls": None}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_claim_after_only_reads_is_still_sent_back(tmp_path):
+    # 2026-10-16: read config.json, then "Bumped ... and saved." with no write. Any tool used to
+    # count as backing; only a state-changing one does now.
+    (tmp_path / "config.json").write_text('{"version": "1.4.3"}', encoding="utf-8")
+    provider = ScriptedProvider([
+        _read_turn("config.json"),
+        _text_turn("Bumped version to 1.4.4 and saved."),
+        _text_turn("I have not saved it yet."),
+    ])
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+    events = [ev async for ev in orch._run_provider_stream_loop(
+        provider=provider, session_id="claim-read-test", model="main", system_prompt="sys",
+        conversation_messages=[{"role": "user", "content": "bump the patch version in config.json"}],
+        tools=[read_file, delete_file], chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+    )]
+    assert events[-1]["event"] == "done"
+    assert len(provider.calls) == 3
+    assert provider.calls[2]["messages"][-1] == {"role": "user", "content": _NUDGE_UNRUN_CLAIM}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_only_after_tools_asks_for_the_answer(tmp_path):
+    # The answer sat in the reasoning after a read; "you stopped before doing anything" was false
+    # and drew "I apologize for the confusion".
+    (tmp_path / "story.md").write_text("The Entity controls 0.001% of the population.", encoding="utf-8")
+    provider = ScriptedProvider([
+        _read_turn("story.md"),
+        [{"event": "reasoning_delta", "content": "It controls 0.001%."},
+         {"event": "done", "raw": {"content": "", "reasoning": "It controls 0.001%.", "tool_calls": None}}],
+        _text_turn("The Entity controls 0.001% of the population."),
+    ])
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+    events = [ev async for ev in orch._run_provider_stream_loop(
+        provider=provider, session_id="answer-nudge-test", model="main", system_prompt="sys",
+        conversation_messages=[{"role": "user", "content": "how much does the Entity control?"}],
+        tools=[read_file], chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+    )]
+    assert events[-1]["event"] == "done"
+    assert provider.calls[2]["messages"][-1] == {"role": "user", "content": _NUDGE_TO_ANSWER}
+    m = events[-1]["data"]["metrics"]  # the reply's metrics line (PLAN 4.13 #9)
+    assert (m["rounds"], m["tools"], m["nets"]) == (3, 1, ["nudged"])
+
+
+def test_turn_metrics_from_llama_server_timings():
+    m = TurnMetrics()
+    m.add_round({"ttft_ms": 412.6, "timings": {"cache_n": 1400, "prompt_n": 230, "predicted_n": 40, "predicted_ms": 1500.0}})
+    m.add_round({"ttft_ms": 90.0, "timings": {"cache_n": 1700, "prompt_n": 60, "predicted_n": 14, "predicted_ms": 500.0}})
+    m.nets.append("claim-checked")
+    p = m.payload([{"tool": "read_file"}])
+    # first-token time and prompt / cache from round one; speed over every round
+    assert p == {"rounds": 2, "tools": 1, "ttft_ms": 413, "tokens_per_second": 27.0,
+                 "prompt_tokens": 1630, "cached_tokens": 1400, "nets": ["claim-checked"]}
+    assert TurnMetrics().payload([])["tokens_per_second"] is None  # a provider without timings
 
 
 @pytest.mark.asyncio

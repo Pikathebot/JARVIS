@@ -624,6 +624,7 @@ public partial class ChatViewModel : ObservableObject
         _streamingMessage.RouteReason = e.RouteReason;
         _streamingMessage.ActiveSkills = e.ActiveSkills;
         _streamingMessage.ToolsUsed = e.ToolsUsed;
+        _streamingMessage.Metrics = e.Metrics;
         if (!string.IsNullOrEmpty(e.Response) && string.IsNullOrEmpty(_streamingMessage.Content))
         {
             _streamingMessage.Content = e.Response;
