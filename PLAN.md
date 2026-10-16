@@ -973,7 +973,9 @@ staging were not needed yet; they come with Phase 2's async ring.
 - Done and committed: plan + eval `06f0611`; part 1 `0e014ae` (#13, claim detector, #1, #3, #9, #4); part 2
   `3473319` (#6). All build/test-verified only (836 backend tests, WinUI builds); **nothing seen on device**.
 - #7 research built 2026-10-16 late (see #7 below), **uncommitted**; 864 tests, WinUI builds; eval re-run done.
-- Next to build, in order: #8 offline review page (then the in-app compare), #2
+- #8 offline review page built (`scripts/review_answers.py`, see #8); the user's votes on 9B vs Defiant decide the
+  main model.
+- Next to build, in order: #8's in-app compare, #2
   sealed set as new real requests come in, #12 notes/tasks -> calendar -> email, #10 fine-tune (Soup smoke test).
 - Device checks for the user: the metrics footer under replies; "summarise <url>" then "save it to a file"
   should ask once; "did you do it?" follow-ups; tray quit; voice mode (9a0465b).
@@ -1087,6 +1089,18 @@ carry planted facts, so only a real search + read passes the current-events task
    generated in advance by the unattended eval runs), shows each prompt's two answers unlabelled in random
    order, takes A / B / tie, reveals the models after each vote, and saves votes as `{prompt, chosen, rejected}`
    (DPO-ready). Pairs with identical answers are skipped. First use: live 9B vs Defiant Fable 9B.
+   **Offline page built 2026-10-16 (tests + seen rendering in a browser; no votes cast yet).**
+   `scripts/review_answers.py A.json B.json` (stdlib only, no model needed) serves http://127.0.0.1:8010 and
+   opens it. Pairs = same task, same seed (the n-th row of a task is seed n); identical or both-empty answers
+   skipped; random side per pair, kept server-side, so the page can't know the models before the vote. Keys
+   1 / 2 / 3 / S = left / right / tie / skip, Enter = next. After a vote it reveals each side's model, whether
+   it passed the eval's check, its tools and time, plus a running tally. Votes append to
+   `data/preference_votes.jsonl` (gitignored): `{pair, task, rep, prompt, earlier_turns, chosen, rejected,
+   chosen_model, rejected_model, tie, ...}`; multi-turn tasks compare only the last answer. Already-voted pairs
+   are skipped, so a review can stop and resume. 9B vs Defiant (post-#7 results): 117 pairs.
+   For the user: run
+   `.\.venv\Scripts\python.exe scripts\review_answers.py scripts\eval_results\2026-10-16-research\qwen3.5-9b-iq3xxs_r3.json scripts\eval_results\2026-10-16-research\defiant-fable-9b-iq3xxs_r3.json`.
+   Next: the in-app variant below (same vote file).
    **In-app variant (user's idea), decided 2026-10-16:** one model, two answers, so no model swap. Answer 1 is the
    normal reply, shown at once. Only on text-only replies (no tool ran, so nothing happens twice). It fires when
    both conditions hold: a ~1-in-15 chance per eligible reply, and the model itself judges a meaningfully
