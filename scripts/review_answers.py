@@ -307,11 +307,13 @@ def main() -> None:
     ap.add_argument("b", type=Path, help="second eval result file")
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--no-open", action="store_true", help="don't open the browser")
+    ap.add_argument("--votes", type=Path, default=VOTES_PATH,
+                    help="where votes go (another reviewer's votes in their own file, e.g. Claude's)")
     args = ap.parse_args()
 
-    pairs = build_pairs(args.a, args.b, task_turns(), voted_keys(), random.Random())
-    print(f"{len(pairs)} pairs to review ({model_name(args.a)} vs {model_name(args.b)}); votes -> {VOTES_PATH}")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(Review(pairs)))
+    pairs = build_pairs(args.a, args.b, task_turns(), voted_keys(args.votes), random.Random())
+    print(f"{len(pairs)} pairs to review ({model_name(args.a)} vs {model_name(args.b)}); votes -> {args.votes}")
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(Review(pairs, votes_path=args.votes)))
     url = f"http://127.0.0.1:{args.port}"
     print(f"open {url}  (Ctrl+C to stop; already-voted pairs are skipped next time)")
     if not args.no_open:

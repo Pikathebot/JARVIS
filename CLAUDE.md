@@ -48,8 +48,9 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
 ## Runtime reality (check before trusting config)
 
 - **Models actually served** come from `data/models.json` (per-slot selection) ahead of `.env`.
-  As of 2026-09-23: main = `models/qwen3.5-9b/Qwen3.5-9B-UD-IQ3_XXS.gguf` (+ Q8_0 projector, 32k
-  ctx, ~5.0 GB), fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only). `backend/.env`'s
+  As of 2026-10-16: main = `models/defiant-fable-9b/Defiant-Fable-9B-IQ3_XXS.gguf` (+ Q8_0 projector, 32k
+  ctx; switched from `models/qwen3.5-9b/Qwen3.5-9B-UD-IQ3_XXS.gguf`, kept as fallback, after the eval and
+  the user's blind votes, PLAN 4.13 #8), fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only). `backend/.env`'s
   `LLAMA_*_MODEL_PATH` / `MAIN_MODEL` still name the older Q3_K_XL and 4B -- stale, not live.
   `GET /api/models` is the truth at runtime.
 - **Ports:** 8000 backend, 8001 llama-server (the chat model), 8002 image-captioner sidecar,

@@ -631,7 +631,7 @@ in chat doesn't stick.
 **b2. Settings window: done 2026-10-02** (device-checked; see `docs/MILESTONES.md`).
 
 **c. Then: evaluate DavidAU's "Defiant Fable" 9B as the main model** -- **built and measured
-2026-10-14, not switched (the user decides; feel/persona unverified on device).**
+2026-10-14, switched to main 2026-10-16 after the eval + blind review (4.13 #8).**
 `models/defiant-fable-9b/Defiant-Fable-9B-IQ3_XXS.gguf`, 3745 MiB: requantized from the Q8_0
 (sha256 matches HF) with our own imatrix (`calibration.txt`: 350k chars of chat/tool turns from
 the DB + 350k of backend/C# code; docs kept out for the PPL test), output Q5_K and embeddings
@@ -1101,6 +1101,20 @@ carry planted facts, so only a real search + read passes the current-events task
    For the user: run
    `.\.venv\Scripts\python.exe scripts\review_answers.py scripts\eval_results\2026-10-16-research\qwen3.5-9b-iq3xxs_r3.json scripts\eval_results\2026-10-16-research\defiant-fable-9b-iq3xxs_r3.json`.
    Next: the in-app variant below (same vote file).
+   **First review, 2026-10-16 (9B vs Defiant, post-#7 answers, 117 pairs).** Claude voted blind first into
+   `data/preference_votes_claude.jsonl` (`--votes`, only left/right seen, no tally until the user finished),
+   then the user voted. User: **Defiant 68, 9B 49**, no ties. Claude: 9B 54, Defiant 41, 22 ties. Agreement
+   53/117 (53/95 excluding Claude's ties). By group, the user: system 18-4 and chain 11-4 for Defiant, workspace
+   14-10 Defiant, convo 5-1 Defiant; closed 21-14 and web 9-6 for the 9B. The split is style: on actions the user
+   picked the *shorter* reply 26 of 37 times ("Done." / "VRAM: 5123 / 8188 MiB."), Claude picked the more
+   informative one ("bumped 1.4.3 -> 1.4.4", listing the copied items). Facts a reader can't check drift: 4 of the
+   user's picks failed the eval's check where the other passed (Ishiguro 2004 vs 2017, the mod name, the
+   geometry total, hybrid-kv); for DPO (#10) drop votes whose chosen answer failed and rejected passed.
+   Takeaways: (1) user and eval agree on Defiant (100 vs 93/123); (2) action confirmations should be terse --
+   a persona/fine-tune target, not just a model choice.
+   **Switched 2026-10-16: main = Defiant IQ3** (`data/models.json`, via `ModelCatalog.select`; projector paired,
+   so vision stays). The Qwen UD-IQ3_XXS stays on disk as the fallback. Unverified on device: first launch
+   (VRAM ladder, new launch cost), persona feel, and the still-open telemetry-fabrication check from 4.8c.
    **In-app variant (user's idea), decided 2026-10-16:** one model, two answers, so no model swap. Answer 1 is the
    normal reply, shown at once. Only on text-only replies (no tool ran, so nothing happens twice). It fires when
    both conditions hold: a ~1-in-15 chance per eligible reply, and the model itself judges a meaningfully
