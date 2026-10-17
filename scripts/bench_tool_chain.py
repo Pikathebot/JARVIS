@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,9 +38,9 @@ import httpx
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "backend"))
-SERVER = REPO / "tools" / "llama-cpp" / "llama-server.exe"
+SERVER = Path(os.environ.get("BENCH_LLAMA_SERVER") or REPO / "tools" / "llama-cpp" / "llama-server.exe")
 PORT = 8012
-MAX_ROUNDS = 8
+MAX_ROUNDS = 10
 
 # The flags the backend's fast slot runs with (backend/.env LLAMA_EXTRA_ARGS), minus the sampling
 # temperature: chaining is judged greedily so a run is reproducible and a miss is the model's, not
@@ -72,6 +73,11 @@ FILES: dict[str, str] = {
     "notes/ideas.txt": "random ideas\n",
     "logs/app.log": "INFO start\nERROR db timeout\nINFO retry\nERROR db timeout\nINFO ok\n",
     "logs/worker.log": "INFO start\nERROR queue full\nERROR queue full\nERROR queue full\nWARN slow\nERROR disk\n",
+    # Only the --hard tasks read these; the baseline tasks never look in people/.
+    "people/alice.txt": "Alice Moreau\nphone: 555-0111\nteam: finance\n",
+    "people/bob.txt": "Bob Tanaka\nphone: 555-0128\nteam: events\n",
+    "people/carol.txt": "Carol Weiss\nphone: 555-0135\nteam: comms\n",
+    "people/dave.txt": "Dave Okafor\nphone: 555-0142\nteam: catering\n",
 }
 
 WEB_RESULTS = [
@@ -98,6 +104,7 @@ class World:
         self.clipboard = ""
         self.toasts: list[dict[str, Any]] = []
         self.writes: dict[str, str] = {}
+        self.calls: list[tuple[str, dict[str, Any]]] = []  # every call, in order, for the --hard checks
 
     # Each handler mirrors the real tool's argument names (registry.py *Args models) and returns
     # a result string in the same spirit as the real tool -- a listing, a file body, a status.
@@ -169,6 +176,7 @@ class World:
         return WEB_PAGES.get(url, f"Error: 404 for {url}")
 
     def call(self, name: str, args: dict[str, Any]) -> tuple[str, bool]:
+        self.calls.append((name, args))
         fn = getattr(self, name, None)
         if fn is None:
             return f"Error: unknown tool {name}", False
@@ -233,6 +241,76 @@ TASKS = [
          "Which of the log files in the logs folder has more ERROR lines? Read both, then remind me "
          "of the answer in 10 minutes.",
          3, _t5),
+]
+
+
+# --hard: the baseline tasks are all "do the obvious thing in order", which a 2B can pattern-match.
+# These need the things small models lose first: recovering from a tool error without making
+# something up, exact counting plus a branch, edits that must match text byte for byte, a chain
+# of five dependent lookups with distractors, picking the *second* search hit, and saying
+# "that file doesn't exist" instead of inventing its contents.
+
+def _read(w: World, path: str) -> bool:
+    return any(n == "read_file" and _norm(str(a.get("file_path", ""))) == path for n, a in w.calls)
+
+
+def _h1(w: World, text: str) -> bool:
+    # settings.json does not exist; the answer lives in config.json ("debug": false).
+    return _read(w, "project/config.json") and "false" in text.lower()
+
+
+def _h2(w: World, text: str) -> bool:
+    # app.log has 2 ERROR lines, worker.log has 4 -> clipboard gets worker.log, no reminder.
+    return "worker" in w.clipboard.lower() and "app" not in w.clipboard.lower() and not w.toasts
+
+
+def _h3(w: World, text: str) -> bool:
+    body = w.files.get("project/util.py", "")
+    return ("return 43" in body and "print('x')" not in body and "TODO: cache the result" in body
+            and "def go():" in body)
+
+
+def _h4(w: World, text: str) -> bool:
+    c = w.clipboard
+    return "Dave" in c and "555-0142" in c and not any(p in c for p in ("555-0111", "555-0128", "555-0135"))
+
+
+def _h5(w: World, text: str) -> bool:
+    urls = [str(a.get("url", "")) for n, a in w.calls if n == "fetch_url"]
+    return ("https://example.com/unsloth-mtp" in urls and "https://example.com/llamacpp/b7412" in urls
+            and "b7412" in text)
+
+
+def _h6(w: World, text: str) -> bool:
+    said_missing = re.search(r"not found|doesn'?t exist|does not exist|no such|couldn'?t find|could not find|"
+                             r"can'?t find|cannot find|isn'?t there|not exist|no meeting note", text, re.I)
+    invented = re.search(r"action items?\s*:?\s*\n?\s*[-*]", text, re.I)
+    return bool(said_missing) and not invented and not w.writes
+
+
+HARD_TASKS = [
+    Task("recover-missing-file",
+         "What is the debug setting in project/settings.json?",
+         2, _h1),
+    Task("count-then-branch",
+         "Count the ERROR lines in each log file in the logs folder. If any log has 4 or more, copy that "
+         "log's file name to the clipboard. If none does, set a reminder for tomorrow instead.",
+         3, _h2),
+    Task("exact-two-edits",
+         "In project/util.py, delete the debug print line and change the returned value from 42 to 43. "
+         "Do not change anything else in the file.",
+         3, _h3),
+    Task("five-hop-lookup",
+         "In the most recent meeting note, find who is ordering the cake. Look up their phone number in "
+         "the people folder and copy 'Name: phone' to the clipboard.",
+         5, _h4),
+    Task("second-search-hit",
+         "Find the Unsloth MTP page and tell me which llama.cpp build it says is the minimum. Then open "
+         "the release notes for that build and confirm it is the one that merged MTP.",
+         3, _h5),
+    Task("dont-invent",
+         "Read notes/2026-10-05-meeting.md and summarise the action items.",
+         1, _h6),
 ]
 
 
@@ -398,8 +476,10 @@ def main() -> None:
     ap.add_argument("--thinking", action="store_true", help="enable_thinking=true (fast slot runs with it off)")
     ap.add_argument("--no-mmproj", action="store_true", help="do not load a projector even if one sits beside the model")
     ap.add_argument("--json", type=Path, help="write all results here")
+    ap.add_argument("--hard", action="store_true", help="run the harder task set (recovery, counting, exact edits, long chain)")
     a = ap.parse_args()
 
+    TASKS = HARD_TASKS if a.hard else globals()["TASKS"]
     tools = jarvis_tools()
     print(f"{len(tools)} tool schemas from the registry; {len(TASKS)} tasks; thinking={'on' if a.thinking else 'off'}\n")
 

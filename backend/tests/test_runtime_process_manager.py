@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.agent.runtime_process_manager import (
     RuntimeProcessManager,
     reset_runtime_process_manager,
+    exe_for_model,
     resolve_repo_path,
 )
 
@@ -22,6 +23,15 @@ def test_resolve_repo_path():
     p_rel = resolve_repo_path("models/test.gguf")
     assert p_rel.is_absolute()
     assert str(p_rel).endswith("models\\test.gguf") or str(p_rel).endswith("models/test.gguf")
+
+
+def test_ternary_quants_get_the_prism_server_and_others_keep_the_default():
+    stock = Path("stock/llama-server.exe")
+    bonsai = Path("models/bonsai-2-9b/Ternary-Bonsai-2-9B-PQ2_0.gguf")
+    prism = exe_for_model(bonsai, stock)
+    assert prism != stock and "llama-cpp-prism" in str(prism).replace("\\", "/")
+    assert exe_for_model(Path("models/x/Qwen3.5-9B-UD-IQ3_XXS.gguf"), stock) == stock
+    assert exe_for_model(Path("models/x/Model-PTQ1_0.gguf"), stock) != stock
 
 
 @pytest.mark.anyio

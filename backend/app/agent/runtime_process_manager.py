@@ -59,6 +59,23 @@ def resolve_repo_path(path_str: str) -> Path:
     return p
 
 
+# Ternary quants (Bonsai) need the PrismML llama.cpp fork; stock llama-server rejects them as an
+# unknown tensor type. The fork runs every other model too, but stock stays the default.
+PRISM_QUANT_TOKENS = ("pq2_0", "ptq1_0")
+PRISM_SERVER_EXE = "tools/llama-cpp-prism/llama-server.exe"
+
+
+def exe_for_model(model: Path, default_exe: Path) -> Path:
+    """The llama-server binary able to load ``model``: the fork for PQ2_0/PTQ1_0 files, else ``default_exe``."""
+    if any(t in model.name.lower() for t in PRISM_QUANT_TOKENS):
+        prism = resolve_repo_path(PRISM_SERVER_EXE)
+        if prism.is_file():
+            return prism
+        logger.warning("%s needs the PrismML fork but %s is missing; stock llama-server will likely reject it",
+                       model.name, prism)
+    return default_exe
+
+
 class RuntimeProcessManager:
     """
     Deterministic OS process management for llama-server.exe.
@@ -391,7 +408,7 @@ class RuntimeProcessManager:
         projector: Optional[Path],
     ) -> list[str]:
         cmd = [
-            str(resolved_exe),
+            str(exe_for_model(model, resolved_exe)),
             "--model", str(model),
             "--alias", alias,
             "--host", str(self.host),
