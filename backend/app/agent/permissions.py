@@ -101,6 +101,10 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     # Memory: the model's own notes, shown to the user as a tool card; ephemeral turns refuse.
     "remember": RiskTier.LOW_RISK,
     "forget": RiskTier.LOW_RISK,
+    # The user's notes and to-do list (PLAN 4.16): reading, adding and ticking off run -- the user
+    # asked in words, and a line is as easy to undo by hand; removing a task asks (rule below).
+    "notes": RiskTier.LOW_RISK,
+    "tasks": RiskTier.LOW_RISK,
 }
 
 
@@ -749,6 +753,11 @@ def evaluate_tool_permission(
             custom_reason = f"{custom_reason} Force-ends it at once: anything unsaved is lost.".strip()
         else:
             custom_reason = f"{custom_reason} Asks it to close, as clicking X does; it may ask to save.".strip()
+    elif tool_name == "tasks" and str(arguments.get("action", "")).strip().lower() == "remove":
+        effective_tier = RiskTier.CONFIRMATION_REQUIRED
+        which = arguments.get("task_id") or arguments.get("text") or ""
+        custom_reason = (f"Removes \"{which}\" from your task list (tasks.md) for good." if which
+                         else "Removes a task from your task list (tasks.md) for good.")
     elif tool_name in _GIT_CARD_TEXT:
         custom_reason = _GIT_CARD_TEXT[tool_name].format(
             file=arguments.get("file_path") or "", branch=arguments.get("branch") or "",
@@ -762,9 +771,9 @@ def evaluate_tool_permission(
 
     # Outside text read this turn could be steering the call (PLAN 4.13 #6).
     if tainted_by and effective_tier == RiskTier.LOW_RISK:
-        from app.agent.taint import SINKS
+        from app.agent.taint import is_sink
 
-        if tool_name in SINKS:
+        if is_sink(tool_name, arguments):
             effective_tier = RiskTier.CONFIRMATION_REQUIRED
             custom_reason = (f"This turn read {tainted_by}, and text from there could be steering this. "
                              + (custom_reason or "")).strip()

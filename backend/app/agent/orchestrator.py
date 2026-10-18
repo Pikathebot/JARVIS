@@ -95,7 +95,7 @@ _ASKS_CAPABILITIES = re.compile(
     r")(?:\s+(?:here|now|right\s+now))?[\s,]*(?:jarvis|sir)?\s*[?.!]*\s*", re.I)
 _CAPABILITIES_ALL = ("read, find and save files in your folders, search the web and read pages, open and "
                      "switch apps, type and press keys for you, control volume and media, look at your screen, "
-                     "check the system's readings and running apps, set reminders, and remember things you "
+                     "check the system's readings and running apps, set reminders, keep your notes and to-do list, and remember things you "
                      "tell me to")
 _FAST_PICKED_CAPABILITIES = ("You've picked the Fast model, so right now I can only talk: answer questions, "
                              "explain and write from what's in this conversation. I can't touch files, the web "
@@ -431,7 +431,10 @@ def changed_something(tools_used: list[Any]) -> bool:
         if not isinstance(item, dict) or item.get("status") in ("error", "timeout"):
             continue
         name = item.get("tool") or item.get("name") or ""
-        if name == "reminders" and (item.get("args") or {}).get("action", "list") == "list":
+        action = str((item.get("args") or {}).get("action") or "list").lower()
+        if name == "reminders" and action == "list":
+            continue
+        if (name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list"):
             continue
         if name not in _READ_ONLY_TOOLS:
             return True

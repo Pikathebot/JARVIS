@@ -29,6 +29,17 @@ SOURCES: dict[str, str] = {
 FILE_READS = frozenset({"read_file", "read_artifact"})
 SINKS = frozenset({"type_text", "press_keys", "write_file", "patch_file", "set_clipboard", "remember"})
 FILE_WRITES = frozenset({"write_file", "patch_file"})
+# Tools that both read and write: only their writing actions are sinks (PLAN 4.16).
+ACTION_SINKS: dict[str, frozenset[str]] = {
+    "notes": frozenset({"add", "append"}),
+    "tasks": frozenset({"add", "done", "reopen", "edit", "remove"}),
+}
+
+
+def is_sink(tool: str, args: dict[str, Any]) -> bool:
+    if tool in ACTION_SINKS:
+        return str((args or {}).get("action") or "list").strip().lower() in ACTION_SINKS[tool]
+    return tool in SINKS
 
 _lock = threading.Lock()
 _outside_files: dict[str, set[str]] = {}  # session -> resolved paths Jarvis wrote while tainted

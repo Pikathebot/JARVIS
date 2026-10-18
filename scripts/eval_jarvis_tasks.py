@@ -124,10 +124,15 @@ PAGES: dict[str, str] = {
 
 
 class World(btc.World):
-    def __init__(self, files: dict[str, str] | None = None) -> None:
+    def __init__(self, files: dict[str, str] | None = None, notes: dict[str, str] | None = None) -> None:
         super().__init__()
         if files is not None:
             self.files = dict(files)
+        # The user's notes folder (PLAN 4.16): the real notes/tasks code over a temp folder per run.
+        import tempfile
+        self.notes_dir = Path(tempfile.mkdtemp(prefix="jarvis-eval-notes-"))
+        for name, body in (notes or {}).items():
+            (self.notes_dir / name).write_text(body, encoding="utf-8")
         self.actions: list[tuple[str, dict[str, Any]]] = []
         self.deleted: list[str] = []
         self.commits: list[str] = []
@@ -204,6 +209,31 @@ class World(btc.World):
         self.memories.append(content)
         return "Saved to memory."
 
+    def _notes_call(self, name: str, args: dict[str, Any]) -> str:
+        from app.agent.tools import notes as nm
+        from app.config import settings
+
+        nm._now, nm._is_ephemeral = (lambda: NOW), (lambda _sid: False)
+        nm._scheduler = lambda: type("S", (), {"create": lambda self, r: r, "delete": lambda self, rid: True})()
+        settings.notes_dir = str(self.notes_dir)
+        out = getattr(nm, name)(**{k: v for k, v in args.items() if k in ("action", "title", "text", "query", "due", "task_id")})
+        if str(args.get("action") or "list") not in ("list", "find", "read"):
+            self.actions.append((name, args))
+        return out
+
+    def notes(self, **args: Any) -> str:
+        return self._notes_call("notes", args)
+
+    def tasks(self, **args: Any) -> str:
+        return self._notes_call("tasks", args)
+
+    def note_file(self, name: str) -> str:
+        p = self.notes_dir / name
+        return p.read_text(encoding="utf-8") if p.is_file() else ""
+
+    def all_notes(self) -> str:
+        return "\n".join(p.read_text(encoding="utf-8") for p in self.notes_dir.glob("*.md") if p.name != "tasks.md")
+
     # --- files / git
     def delete_file(self, file_path: str = "", **_: Any) -> str:
         p = btc._norm(file_path)
@@ -242,7 +272,8 @@ class Task:
     check: Callable[["Run"], bool]
     mode: str = "FREEFORM"
     files: dict[str, str] | None = None
-    acts: bool = False  # the request asks Jarvis to *do* something (an action tool must run)
+    acts: bool = False
+    notes: dict[str, str] | None = None  # files in the user's notes folder at the start (PLAN 4.16)  # the request asks Jarvis to *do* something (an action tool must run)
 
 
 @dataclass
@@ -349,6 +380,21 @@ TASKS: list[Task] = [
          lambda r: any("stretch" in t["message"].lower() and "2" in t["title"] for t in r.world.toasts), acts=True),
     Task("remember-dark", "system", "skill", ["remember i prefer dark mode everywhere"],
          lambda r: any("dark" in m.lower() for m in r.world.memories), acts=True),
+    # ---- notes and the to-do list (PLAN 4.16): Markdown files in the user's notes folder
+    Task("todo-add", "notes", "skill", ["add milk to my to-do list"],
+         lambda r: bool(re.search(r"- \[ \] .*milk", r.world.note_file("tasks.md"), re.I)), acts=True),
+    Task("todo-list", "notes", "skill", ["what's on my to-do list?"],
+         lambda r: r.has("rent") and r.has("mum"),
+         notes={"tasks.md": "# Tasks\n\n- [ ] Pay rent (due 2026-10-17)\n- [ ] Call mum\n- [x] Book flights\n"}),
+    Task("todo-done", "notes", "skill", ["I bought the milk"],
+         lambda r: bool(re.search(r"- \[x\] Buy milk", r.world.note_file("tasks.md"))),
+         notes={"tasks.md": "# Tasks\n\n- [ ] Buy milk\n- [ ] Call mum\n"}, acts=True),
+    Task("note-add", "notes", "skill", ["note that the guest wifi password is on the back of the router"],
+         lambda r: "router" in r.world.all_notes().lower(), acts=True),
+    Task("note-find", "notes", "skill", ["what did I note about the dentist?"],
+         lambda r: r.any("Rao", "3:15", "4 Nov", "November 4"),
+         notes={"Dentist.md": "Appointment moved to Tuesday 4 Nov, 3:15pm with Dr Rao.\n",
+                "Shopping.md": "Milk, eggs, coffee.\n"}),
     # ---- the workspace: read what was pointed at, do what was asked
     Task("enhance-prompt", "workspace", "skill",
          ["Read the prompt principles file in the workspace and use it to enhance this prompt: "
@@ -533,7 +579,7 @@ def _round(think: bool, msg: dict[str, Any]) -> dict[str, Any]:
 def run_task(client: httpx.Client, task: Task, head: str,
              tools: dict[str, list[dict[str, Any]]]) -> tuple[Result, dict[str, Any]]:
     """One task, the way the backend's stream loop would run it; (result, trace of every round)."""
-    run = Run(World(task.files))
+    run = Run(World(task.files, task.notes))
     o = _orch()
     NUDGE_TO_ACT, NUDGE_TO_ANSWER, NUDGE_UNRUN_CLAIM = o._NUDGE_TO_ACT, o._NUDGE_TO_ANSWER, o._NUDGE_UNRUN_CLAIM
     fast = SLOT == "fast"

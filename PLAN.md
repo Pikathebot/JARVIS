@@ -1641,6 +1641,27 @@ Not yet tested by the user: #10 glass over a light page while dragging; voice mo
 - Tests + eval tasks: "add milk to my list", "what's on my list?", "I bought the milk", "note that ...", "what did
   I note about X?"; the Freeform 10-task set must stay at ~25/30.
 
+**Phase A BUILT 2026-10-18 (build/test-verified; unverified on device; eval not yet re-run).**
+`app/agent/tools/notes.py`: `notes(action=add|append|find|read|list)` and `tasks(action=add|list|done|reopen|edit|
+remove)`, both offered in Freeform and Workspace. Folder = `JARVIS_NOTES_DIR` (`settings.notes_dir`), default
+"Jarvis Notes" in the *real* Documents folder via `SHGetKnownFolderPath` -- on this laptop OneDrive redirects it
+(`C:\Users\lathu\OneDrive\Documents`), so `~/Documents` would have been wrong; the user chose the OneDrive location
+(backup + phone) over `D:\JARVIS`. Obsidian 1.14.4 installed (winget, per-user) -- the user opens the folder as a
+vault. Details: notes in subfolders count (`.obsidian`/`.trash` skipped); `add` never overwrites; `find` scores by
+words matched and shows matching lines (or the first lines on a title match); tasks keep every other line of
+`tasks.md` as typed; a hand-typed line gets a text-derived id until the next write stores `<!-- id:tXXXX -->`, so
+reading never rewrites the file; matching by id or by words ("milk"), ambiguity is an error; due = a day
+("tomorrow", "friday", ISO) or a time (via `reminders.parse_when`) -- a time also schedules a one-shot reminder
+("Due now: ..."), cancelled on done/remove, rescheduled on edit/reopen; a past time adds the task without one.
+Permissions: everything runs except `tasks remove` (asks); taint sinks only for the writing actions
+(`taint.ACTION_SINKS`/`is_sink`); `changed_something` treats notes find/read/list and tasks list as reads;
+ephemeral sessions read but never write. `remember`'s `task` kind now says personal to-dos go to `tasks`. Head
+budget: Freeform 20.8k -> 22.5k of 25.5k chars, Workspace 32.3k -> 34.0k of 35k. Tests: `test_notes_tasks.py` (22); full suite 1019 pass. Eval: five `notes` tasks in
+`eval_jarvis_tasks.py` (todo-add/list/done, note-add/find) over the real code in a temp folder.
+Still to do: re-run the Freeform set (3 seeds) with Jarvis closed -- a phase costing more than a point there gets
+its schema cut. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
+fail when that file runs alone ("no such table: sessions" -- they rely on an earlier file creating the tables).
+
 **Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**
 - Sign-in: OAuth "desktop app" flow (browser opens once, loopback redirect). The user creates a Google Cloud
   project with the Calendar and Tasks APIs (Gmail later) and an OAuth client; Claude writes the steps, the user
@@ -1663,6 +1684,11 @@ from a template, no model call needed), spoken + shown through the awareness cha
 all). `email(action=inbox|search|read|draft)`. Every message body is outside content: `email` joins taint's
 `SOURCES`, so a turn that read mail needs approval for any write afterwards (prompt injection by email is the
 main risk). Drafts land in Gmail's Drafts; the user sends them.
+
+**Phase A folder decided 2026-10-18:** `Documents\Jarvis Notes`, kept Obsidian-compatible -- the user will open it
+as an Obsidian vault (not installed yet; Jarvis must not depend on it). Plain `.md`, `- [ ]` checkboxes, ids as HTML
+comments (hidden in Obsidian's reading view), file names stripped of `* " \ / < > : | ? # ^ [ ]`.
+Off-the-record (ephemeral) chats may NOT write notes or tasks (user, 2026-10-18), like `remember`; reading is fine.
 
 **Defaults to confirm when each phase starts:** the notes folder (or an existing Obsidian vault), the Google Tasks
 list name, the briefing time, and whether off-the-record (ephemeral) chats may write notes/tasks/events (proposal:

@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     compare_rate: float = Field(default=1 / 15, alias="COMPARE_RATE")
     # Where Freeform's file tools work (relative paths resolve here); empty = the user's home folder.
     freeform_files_root: str = Field(default="", alias="FREEFORM_FILES_ROOT")
+    # The notes + tasks.md folder (PLAN 4.16); empty = "Jarvis Notes" in the real Documents folder.
+    notes_dir: str = Field(default="", alias="JARVIS_NOTES_DIR")
 
     # Model Routing (Section 2 of Build plan)
     vision_model: Optional[str] = Field(default=None, alias="VISION_MODEL")

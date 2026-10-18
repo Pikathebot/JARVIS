@@ -148,7 +148,7 @@ def remember(
 
     kind: about_user (who the user is), preference (how they like things), workflow (how to work
     with them), project (facts/conventions of this project), decision (what was settled and why),
-    task (open work to pick up later). The first three are global; the rest belong to the workspace (general facts outside one).
+    task (open project work to pick up later; personal to-dos go to the tasks tool). The first three are global; the rest belong to the workspace (general facts outside one).
     """
     text = " ".join((content or "").split())
     if not text:

@@ -23,6 +23,7 @@ from app.agent.tools.artifacts import create_artifact, update_artifact, patch_ar
 from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
+from app.agent.tools.notes import notes, tasks
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -72,6 +73,9 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # Long-term memory the model keeps for itself
     "remember": remember,
     "forget": forget,
+    # The user's notes and to-do list as Markdown (PLAN 4.16)
+    "notes": notes,
+    "tasks": tasks,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -122,6 +126,9 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Memory
     remember,
     forget,
+    # Notes + tasks
+    notes,
+    tasks,
 ]
 
 
@@ -335,7 +342,7 @@ class RememberArgs(BaseModel):
         description=(
             "about_user: who the user is. preference: how they like things. workflow: how to work "
             "with them. project: facts/conventions of this project. decision: what was settled "
-            "and why. task: open work to pick up later. The first three follow the user everywhere; "
+            "and why. task: open project work to pick up later (personal to-dos go to tasks). The first three follow the user everywhere; "
             "the rest belong to this workspace."
         ),
     )
@@ -344,6 +351,20 @@ class RememberArgs(BaseModel):
 
 class ForgetArgs(BaseModel):
     memory_id: str = Field(..., description="Id of the memory to delete, as shown in the memory list")
+
+
+class NotesArgs(BaseModel):
+    action: Literal["add", "append", "find", "read", "list"] = Field(default="list", description="What to do")
+    title: str = Field(default="", description="The note's title (add, append, read)")
+    text: str = Field(default="", description="What to write (add, append)")
+    query: str = Field(default="", description="Words to look for (find)")
+
+
+class TasksArgs(BaseModel):
+    action: Literal["add", "list", "done", "reopen", "edit", "remove"] = Field(default="list", description="What to do")
+    text: str = Field(default="", description="The task (add), or its new wording (edit)")
+    due: str = Field(default="", description="'tomorrow', 'friday', '2026-10-20', '5pm' or 'tomorrow 9am' (add, edit)")
+    task_id: str = Field(default="", description="Its id from the list, or some of its words (done, reopen, edit, remove)")
 
 
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
@@ -390,6 +411,8 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "git_pull": GitRemoteArgs,
     "remember": RememberArgs,
     "forget": ForgetArgs,
+    "notes": NotesArgs,
+    "tasks": TasksArgs,
 }
 
 
