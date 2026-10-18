@@ -117,7 +117,9 @@ async def test_fast_answers_what_it_can_do_in_code(monkeypatch, picked, expected
 @pytest.mark.parametrize("q", ["remind me to stretch in 20 minutes", "Jarvis, set a timer for 5 minutes",
                                "can you open notepad", "please mute", "turn the volume up",
                                "search the web for the latest Unreal Engine release", "look up the weather in Leeds",
-                               "close spotify", "take a screenshot"])
+                               "close spotify", "take a screenshot",
+                               "add milk to my list", "put call mum on my to-do list", "note that the wifi is on the router",
+                               "tick off the milk"])
 def test_requests_only_a_tool_can_serve(q):
     assert orch_mod.needs_a_tool(q)
 
@@ -125,7 +127,8 @@ def test_requests_only_a_tool_can_serve(q):
 @pytest.mark.parametrize("q", ["write me a poem about rain", "how do I set a reminder on my phone?",
                                "explain how to open a PDF in Python", "make a list of good sci-fi books",
                                "fix this sentence: their going home", "what does 'open up' mean?",
-                               "tell me about the open source movement", "what's 17 times 23?"])
+                               "tell me about the open source movement", "what's 17 times 23?",
+                               "add salt to the soup?", "what's on my list?"])
 def test_chat_turns_do_not_need_a_tool(q):
     assert not orch_mod.needs_a_tool(q)
 

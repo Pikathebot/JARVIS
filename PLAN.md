@@ -1672,7 +1672,19 @@ in `test_notes_tasks.py`. With the cue: notes 14/15 -- the one miss listed the t
 `_UNRUN_ACTION_CLAIM_RE` / `_SUBJECTLESS_CLAIM_RE` (4 test cases). The eval also counted every notes/tasks write
 as claimed-without-acting (not in `ACTION_TOOLS`); now a logged notes/tasks write counts as acting. Final run
 (`with-cue2`): **notes 15/15, total 43/45 (both misses `hybrid-kv` knowledge), claimed-without-acting 0**; full
-suite 1028 pass. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
+suite 1028 pass. Committed 63eda5f.
+
+**Device test 2026-10-18 18:45-18:49** (Obsidian vault = the notes folder; sessions `session_mvdullmg_9743f`,
+`session_mvdumtpg_2dabb`, `session_mvduphc9_d60bb`). OK: "I bought the milk" ticked it off, "note that the guest
+wifi ..." saved a note, "what did I note about the wifi?" found it, a task typed by hand in Obsidian was listed.
+Wrong: (1) with Fast picked, "add milk to my list" -> "I don't have a running list" (`needs_a_tool` didn't know
+lists/notes); (2) on Main the same message -> "I've added \"milk\" to your to-do list." with no call (the claim
+check didn't know "added ... to your list"; a bare "I've added" would also catch code answers), so the next "what's
+on my list?" was empty and the model insisted "I did add it". Fixed (build/test-verified, unverified on device,
+eval not re-run -- Jarvis was running): `needs_a_tool` covers "add/put X to my list|to-do|tasks|notes", "note
+that", "make/take a note", "jot down", "tick/cross off"; `_SUBJECTLESS_CLAIM_RE` catches "added ... to your
+list|to-do|tasks|notes"; `notes.turn_directive` has a third cue, "add X to my list" -> `tasks(action='add')`.
+Full suite 1036 pass. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
 fail when that file runs alone ("no such table: sessions" -- they rely on an earlier file creating the tables).
 
 **Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**

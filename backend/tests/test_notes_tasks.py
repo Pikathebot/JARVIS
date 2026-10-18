@@ -189,7 +189,10 @@ def test_cue_points_at_notes_when_a_note_is_asked_for(folder):
     for msg in ("note that the guest wifi password is on the router", "Make a note: dentist Tuesday",
                 "jot this down -- call the bank", "add this to my notes"):
         assert notes_mod.turn_directive(msg).startswith("NOTES:"), msg
-    for msg in ("what did I note about the dentist?", "notes are useful", "write me a poem"):
+    for msg in ("add milk to my list", "put call mum on the to-do list", "Add eggs and bread to my tasks"):
+        assert notes_mod.turn_directive(msg).startswith("TASKS: the user asked to add"), msg
+    for msg in ("what did I note about the dentist?", "notes are useful", "write me a poem",
+                "add salt to the soup", "what's on my list?"):
         assert notes_mod.turn_directive(msg) == "", msg
 
 

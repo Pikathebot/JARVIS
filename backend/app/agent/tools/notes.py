@@ -209,6 +209,9 @@ def notes(action: str = "list", title: str = "", text: str = "", query: str = ""
 _ASKS_NOTE = re.compile(
     r"\b(?:note (?:that|down|this|it)|make a note|take a note|jot (?:down|this|that|it)|"
     r"write (?:this|that|it) down|(?:add|put|save) (?:(?:this|that|it) )?(?:to|in) (?:my|the) notes?)\b", re.I)
+# Device 2026-10-18: "add milk to my list" on Main -> "I've added \"milk\" to your to-do list." and no call.
+_ASKS_TASK = re.compile(
+    r"\b(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?(?:\s+list)?)\b", re.I)
 _SAYS_DONE = re.compile(
     r"\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:just\s+|finally\s+|already\s+)?"
     r"(?:bought|got|did|done|finished|paid|called|rang|emailed|sent|booked|picked up|cleaned|fixed|submitted|"
@@ -227,6 +230,9 @@ def turn_directive(user_message: str) -> str:
     if _ASKS_NOTE.search(text):
         return ("NOTES: the user asked for a note. Write it with notes(action='add', or 'append' to an "
                 "existing note); replying \"noted\" without the tool saves nothing.")
+    if _ASKS_TASK.search(text):
+        return ("TASKS: the user asked to add to their to-do list. Add it with tasks(action='add'); replying "
+                "\"added\" without the tool adds nothing.")
     if _SAYS_DONE.search(text):
         try:
             _, lines = _read_tasks()

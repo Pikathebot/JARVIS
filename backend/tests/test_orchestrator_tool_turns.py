@@ -190,6 +190,8 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     ("I have recorded that you bought the milk.", True),
     ("Ticked off: Buy milk.", True),
     ("Exams are marked out of 100.", False),
+    ("I've added \"milk\" to your to-do list.", True),
+    ("I've added error handling to the function:", False),
     # offers, questions and plain facts are not claims
     ("I'll open it if you want.", False),
     ("Want me to set a reminder? I'll remind you whenever you say.", False),

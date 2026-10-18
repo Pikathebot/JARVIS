@@ -122,6 +122,10 @@ _NEEDS_A_TOOL = re.compile(
     r"|(?:mute|unmute)\b|turn\s+(?:the\s+)?(?:volume|sound)\b|(?:turn|crank)\s+(?:it\s+)?(?:up|down)\b"
     r"|search\s+(?:the\s+web|online|google)\b|google\s+\w|look\s+up\s+\w"
     r"|take\s+a\s+screenshot\b"
+    # the notes folder (device 2026-10-18: Fast said "I don't have a running list to add milk to")
+    r"|(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?)\b"
+    r"|(?:note\s+(?:that|down)|make\s+a\s+note|take\s+a\s+note|jot\s+(?:down|this|that|it))\b"
+    r"|(?:tick|cross|check)\s+off\b"
     r")", re.I)
 _FAST_PICKED_ACTION = ("You've picked the Fast model, so right now I can only talk -- that needs a tool. "
                        "Switch the model to Main or Auto and ask again; Main can " + _CAPABILITIES_ALL + ".")
@@ -362,7 +366,10 @@ _SUBJECTLESS_CLAIM_RE = re.compile(
     r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled|marked|ticked)\b"
     # ...or mid-sentence with a concrete target: "Action items copied to clipboard:" (2026-10-16)
     r"|\b(?:copied|saved|written|added|moved)\s+to\s+(?:your\s+|the\s+)?"
-    r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)",
+    r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)"
+    # "I've added \"milk\" to your to-do list." with no call (device 2026-10-18); a bare "I've added"
+    # would also catch code answers ("I've added error handling to the function")
+    r"|\badded\b.{0,60}?\bto\s+(?:your|the|my)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?)\b",
     re.IGNORECASE,
 )
 
