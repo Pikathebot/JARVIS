@@ -393,9 +393,15 @@ _KEEP_IN_MIND = re.compile(r"\bI(?:'ll| will)\s+(?:keep\s+(?:that|this|it)\s+in\
 def claims_without_tools(content: str, user_message: Optional[str]) -> bool:
     """A reply on a turn with no tools (the fast model) that says it did, or will do, something
     only a tool could."""
-    if claims_unrun_action(content):
+    if claims_unrun_action(content) or _LET_ME_ACT.search(content or ""):
         return True
     return bool(_ASKS_REMINDER.search(user_message or "") and _KEEP_IN_MIND.search(content or ""))
+
+
+# "...that's a function Main would have. Let me search for the latest Unreal Engine release." (device
+# test 2026-10-18): on a turn with no tools nothing will follow, so "let me <act>" is a promise too.
+_LET_ME_ACT = re.compile(r"\blet me\s+(?:search|look (?:it |that )?up|check|find|fetch|open|pull up|set|save|run|get)\b",
+                         re.IGNORECASE)
 
 
 def changed_something(tools_used: list[Any]) -> bool:

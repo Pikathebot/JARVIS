@@ -122,6 +122,9 @@ async def test_fast_answers_what_it_can_do_in_code(monkeypatch, picked, expected
     ("I'll keep that in mind.", "remember that I like dark mode", False),
     ("I can't open Notepad on this model; Main or Auto can.", "open notepad", False),
     ("17 times 23 is 391.", "what's 17 times 23?", False),
+    ("That's a function Main would have. Let me search for the latest Unreal Engine release.",
+     "Search the web for the latest Unreal Engine release", True),
+    ("Let me explain how a KV cache works.", "explain the KV cache", False),
 ])
 def test_claims_on_a_turn_with_no_tools(reply, message, claims):
     assert orch_mod.claims_without_tools(reply, message) is claims

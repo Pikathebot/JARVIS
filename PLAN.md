@@ -1598,3 +1598,67 @@ on device (real tools fail more than the simulated world). 8 and 9 stay unplanne
   for the latest Unreal release" into "I can search the web for ...".
 - **"CPU temperature?"** -> "The CPU is at N%; I can't read the CPU's temperature, only the GPU's, which is at N
   degrees." (`status_answer`, shared with voice mode), instead of the GPU's temperature beside the CPU load.
+
+### 4.16 Notes, tasks, calendar, email (4.13 #12) -- PLANNED 2026-10-18, NOT BUILT
+
+**The user's decisions (2026-10-18):** notes are Markdown files; tasks are a checklist file **and** Google Tasks,
+synced; calendar is a local one **and** Google Calendar, synced two-way (Google is the master copy); Gmail read +
+draft (never sends); chat only first (no panel); adding an event is free, moving or deleting one asks; a
+morning briefing.
+
+**Design rule from 4.15's eval:** every tool Freeform offers costs accuracy on unrelated turns (six file tools:
+28/30 -> 18/30). So one tool per area with an `action` argument (like `reminders`), short schemas, and the 10-task
+Freeform set re-run after each phase: a phase that costs more than a point there gets its schema cut before it
+ships. Four tools in all: `notes`, `tasks`, `calendar`, `email`.
+
+**Device test 2026-10-18 10:25-10:30 (after 9302e2b; Jarvis sessions `session_mvdcqgti_fc254` Main,
+`session_mvdcvf6e_09dea` Fast).** OK: biggest files (3181 ranked), summarise Kokoro + save in Downloads (written
+once), "what's in my Downloads" via find_files, volume 36 -> 50% (real tool call), Fast CPU temperature ("can't
+read the CPU's, only the GPU's"), Fast "GPU temperature?" (real numbers), Fast "What can you do?" (code answer).
+To fix first next session (small, before phase A):
+1. Fast "Search the web for the latest Unreal Engine release" -> "that's a function Main would have. **Let me
+   search** for ..." -- "Let me <act>" promises aren't in `_PROMISE_RE`; add them to the fast claim detector
+   (`claims_without_tools`), with a test, and mirror in the eval.
+2. Fast "remind me to stretch in 20 minutes" -> "I don't have a reminder system ... set one up in your notes" (no
+   false claim, but wrong: Main/Auto has `remind_me`). Option: on picked-Fast turns where `looks_like_action`
+   is true, answer `_NO_TOOLS_REPLY` in code before the model (like the capability answer).
+Not yet tested by the user: #10 glass over a light page while dragging; voice mode (user tests later).
+
+**Phase A -- notes + tasks, local (no account needed).**
+- Folder `JARVIS_NOTES_DIR`, default `~\Documents\Jarvis Notes`. A note = one `.md` file named from its title;
+  `tasks.md` = the checklist: `- [ ] Pay rent (due 2026-10-20 17:00)` with an invisible `<!-- id:... -->` per line
+  so edits made by hand (Notepad, Obsidian, phone sync) are understood and Phase B can map lines to Google.
+- `notes(action=add|append|find|read|list, title, text, query)`; `tasks(action=add|list|done|reopen|edit|remove,
+  text, due, task_id)`. A due time sets a reminder through the existing routine scheduler; done/remove cancels it.
+- Permissions: adding, appending, ticking off run (the user's own list, asked for in words); remove asks. Both are
+  taint sinks (4.13 #6): a turn that read a web page can't write a note without a card.
+- `remember`'s `task` kind overlaps: memories stay facts, to-dos move to `tasks` (the tool descriptions say so).
+- Tests + eval tasks: "add milk to my list", "what's on my list?", "I bought the milk", "note that ...", "what did
+  I note about X?"; the Freeform 10-task set must stay at ~25/30.
+
+**Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**
+- Sign-in: OAuth "desktop app" flow (browser opens once, loopback redirect). The user creates a Google Cloud
+  project with the Calendar and Tasks APIs (Gmail later) and an OAuth client; Claude writes the steps, the user
+  signs in. Token stored on this PC encrypted with Windows DPAPI; scopes `calendar.events` + `tasks` now.
+- Local calendar: a SQLite table (Alembic migration) of events with Google id + etag. Sync on start, every few
+  minutes and before answering: pull with Calendar's `syncToken` (incremental), push local changes from a queue
+  (works offline, sent when back). Conflict: the newer change wins, Google's copy if equal.
+- Tasks: `tasks.md` <-> one Google Tasks list (default "My Tasks"), matched by the hidden ids; same sync rhythm and
+  conflict rule; hand edits in the file are picked up by modified time + diff.
+- `calendar(action=agenda|find|add|move|delete, ...)`: add runs; move/delete ask (argument-aware tier).
+- Nudge "X in 10 minutes" through `AwarenessMonitor.emit` (new observation kind), spoken and shown like the rest.
+- HTTP via httpx against the REST APIs (already a dependency); `google-auth-oauthlib` only for the sign-in.
+
+**Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
+today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice
+from a template, no model call needed), spoken + shown through the awareness channel. Set from chat ("brief me at
+8") until Settings gets a field.
+
+**Phase D -- Gmail read + draft.** Scopes `gmail.readonly` + `gmail.compose` (draft only; no send scope requested at
+all). `email(action=inbox|search|read|draft)`. Every message body is outside content: `email` joins taint's
+`SOURCES`, so a turn that read mail needs approval for any write afterwards (prompt injection by email is the
+main risk). Drafts land in Gmail's Drafts; the user sends them.
+
+**Defaults to confirm when each phase starts:** the notes folder (or an existing Obsidian vault), the Google Tasks
+list name, the briefing time, and whether off-the-record (ephemeral) chats may write notes/tasks/events (proposal:
+no, like `remember`). The user's timetable is worked out with Jarvis in a chat once B exists.
