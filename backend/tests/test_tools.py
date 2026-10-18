@@ -288,6 +288,8 @@ async def test_malformed_args_rejected_and_repairable(tmp_path):
         skills_loader=SkillsLoader(),
         mcp_manager=MCPManager()
     )
+    # this test is about argument repair: keep the repaired search a plain search (no live web)
+    orchestrator._upgrade_search = lambda name, args, tools, ctx: (name, args)
 
     result = await orchestrator.run(
         user_message="Search for python 3.13",

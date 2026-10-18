@@ -104,6 +104,20 @@ public partial class ChatMessage : ObservableObject
     /// <summary>TTS-ready text for this message, when it differs from the displayed content.</summary>
     public string? Spoken { get; set; }
 
+    /// <summary>The in-app compare for this reply (PLAN 4.13 #8): its id from the done event, then the
+    /// second take once it is ready. The card shows while <see cref="CompareAlternative"/> is set and
+    /// no vote was cast.</summary>
+    public string? CompareId { get; set; }
+
+    [ObservableProperty]
+    public partial string? CompareAlternative { get; set; }
+
+    /// <summary>How the second take differs ("shorter", "more casual", ...).</summary>
+    public string? CompareAxis { get; set; }
+
+    [ObservableProperty]
+    public partial bool CompareVoted { get; set; }
+
     [ObservableProperty]
     public partial bool IsStreaming { get; set; }
 

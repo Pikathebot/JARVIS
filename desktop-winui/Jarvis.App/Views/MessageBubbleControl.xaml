@@ -90,6 +90,29 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- In-app compare (PLAN 4.13 #8): a second take, shown once it is ready -->
+                        <Border
+                            x:Name="CompareCard"
+                            Visibility="Collapsed"
+                            MaxWidth="640"
+                            HorizontalAlignment="Left"
+                            CornerRadius="{StaticResource CardCornerRadius}"
+                            Padding="12">
+                            <Border.Background>
+                                <SolidColorBrush Color="{ThemeResource AccentColor}" Opacity="0.10" />
+                            </Border.Background>
+                            <StackPanel Spacing="8">
+                                <TextBlock x:Name="CompareTitle" Style="{StaticResource HeadlineText}" TextWrapping="Wrap" />
+                                <ContentPresenter x:Name="CompareHost" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                    <Button Content="Original" Tag="original" Click="CompareVote_Click" />
+                                    <Button Content="This one" Tag="alternative" Style="{StaticResource AccentButtonStyle}" Click="CompareVote_Click" />
+                                    <Button Content="Same" Tag="tie" Click="CompareVote_Click" />
+                                    <Button Content="Dismiss" Tag="dismiss" Click="CompareVote_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                 <!-- Metadata footer -->
                 <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Foreground="{ThemeResource LabelTertiaryBrush}" Visibility="Collapsed" />
             </StackPanel>

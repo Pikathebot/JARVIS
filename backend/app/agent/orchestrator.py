@@ -13,6 +13,7 @@ from sqlmodel import select
 from app.config import settings, MAX_TOOL_CALLS_PER_TURN
 from app.persona import persona_manager
 from app.agent.tools.file_search import IGNORED_DIRS
+from app.agent.tools.paths import freeform_root
 from app.agent.tools.registry import AVAILABLE_TOOLS, FREEFORM_MODE, execute_tool, get_tool_schema, tools_for_space
 from app.agent.permissions import (
     BASE_TOOL_RISK_MAP,
@@ -32,8 +33,8 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
-from app.agent import recent_objects, taint
-from app.agent.research import wants_research
+from app.agent import compare, recent_objects, taint
+from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
@@ -70,6 +71,26 @@ _ARGLESS_ANNOUNCEMENT = re.compile(
 )
 
 
+_FUNCTION_TAG = re.compile(
+    r"<function(?:\s+name\s*=\s*[\"']?|\s*=\s*)(?P<name>[A-Za-z_][\w]*)[\"']?\s*>(?P<body>[\s\S]*?)</function>",
+    re.IGNORECASE,
+)
+
+# A tool call written out as text on a turn that offered no tools: it can't run, and the raw
+# markup must not stand as the reply.
+_NO_TOOLS_REPLY = ("That needs a tool, and the fast model answering this turn has none. "
+                   "Switch the model to Main or Auto and ask again.")
+
+def drop_unofferable_calls(content: str) -> tuple[str, bool]:
+    """On a turn with no tools: (the reply, whether a written-out tool call replaced it). The text
+    around such a call is the run-up to it ("I'll check your system status. One moment.") and
+    promises something that won't happen, so the whole reply becomes ``_NO_TOOLS_REPLY``."""
+    _, calls = extract_tool_calls_from_text(content)
+    if not calls:
+        return content, False
+    return _NO_TOOLS_REPLY, True
+
+
 def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
     """
     Extract embedded tool calls outputted as raw text by models:
@@ -82,6 +103,22 @@ def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]
         return content, []
 
     extracted = []
+
+    # 0. XML-ish <function name="x">{args}</function> / <function=x>...</function>: MiniCPM on the
+    # tool-less fast slot wrote `<function name="get_system_status"></function>` as its whole reply.
+    for m in _FUNCTION_TAG.finditer(content):
+        body = (m.group("body") or "").strip()
+        try:
+            fn_args = json.loads(body) if body else {}
+        except Exception:
+            fn_args = {}
+        extracted.append({
+            "id": f"call_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {"name": m.group("name"), "arguments": fn_args if isinstance(fn_args, dict) else {}},
+        })
+    if extracted:
+        return _FUNCTION_TAG.sub("", content).strip(), extracted
 
     # 1. Standard <tool_call>...</tool_call> tags
     tag_pattern = re.compile(r"(?:<tool_call>)?\s*(\{[\s\S]*?\})\s*</tool_call>", re.DOTALL)
@@ -242,6 +279,19 @@ _NUDGE_TO_ACT = (
 # doing anything" is false then, and drew apologies ("I apologize for the confusion") on 2026-10-16.
 _NUDGE_TO_ANSWER = "Now give the user your answer."
 
+# The round budget is spent, or the model asked for a call it had just made: no more tools, answer
+# from what came back. Before this the stream simply ended (no reply at all; the eval's empty
+# "rendering" failures were 8 rounds of web_search / list_directory) or printed a canned "stopped
+# to avoid a duplicate action loop".
+_NUDGE_FINAL = (
+    "That's enough tool use for this request. Answer the user now from the tool results above, "
+    "without calling any more tools. If they don't fully answer the question, say what you found "
+    "and what is still missing."
+)
+_NUDGE_REPEAT = (
+    "You just made that exact call and its result is above; calling it again won't change it. "
+) + _NUDGE_FINAL
+
 # A reply that says it did something on the machine when no tool ran this turn. 2026-09-29:
 # "open qwen" -> "I attempted to open Qwen, but the application isn't currently available"
 # with no call at all (launch_app("qwen") would have worked). Rule 19 alone didn't stop it.
@@ -401,10 +451,18 @@ def _effective_voice_route(voice_route: Optional[str]) -> Optional[str]:
 
 
 _FAST_NO_TOOLS_NOTE = (
-    "You have no tools in this turn (the fast model is answering). If the user asked you to do "
-    "something on the computer, say plainly that you can't do it on the fast model and that "
-    "Main can -- never say you did it."
+    "You have no tools in this turn (the fast model is answering), whatever the space note says. "
+    "If the user asked for something that needs one -- doing something on the computer, files, "
+    "the web, live readings not given below -- say plainly that the fast model can't and Main can. "
+    "Never say you did it, and never write a tool call out as text."
 )
+
+PRE_STATUS_TIMEOUT_SECONDS = 10.0
+
+
+def _pre_status_block(result: str) -> str:
+    return ("LIVE READINGS (measured just now for this message; answer from these, never from "
+            "memory):\n" + result.strip())
 
 
 def looks_like_action(user_message: str) -> bool:
@@ -598,11 +656,14 @@ def workspace_file_listing(workspace_path: Path | str, limit: int = WORKSPACE_LI
     )
 
 
-FREEFORM_TURN_NOTE = (
-    "SPACE: Freeform conversation. There is no project, workspace or working directory here, so "
-    "you cannot read, write, search or run anything on files. If the user asks for that, say so "
-    "plainly and suggest switching to a Workspace; never write a tool call out as text."
-)
+def freeform_turn_note() -> str:
+    return (
+        "SPACE: Freeform conversation, no project. The file tools (read_file, list_directory, "
+        f"find_files, grep_in_files, write_file, patch_file) work on the user's own folders, rooted at "
+        f"{freeform_root()}: a relative path like 'Downloads' or 'Documents/notes.txt' resolves there. "
+        "Saving a file asks the user once. Running commands, deleting files, git and artifacts need a "
+        "Workspace: if asked for those, say so plainly. Never write a tool call out as text."
+    )
 
 
 class AgentOrchestrator:
@@ -693,7 +754,7 @@ class AgentOrchestrator:
         parts = []
         session_factory = getattr(self.memory_store, "_session_factory", None)
         if chat_mode == FREEFORM_MODE:
-            parts.append(FREEFORM_TURN_NOTE)
+            parts.append(freeform_turn_note())
         elif chat_mode == "WORKSPACE" and project_id:
             # A project without its own folder falls back to the shared root, i.e. every project.
             if workspace_path is not None and Path(workspace_path).resolve() != Path(settings.workspace_path).resolve():
@@ -722,20 +783,21 @@ class AgentOrchestrator:
 
         FREEFORM is a conversation with no project and no working directory: no project is
         resolved (not even the active one), RAG is skipped (it only runs in WORKSPACE), and the
-        tool context carries the mode so ``execute_tool`` refuses workspace-bound tools. For
-        permissions it counts as WORKSPACE, the stricter of the two tiers.
+        tool context carries the mode so ``execute_tool`` refuses workspace-bound tools. Its file
+        tools work on the user's own folders, which the permission gate treats as the workspace
+        (``ChatMode.FREEFORM``: reads there run, every write asks).
         """
         requested = (chat_mode or "").upper() or None
         if requested == FREEFORM_MODE:
             self.memory_store.get_or_create_session(session_id, chat_mode=FREEFORM_MODE, project_id=None)
-            root = Path(settings.workspace_path).resolve()
+            root = freeform_root()
             tool_context = {
                 "workspace_path": str(root),
                 "project_id": None,
                 "session_id": session_id,
                 "chat_mode": FREEFORM_MODE,
             }
-            return None, root, tool_context, FREEFORM_MODE, ChatMode.WORKSPACE
+            return None, root, tool_context, FREEFORM_MODE, ChatMode.FREEFORM
 
         resolved_project_id, workspace_path, tool_context = self._resolve_workspace_context(project_id, session_id)
         session_data = self.memory_store.get_or_create_session(session_id, chat_mode=chat_mode, project_id=resolved_project_id)
@@ -1111,15 +1173,20 @@ class AgentOrchestrator:
             # The fast model gets no tools: it chats and answers quick questions. A turn that
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []
-            if looks_like_action(user_message):
-                turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
+            turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
-        # A clearly recent question: research before the model (PLAN 4.13 #7)
         pre_tools: list[dict[str, Any]] = []
+        if self._should_pre_status(user_message, combined_tools, voice_route):
+            item, found = await self._pre_status(active_session_id, tool_context)
+            pre_tools.append(item)
+            if found:
+                turn_context = "\n\n".join([turn_context, _pre_status_block(found)])
+
+        # A clearly recent question: research before the model (PLAN 4.13 #7)
         if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
             item, found = await self._pre_research(active_session_id, user_message, tool_context)
             pre_tools.append(item)
@@ -1322,7 +1389,9 @@ class AgentOrchestrator:
             self._log_model_reply(model, content, tool_calls)
 
             # Fallback tool call extraction from text if needed
-            if not tool_calls:
+            if not tools:
+                content, _ = drop_unofferable_calls(content)  # nothing offered: it can't run
+            elif not tool_calls:
                 content, extracted_calls = extract_tool_calls_from_text(content)
                 if extracted_calls:
                     logger.info("Extracted %d tool call(s) from raw model text stream", len(extracted_calls))
@@ -1368,10 +1437,12 @@ class AgentOrchestrator:
                 func_data = tc.get("function", {})
                 fn_name = func_data.get("name", "")
                 fn_args = func_data.get("arguments", {})
+                fn_name, fn_args = self._upgrade_search(
+                    fn_name, fn_args if isinstance(fn_args, dict) else {}, tools, tool_ctx)
                 normalized_tool_calls.append({
                     "id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
                     "name": fn_name,
-                    "args": fn_args if isinstance(fn_args, dict) else {}
+                    "args": fn_args
                 })
 
             # Duplicate / Loop breaker
@@ -1748,14 +1819,22 @@ class AgentOrchestrator:
             # The fast model gets no tools: it chats and answers quick questions. A turn that
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []
-            if looks_like_action(user_message):
-                turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
+            turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
-        # 2b. A clearly recent question: research before the model (PLAN 4.13 #7)
+        # 2a. A hardware question on the tool-less fast model: read the machine first.
         pre_tools: list[dict[str, Any]] = []
+        if self._should_pre_status(user_message, combined_tools, voice_route):
+            yield {"event": "tool_start", "data": {"tool": "get_system_status", "args": {}}}
+            item, found = await self._pre_status(active_session_id, tool_context)
+            yield {"event": "tool_end", "data": item}
+            pre_tools.append(item)
+            if found:
+                turn_context = "\n\n".join([turn_context, _pre_status_block(found)])
+
+        # 2b. A clearly recent question: research before the model (PLAN 4.13 #7)
         if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
             item = {"tool": "research", "args": {"question": user_message}}
             yield {"event": "tool_start", "data": dict(item)}
@@ -1865,6 +1944,13 @@ class AgentOrchestrator:
                 finished = True
                 answer = (ev.get("data") or {}).get("response")
                 tools_used = (ev.get("data") or {}).get("tools_used") or []
+                # Now and then a second take for the user to vote on (PLAN 4.13 #8): text-only
+                # replies on main, never voice or off the record.
+                if decision.provider == "llama_cpp" and compare.eligible(
+                        answer or "", tools_used, bool(voice_route), is_fast, self.is_ephemeral, settings.compare_rate):
+                    ev["data"]["compare_id"] = compare.start(
+                        target_provider, decision.model, active_session_id, user_message,
+                        _with_system_prompt(context_pkg.system_prompt, context_pkg.messages), answer or "")
             yield ev
 
         if rag_trace_record is not None:
@@ -1878,6 +1964,22 @@ class AgentOrchestrator:
         if cue == "save" and finished and not saved_in_turn:
             self._start_memory_capture(target_provider, decision.model, user_message, tool_context)
 
+    def _upgrade_search(self, name: str, args: dict[str, Any], tools: Optional[list[Any]],
+                        tool_ctx: Optional[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+        """A ``web_search`` made to answer a question runs as ``research`` (PLAN 4.13 #7): the 9B read
+        one-line snippets and answered from them -- it named a Wukong co-op mod from a search title
+        and invented the rest -- even with ``research`` offered beside it. The model's query is kept;
+        searches for links, downloads or a list of sites stay plain searches."""
+        if name != "web_search" or "research" not in self._tool_names(tools):
+            return name, args
+        if not isinstance(args.get("query"), str) or not args["query"].strip():
+            return name, args  # a malformed call goes through validation and repair as itself
+        question = str((tool_ctx or {}).get("user_message") or "").strip()
+        if not wants_answer(question):
+            return name, args
+        logger.info("Running web_search %r as research: the user asked a question.", args.get("query"))
+        return "research", {"question": question, "query": str(args.get("query") or "")}
+
     def _should_pre_research(self, user_message: str, tools: list[Any], voice_route: Optional[str],
                              approved_action_ids: Optional[list[str]]) -> bool:
         """Research before the model only on a turn that offers the tool (not the fast model, not
@@ -1886,6 +1988,31 @@ class AgentOrchestrator:
         if voice_route or approved_action_ids or not wants_research(user_message):
             return False
         return "research" in self._tool_names(tools)
+
+    def _should_pre_status(self, user_message: str, tools: list[Any], voice_route: Optional[str]) -> bool:
+        """A hardware question on a turn with no tools (the fast model): on device MiniCPM wrote
+        `<function name="get_system_status">` out as its reply, or made the numbers up. Voice mode
+        answers these in code before any model runs; a turn with tools calls the tool itself."""
+        if voice_route or tools:
+            return False
+        from app.voice.voice_mode import asks_status
+        return asks_status(user_message)
+
+    async def _pre_status(self, session_id: str, tool_context: Optional[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+        """Run ``get_system_status`` through the tool pipeline; (tool card item, result or "")."""
+        ctx = {**(tool_context or {}), "permission_checked": True}
+        try:
+            outcome = await asyncio.wait_for(self._run_tool("get_system_status", {}, ctx), PRE_STATUS_TIMEOUT_SECONDS)
+            item = outcome.to_event()
+            item["args"] = {}
+            found = outcome.result if outcome.ok and not outcome.result.startswith("Error") else ""
+        except asyncio.TimeoutError:
+            item = {"tool": "get_system_status", "args": {}, "status": "timeout",
+                    "result": "Error: reading the system timed out.", "timed_out": True}
+            found = ""
+        item["pre_run"] = True
+        recent_objects.record(session_id, item)
+        return item, found
 
     async def _pre_research(self, session_id: str, user_message: str,
                             tool_context: Optional[dict[str, Any]]) -> tuple[dict[str, Any], str]:
@@ -1960,6 +2087,8 @@ class AgentOrchestrator:
         messages = _with_system_prompt(system_prompt, conversation_messages)
 
         tools_used: list[dict[str, Any]] = prior
+        said: list[str] = []  # text streamed beside this turn's tool calls, kept if it stops to ask
+        final_nudge = _NUDGE_FINAL  # the loop ran out of rounds unless a repeat says otherwise
         nudged = False
         claim_checked = False
         metrics = TurnMetrics()
@@ -2002,7 +2131,14 @@ class AgentOrchestrator:
             full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
             self._log_model_reply(model, content, tool_calls)
 
-            if not tool_calls:
+            replaced = False
+            if not tools:
+                # Nothing was offered, so a call written out as text can't run: say so instead.
+                content, replaced = drop_unofferable_calls(content)
+                if replaced:
+                    logger.info("Model '%s' wrote a tool call on a turn with no tools; replaced the reply.", model)
+                    metrics.nets.append("no-tools")
+            elif not tool_calls:
                 cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
                 if extracted_calls:
                     tool_calls = extracted_calls
@@ -2056,6 +2192,8 @@ class AgentOrchestrator:
                         "active_skills": active_skills or [],
                         "tools_used": tools_used,
                         "metrics": metrics.payload(tools_used),
+                        # The streamed text was the raw call: the client shows `response` instead.
+                        "replace_content": replaced,
                     }
                 }
                 return
@@ -2065,10 +2203,12 @@ class AgentOrchestrator:
                 func_data = tc.get("function", {})
                 fn_name = func_data.get("name", "")
                 fn_args = func_data.get("arguments", {})
+                fn_name, fn_args = self._upgrade_search(
+                    fn_name, fn_args if isinstance(fn_args, dict) else {}, tools, tool_ctx)
                 normalized_tool_calls.append({
                     "id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
                     "name": fn_name,
-                    "args": fn_args if isinstance(fn_args, dict) else {}
+                    "args": fn_args
                 })
 
             duplicate_detected = False
@@ -2077,24 +2217,10 @@ class AgentOrchestrator:
                     duplicate_detected = True
                     break
             if duplicate_detected:
-                loop_msg = "Jarvis stopped executing to avoid a duplicate action loop."
-                yield {"event": "token", "data": {"delta": loop_msg}}
-                self.memory_store.append_message(session_id, role="assistant", content=loop_msg)
-                yield {
-                    "event": "done",
-                    "data": {
-                        "response": loop_msg,
-                        "model": model,
-                        "provider": provider.name,
-                        "status": "completed",
-                        "session_id": session_id,
-                        "route_reason": route_reason,
-                        "fallback_used": False,
-                        "tools_used": tools_used,
-                        "metrics": metrics.payload(tools_used),
-                    }
-                }
-                return
+                logger.info("Model '%s' repeated its last call; asking for the answer instead.", model)
+                metrics.nets.append("repeat-stopped")
+                final_nudge = _NUDGE_REPEAT
+                break
 
             batch_result = evaluate_tool_calls_batch(
                 tool_calls=[{"name": tc["name"], "args": tc["args"]} for tc in normalized_tool_calls],
@@ -2123,6 +2249,9 @@ class AgentOrchestrator:
                 prompt = build_confirmation_prompt(
                     pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
                 )
+                # The client shows `response` in place of what streamed: keep what the model already
+                # wrote this turn (on device a whole summary vanished behind the approval card).
+                shown = said + ([content.strip()] if content.strip() else []) + [prompt["text"]]
                 yield {
                     "event": "confirmation_required",
                     "data": {
@@ -2131,13 +2260,15 @@ class AgentOrchestrator:
                         "session_id": session_id,
                         "model": model,
                         "provider": provider.name,
-                        "response": prompt["text"],
+                        "response": "\n\n".join(shown),
                         "spoken": prompt["spoken"],
                     }
                 }
                 return
 
             messages.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
+            if content.strip():
+                said.append(content.strip())
             for tc in normalized_tool_calls:
                 t_name = tc["name"]
                 t_args = tc["args"]
@@ -2185,6 +2316,58 @@ class AgentOrchestrator:
                     "content": self._tool_message_content(t_name, result_str, model)
                 })
                 self._persist_tool_result(session_id, t_id, t_name, t_args, result_str)
+        else:
+            logger.warning("Max tool iterations reached (%d); asking '%s' for the answer.", max_iterations, model)
+            metrics.nets.append("rounds-spent")
+
+        # Out of rounds, or a repeated call: one more request for the answer. Tools stay offered so
+        # the cached prompt prefix holds (the template renders them in the head); a model that still
+        # calls one gets a plain completion without tools instead.
+        messages.append({"role": "user", "content": final_nudge})
+        content, reasoning_parts, called = "", [], False
+        async for ev in provider.stream_chat(model=model, messages=messages, tools=tools if tools else None,
+                                             profile=profile, thinking=thinking):
+            kind = ev.get("event")
+            if kind == "text_delta":
+                content += ev.get("content", "")
+                yield {"event": "token", "data": {"delta": ev.get("content", "")}}
+            elif kind == "reasoning_delta":
+                reasoning_parts.append(ev.get("content", ""))
+                yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
+            elif kind == "tool_call":
+                called = True
+            elif kind == "done":
+                metrics.add_round(ev.get("raw", {}) or {})
+                content = content or (ev.get("raw", {}) or {}).get("content", "") or ""
+            elif kind == "error":
+                yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
+                return
+        content = extract_tool_calls_from_text(content)[0] if content else content
+        if called or not content.strip():
+            synth = await provider.chat(model=model, messages=messages, profile=profile, thinking=False)
+            content = (synth.get("message", {}).get("content", "") or "").strip() or "".join(reasoning_parts).strip()
+            yield {"event": "token", "data": {"delta": content}}
+        full_reasoning = "".join(reasoning_parts)
+        self.memory_store.append_message(
+            session_id, role="assistant", content=content, reasoning_content=full_reasoning or None
+        )
+        yield {
+            "event": "done",
+            "data": {
+                "response": content,
+                "reasoning": full_reasoning,
+                "model": model,
+                "provider": provider.name,
+                "status": "completed",
+                "session_id": session_id,
+                "route_reason": route_reason,
+                "fallback_used": False,
+                "compaction_performed": compaction_info,
+                "active_skills": active_skills or [],
+                "tools_used": tools_used,
+                "metrics": metrics.payload(tools_used),
+            }
+        }
 
     async def _run_openrouter_stream_loop(
         self,

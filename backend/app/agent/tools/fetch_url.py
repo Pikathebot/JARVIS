@@ -42,6 +42,31 @@ def _numbered_links(element, base: str) -> list[str]:
     return out
 
 
+# Sites that show logged-out visitors a sign-in page instead of the content. Reddit since 2026:
+# www. serves an empty shell, old. redirects to /login, the .json feed answers 403 (checked
+# 2026-10-17). Told only "empty content", the 9B researched the topic elsewhere and presented that
+# as a summary of the thread.
+_SIGN_IN_SITES = ("reddit.com",)
+_LOGIN_PATH = re.compile(r"/(?:login|signin|sign-in|accounts/login)\b", re.IGNORECASE)
+_SIGN_IN_WALL = (
+    "Error: '{url}' shows a sign-in page to visitors who aren't logged in, so its content can't be "
+    "read here. Tell the user that plainly. Don't present pages found elsewhere as a summary of it; "
+    "if they want, offer to search the topic and say the result comes from other pages."
+)
+
+
+def _redirected_to_login(asked: str, landed: str) -> bool:
+    return bool(_LOGIN_PATH.search(urlparse(landed).path)) and not _LOGIN_PATH.search(urlparse(asked).path)
+
+
+def _sign_in_wall(asked: str, landed: str, text: str) -> bool:
+    if _redirected_to_login(asked, landed):
+        return True
+    host = (urlparse(asked).hostname or "").lower()
+    on_site = any(host == s or host.endswith("." + s) for s in _SIGN_IN_SITES)
+    return on_site and len(text) < JS_ONLY_TEXT_CHARS
+
+
 def _pdf_text(data: bytes):
     """A PDF's text with pypdf if it is installed, else None."""
     try:
@@ -129,6 +154,8 @@ def fetch_url(url: str, max_chars: int = 8000, offset: int = 0) -> str:
             else:
                 return f"Error: '{clean_url}' redirected more than {MAX_REDIRECTS} times; stopped."
             response.raise_for_status()
+            if _redirected_to_login(clean_url, current):
+                return _SIGN_IN_WALL.format(url=clean_url)
 
             content_type = response.headers.get("content-type", "").lower()
 
@@ -171,6 +198,8 @@ def fetch_url(url: str, max_chars: int = 8000, offset: int = 0) -> str:
             # Normalize excess blank lines
             cleaned_text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
+            if _sign_in_wall(clean_url, current, cleaned_text):
+                return _SIGN_IN_WALL.format(url=clean_url)
             if not cleaned_text:
                 return f"Notice: Web page at '{clean_url}' returned empty or non-extractable content."
 

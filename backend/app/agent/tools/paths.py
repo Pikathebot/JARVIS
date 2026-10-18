@@ -17,6 +17,12 @@ def workspace_root(workspace_path: Optional[str]) -> Path:
     return Path(workspace_path or settings.workspace_path).resolve()
 
 
+def freeform_root() -> Path:
+    """Freeform's file root: the user's own folders (home by default), so "Downloads" means
+    ~/Downloads. It stands in for the workspace there: reads inside it run, and every write asks."""
+    return Path(settings.freeform_files_root or Path.home()).resolve()
+
+
 def is_inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 

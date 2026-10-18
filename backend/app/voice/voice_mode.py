@@ -88,17 +88,30 @@ def _gb(mb: float) -> str:
     return f"{mb / 1024:.1f}".rstrip("0").rstrip(".")
 
 
+def _status_parts(utterance: str) -> list[str]:
+    """Which readings a plain usage question about this machine asks for; [] for anything else."""
+    u = (utterance or "").strip()
+    if not u or _ASKS_WHICH.search(u):
+        return []
+    parts = [k for k, rx in _PART.items() if rx.search(u)]
+    if parts == ["temp"] and not _DEVICE.search(u):
+        return []  # "what's the temperature outside?"
+    if not parts or ("all" not in parts and not (_ASKS_USAGE.search(u) and _OURS.search(u))):
+        return []  # ...and "how much is a new CPU" is shopping, not this machine
+    return parts
+
+
+def asks_status(utterance: str) -> bool:
+    """A plain usage question about this machine ("what's my GPU temperature / VRAM usage?")."""
+    return bool(_status_parts(utterance))
+
+
 def status_answer(utterance: str, snapshot: Callable[[], Any]) -> str:
     """A spoken hardware answer for the plain usage questions; '' for anything else. ``snapshot``
     returns an awareness ``SystemSnapshot`` (called only when the question matches)."""
-    u = (utterance or "").strip()
-    if not u or _ASKS_WHICH.search(u):
+    parts = _status_parts(utterance)
+    if not parts:
         return ""
-    parts = [k for k, rx in _PART.items() if rx.search(u)]
-    if parts == ["temp"] and not _DEVICE.search(u):
-        return ""  # "what's the temperature outside?"
-    if not parts or ("all" not in parts and not (_ASKS_USAGE.search(u) and _OURS.search(u))):
-        return ""  # ...and "how much is a new CPU" is shopping, not this machine
     s = snapshot()
     gpu_bits = []
     if s.gpu_available:

@@ -364,6 +364,6 @@ def test_the_offered_tool_set_is_fixed_per_space():
     names = lambda mode: [t.__name__ for t in tools_for_space(mode)]
     # Byte-stable prompt prefix: identical list, same order, every turn.
     assert names("WORKSPACE") == names("WORKSPACE") == names("SYSTEM")
-    assert "read_file" in names("WORKSPACE") and "read_file" not in names("FREEFORM")
+    assert "execute_command" in names("WORKSPACE") and "execute_command" not in names("FREEFORM")
     assert "launch_app" in names("FREEFORM") and "web_search" in names("FREEFORM")
 

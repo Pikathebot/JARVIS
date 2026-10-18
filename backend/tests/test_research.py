@@ -200,3 +200,39 @@ async def test_the_pre_run_taints_the_loop(tmp_path):
         workspace_path=tmp_path, prior_tools=prior)]
     assert events[-1]["event"] == "confirmation_required"
     assert "web pages" in events[-1]["data"]["pending_confirmations"][0]["reason"]
+
+
+@pytest.mark.parametrize("message,upgraded", [
+    ("what is the best black myth wukong mod for multiplayer", True),
+    ("who won the match yesterday?", True),
+    ("find me links to the llama.cpp releases", False),
+    ("where can I download the Wukong co-op mod", False),
+    ("", False),
+    # On device 2026-10-17: an instruction, not a question -- its search must stay a search.
+    ("execute the command", False),
+    ("search for the wukong coop mod", False),
+    ("look up who made the wukong coop mod", True),
+    ("tell me about the wukong coop mod", True),
+])
+def test_a_question_s_web_search_runs_as_research(message, upgraded):
+    from app.agent.orchestrator import AgentOrchestrator
+    tools = registry.tools_for_space("FREEFORM")
+    name, args = AgentOrchestrator()._upgrade_search("web_search", {"query": "wukong coop mod"}, tools,
+                                                     {"user_message": message})
+    assert (name == "research") is upgraded
+    if upgraded:
+        assert args == {"question": message, "query": "wukong coop mod"}
+
+
+def test_no_upgrade_without_research_on_offer_or_for_other_tools():
+    from app.agent.orchestrator import AgentOrchestrator
+    o = AgentOrchestrator()
+    ctx = {"user_message": "who won?"}
+    assert o._upgrade_search("web_search", {"query": "q"}, [registry.web_search], ctx)[0] == "web_search"
+    assert o._upgrade_search("fetch_url", {"url": "u"}, registry.tools_for_space("FREEFORM"), ctx)[0] == "fetch_url"
+
+
+def test_a_malformed_search_is_not_upgraded():
+    from app.agent.orchestrator import AgentOrchestrator
+    tools = registry.tools_for_space("FREEFORM")
+    assert AgentOrchestrator()._upgrade_search("web_search", {"foo": "bar"}, tools, {"user_message": "who won?"})[0] == "web_search"

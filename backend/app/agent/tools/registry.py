@@ -181,6 +181,7 @@ class FindFilesArgs(BaseModel):
     pattern: str = Field(..., description="File pattern or extension")
     root_dir: str = Field(default=".", description="Root search directory")
     max_results: int = Field(default=50, description="Maximum number of matches to return")
+    sort_by: Literal["newest", "largest"] = Field(default="newest", description="'largest' lists the biggest files first")
 
 
 class GrepInFilesArgs(BaseModel):
@@ -419,6 +420,11 @@ def execute_tool(
             f"Error: '{tool_name}' works on project files, and this is a Freeform conversation "
             "with no workspace. Ask the user to switch to a Workspace for that."
         )
+    if context and str(context.get("chat_mode") or "").upper() == FREEFORM_MODE:
+        from app.agent.tools.paths import freeform_root
+
+        # Whatever the caller passed, Freeform's file tools resolve against the user's folders.
+        context = {**context, "workspace_path": str(freeform_root())}
 
     func = TOOL_FUNCTIONS[tool_name]
     try:
@@ -457,13 +463,14 @@ def execute_tool(
         return f"Error executing tool '{tool_name}': {str(e)}"
 
 
-# A Freeform conversation has no project and no working directory, so nothing that reads,
-# writes or runs inside a workspace is offered there -- and execute_tool refuses it even if the
-# model calls one anyway (a model can name a tool it was never offered).
+# A Freeform conversation has no project, so nothing bound to a project (artifacts, git, running
+# commands, deleting) is offered there -- and execute_tool refuses it even if the model calls one
+# anyway (a model can name a tool it was never offered). The plain file tools are offered and work
+# on the user's own folders (``paths.freeform_root``, home by default): reads there run, every
+# write asks (user's call, 2026-10-17, after "save the summary in Downloads" had no way to save).
 FREEFORM_MODE = "FREEFORM"
 WORKSPACE_BOUND_TOOLS = frozenset({
-    "read_file", "write_file", "patch_file", "delete_file", "find_files", "grep_in_files",
-    "list_directory", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
+    "delete_file", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
     "git_status", "git_diff", "git_log", "git_commit", "git_switch",
     "git_restore", "git_push", "git_pull",
 })

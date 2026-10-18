@@ -32,6 +32,9 @@ def check_rate_limit(tool_name: str, current_turn_tool_count: int) -> bool:
 class ChatMode(str, Enum):
     WORKSPACE = "WORKSPACE"
     SYSTEM = "SYSTEM"
+    # No project; the file tools work on the user's own folders (``paths.freeform_root``), which
+    # stand in for the workspace: reads there run, and every write asks.
+    FREEFORM = "FREEFORM"
 
 
 class RiskTier(str, Enum):
@@ -667,13 +670,20 @@ def evaluate_tool_permission(
             effective_tier = path_tier
         target = _resolve_for_card(path, workspace_path)
         overwrite = str(arguments.get("overwrite", True)).strip().lower() not in ("false", "0", "no")
-        if (tool_name == "write_file" and overwrite and target is not None and target.is_file()
+        if chat_mode == ChatMode.FREEFORM and effective_tier == RiskTier.LOW_RISK:
+            # The user's own folders, not a project sandbox: every change asks, once.
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            replaces = target is not None and target.is_file() and (overwrite or tool_name == "patch_file")
+            custom_reason = (f"{'Changes' if replaces else 'Saves a new file'} in your folders: {target}"
+                             + (" (the old version is backed up first)." if replaces else "."))
+        elif (tool_name == "write_file" and overwrite and target is not None and target.is_file()
                 and effective_tier == RiskTier.LOW_RISK):
             # Creating a file runs; replacing one asks (the old version is backed up first).
             effective_tier = RiskTier.CONFIRMATION_REQUIRED
             custom_reason = f"Replaces the existing '{target.name}' (the old version is backed up first)."
         elif effective_tier != RiskTier.LOW_RISK:
-            custom_reason = ("Writes outside this workspace" if _outside_note(target, workspace_path)
+            custom_reason = (("Writes outside your home folder" if chat_mode == ChatMode.FREEFORM else "Writes outside this workspace")
+                             if _outside_note(target, workspace_path)
                              else "Changes a protected location") + (f": {target}" if target else "") + "."
     elif tool_name in ("read_file", "list_directory", "find_files", "grep_in_files"):
         path = (arguments.get("file_path") or arguments.get("directory_path") or arguments.get("path")
@@ -682,7 +692,8 @@ def evaluate_tool_permission(
         if path_tier != RiskTier.LOW_RISK:
             effective_tier = path_tier
             target = _resolve_for_card(path, workspace_path)
-            custom_reason = f"Reads outside this workspace: {target}." if target else None
+            where = "your home folder" if chat_mode == ChatMode.FREEFORM else "this workspace"
+            custom_reason = f"Reads outside {where}: {target}." if target else None
     elif tool_name == "fetch_url":
         url = arguments.get("url") or arguments.get("target_url") or arguments.get("link") or ""
         url_tier = evaluate_url_risk(str(url))

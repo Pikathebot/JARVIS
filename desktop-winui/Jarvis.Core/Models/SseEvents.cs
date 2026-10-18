@@ -209,9 +209,19 @@ public sealed class SseDoneEvent
     [JsonPropertyName("tools_used")]
     public List<Dictionary<string, object?>> ToolsUsed { get; set; } = new();
 
+    /// <summary>True when the streamed text was a tool call written out on a turn with no tools:
+    /// the bubble shows <see cref="Response"/> in place of what streamed.</summary>
+    [JsonPropertyName("replace_content")]
+    public bool ReplaceContent { get; set; }
+
     /// <summary>The turn's numbers for the reply's metrics line (PLAN 4.13 #9); null from paths
     /// that don't report them (cloud, the duplicate-loop stop).</summary>
     public TurnMetrics? Metrics { get; set; }
+
+    /// <summary>Set now and then on a text-only reply (PLAN 4.13 #8): a second take may be on its
+    /// way; poll /api/compare/{id} and show a compare card only if one becomes ready.</summary>
+    [JsonPropertyName("compare_id")]
+    public string? CompareId { get; set; }
 }
 
 /// <summary>What one reply cost: first-token time and prompt/cache sizes from the first model round,

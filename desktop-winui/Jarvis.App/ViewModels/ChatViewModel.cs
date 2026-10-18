@@ -625,7 +625,12 @@ public partial class ChatViewModel : ObservableObject
         _streamingMessage.ActiveSkills = e.ActiveSkills;
         _streamingMessage.ToolsUsed = e.ToolsUsed;
         _streamingMessage.Metrics = e.Metrics;
-        if (!string.IsNullOrEmpty(e.Response) && string.IsNullOrEmpty(_streamingMessage.Content))
+        _streamingMessage.CompareId = e.CompareId;
+        if (!string.IsNullOrEmpty(e.CompareId))
+        {
+            _ = PollCompareAsync(_streamingMessage);
+        }
+        if (!string.IsNullOrEmpty(e.Response) && (e.ReplaceContent || string.IsNullOrEmpty(_streamingMessage.Content)))
         {
             _streamingMessage.Content = e.Response;
         }
@@ -640,6 +645,51 @@ public partial class ChatViewModel : ObservableObject
         ActiveReasoningMessage = finished;
         IsReasoningStreaming = false;
         MessageCompleted?.Invoke(finished);
+    }
+
+    /// <summary>Asks for the reply's second take (PLAN 4.13 #8) every 2 s for up to 2 minutes; most
+    /// end as "none" (the model judged the reply already the right shape) and nothing is shown.</summary>
+    private async Task PollCompareAsync(ChatMessage message)
+    {
+        var id = message.CompareId!;
+        for (var i = 0; i < 60; i++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            CompareState? state;
+            try
+            {
+                state = await _api.FetchCompareAsync(id).ConfigureAwait(false);
+            }
+            catch
+            {
+                return;  // backend gone or restarting: the compare is an extra, never an error
+            }
+            if (state is null || state.Status is "none" or "failed" or "voted") return;
+            if (state.Status == "ready" && !string.IsNullOrEmpty(state.Alternative))
+            {
+                Post(() =>
+                {
+                    message.CompareAxis = state.Axis;
+                    message.CompareAlternative = state.Alternative;
+                });
+                return;
+            }
+        }
+    }
+
+    /// <summary>The user's pick on a compare card; the card goes away at once, the vote is saved
+    /// to the preference file by the backend (a failure there is not worth an error).</summary>
+    public async Task VoteCompareAsync(ChatMessage message, string choice)
+    {
+        if (string.IsNullOrEmpty(message.CompareId) || message.CompareVoted) return;
+        message.CompareVoted = true;
+        try
+        {
+            await _api.VoteCompareAsync(message.CompareId, choice).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
     }
 
     private void HandleError(string message)

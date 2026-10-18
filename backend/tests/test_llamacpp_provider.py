@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
+from app.config import settings
 from app.agent.llamacpp_provider import LlamaCppProvider, strip_thinking_tags
 from app.agent.tools.registry import read_file, web_search
 
@@ -204,6 +205,8 @@ async def test_sampling_profile_parameters_sent_correctly():
         assert captured_payloads[1]["top_p"] == 0.95
         assert captured_payloads[1]["top_k"] == 20
         assert captured_payloads[1]["presence_penalty"] == 0.0
+        # every reply is capped, so a thinking loop can't run until the context fills
+        assert captured_payloads[0]["max_tokens"] == settings.llama_max_tokens > 0
 
 
 @pytest.mark.anyio

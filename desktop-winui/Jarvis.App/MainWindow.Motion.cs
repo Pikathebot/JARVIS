@@ -212,6 +212,40 @@ public sealed partial class MainWindow
             _ = MaterialisePanelAsync(panel);
             await Task.Delay(PanelStagger);
         }
+        _ = EnsureRevealedAsync();
+    }
+
+    /// <summary>Safety net for the hand-off: a spring that stalls mid-flight must not leave the
+    /// card over the window or a panel half-materialised. After the sequence's time, everything
+    /// is put where it ends.</summary>
+    private async Task EnsureRevealedAsync()
+    {
+        await Task.Delay(2000);
+        if (StartupOverlay.Visibility == Visibility.Visible)
+        {
+            Motion(StartupCard).Set(0, 0, 0);
+            _startupBreathing?.Stop();
+            _startupBreathing = null;
+            StartupOverlay.Visibility = Visibility.Collapsed;
+        }
+        // Not while a sheet is open: it dims the toolbar on purpose.
+        if (SettingsHost.Visibility != Visibility.Visible && TitleBarRow.Opacity < 0.99)
+            Motion(TitleBarRow, affectsGlass: false).Set(0, 0, 1);
+        foreach (var panel in StartupPanels)
+        {
+            if (panel.Opacity < 0.99) Motion(panel).Set(0, 0, 1);
+        }
+    }
+
+    /// <summary>Opening a session animates nothing, so a list a switch left hidden would hide
+    /// every chat opened after it. Unless a switch is in flight, put the lists back.</summary>
+    private void ShowPagesIfIdle()
+    {
+        if (_pendingSpace is not null) return;
+        foreach (var page in SpacePages())
+        {
+            if (page.Opacity < 0.99) Motion(page).Set(0, 0, 1);
+        }
     }
 
     /// <summary>Clear glass rising into place, then its frost and tint condensing onto it.</summary>
@@ -259,7 +293,12 @@ public sealed partial class MainWindow
         // +1: moving right (to Workspace), so content leaves to the left and arrives from the right.
         var direction = target == ChatSpace.Workspace ? 1 : -1;
         var pages = SpacePages();
-        await Task.WhenAll(pages.Select(p => Motion(p).AnimateTo(-direction * PageShift, 0, 0, PageOut)));
+        _hiddenPages.UnionWith(pages);
+        // Capped: an exit that never reports settled (no frames while the window is occluded)
+        // must not hold the switch -- the pages only need to be out of sight, and Set below
+        // puts them wherever they are anyway.
+        await Task.WhenAny(Task.WhenAll(pages.Select(p => Motion(p).AnimateTo(-direction * PageShift, 0, 0, PageOut))),
+                           Task.Delay(400));
         if (id != _spaceTransition) return;
 
         SessionsViewModel.Space = target;
@@ -270,12 +309,35 @@ public sealed partial class MainWindow
         if (id != _spaceTransition) return;
         _pendingSpace = null;
 
-        // Re-read: a list can rebuild its panel while its items are replaced.
-        foreach (var page in SpacePages())
+        // Re-read: a list can rebuild its panel while its items are replaced -- and can report
+        // no panel for a moment while it does. Bring back every page that was sent out too:
+        // one left at opacity 0 kept every chat opened afterwards invisible ("history doesn't
+        // load", the user, 2026-10-01), since opening a session animates nothing.
+        var back = SpacePages();
+        foreach (var page in _hiddenPages)
+            if (!back.Contains(page)) back.Add(page);
+        _hiddenPages.Clear();
+        foreach (var page in back)
         {
             var motion = Motion(page);
             motion.Set(direction * PageShift, 0, 0);
             _ = motion.AnimateTo(0, 0, 1, PageIn);
+        }
+        _ = EnsurePagesShownAsync(id);
+    }
+
+    /// <summary>Pages faded out by a space switch and not yet brought back.</summary>
+    private readonly HashSet<UIElement> _hiddenPages = new();
+
+    /// <summary>Safety net after a switch: whatever happened to the entrance (no frames, a list
+    /// that swapped panels mid-flight), the lists end up visible and in place.</summary>
+    private async Task EnsurePagesShownAsync(int id)
+    {
+        await Task.Delay(1200);
+        if (id != _spaceTransition) return; // a newer switch owns the pages now
+        foreach (var page in SpacePages())
+        {
+            if (page.Opacity < 0.99) Motion(page).Set(0, 0, 1);
         }
     }
 

@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     # Context Limits (Amendment 2)
     llama_ctx_size_main: int = Field(default=16384, alias="LLAMA_CTX_SIZE_MAIN")
     llama_ctx_size_fast: int = Field(default=8192, alias="LLAMA_CTX_SIZE_FAST")
+    # Tokens per model reply (thinking included); 0 = no cap.
+    llama_max_tokens: int = Field(default=8192, alias="LLAMA_MAX_TOKENS")
+    # In-app compare (PLAN 4.13 #8): share of eligible replies that get a second take; 0 = off.
+    compare_rate: float = Field(default=1 / 15, alias="COMPARE_RATE")
+    # Where Freeform's file tools work (relative paths resolve here); empty = the user's home folder.
+    freeform_files_root: str = Field(default="", alias="FREEFORM_FILES_ROOT")
 
     # Model Routing (Section 2 of Build plan)
     vision_model: Optional[str] = Field(default=None, alias="VISION_MODEL")

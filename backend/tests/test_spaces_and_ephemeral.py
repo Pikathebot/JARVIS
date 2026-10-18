@@ -203,7 +203,7 @@ async def test_ephemeral_upload_rejects_a_path_like_session_id():
 # ---- Freeform -----------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_freeform_turn_has_no_project_rag_or_workspace_tools():
+async def test_freeform_turn_has_no_project_rag_or_project_tools():
     project_id = f"proj-{uuid.uuid4().hex[:8]}"
     with SessionLocal() as db:
         for active in db.exec(select(Project).where(Project.is_active == True)).all():  # noqa: E712
@@ -226,7 +226,8 @@ async def test_freeform_turn_has_no_project_rag_or_workspace_tools():
         assert "SPACE: Freeform" in _prompt_text(fake.calls[-1])
         assert "SPACE: Freeform" not in fake.calls[-1]["messages"][0]["content"]  # per-turn, not the cached prefix
         offered = _tool_names(fake.calls[-1])
-        assert offered.isdisjoint({"read_file", "write_file", "patch_file", "list_directory", "execute_command"})
+        assert offered.isdisjoint({"delete_file", "execute_command", "git_status", "create_artifact"})
+        assert "read_file" in offered  # file tools work on the user's own folders (2026-10-17)
 
         with SessionLocal() as db:
             row = db.get(DBSession, session_id)
@@ -247,12 +248,12 @@ async def test_freeform_turn_has_no_project_rag_or_workspace_tools():
 
 def test_freeform_offers_no_workspace_tools():
     names = {t.__name__ for t in tools_for_space("FREEFORM")}
-    assert "read_file" not in names and "git_status" not in names
-    assert "web_search" in names  # non-workspace tools are still there
+    assert "execute_command" not in names and "git_status" not in names and "delete_file" not in names
+    assert "web_search" in names and "read_file" in names  # file tools work on the user's folders
 
 
 def test_execute_tool_refuses_workspace_tools_in_freeform():
-    out = execute_tool("read_file", {"path": "notes.txt"}, context={"chat_mode": "FREEFORM", "workspace_path": "."})
+    out = execute_tool("execute_command", {"command": "dir"}, context={"chat_mode": "FREEFORM", "workspace_path": "."})
     assert out.startswith("Error:") and "Freeform" in out
 
 

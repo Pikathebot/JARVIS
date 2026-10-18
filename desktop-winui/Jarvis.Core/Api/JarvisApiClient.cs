@@ -163,6 +163,30 @@ public sealed class JarvisApiClient
     }
 
     // ==========================================
+    // In-app compare (PLAN 4.13 #8)
+    // ==========================================
+
+    /// <summary>The second take on a reply: status judging / writing (ask again), ready (with the
+    /// alternative), none / failed (stop asking). Null when the backend no longer knows the id.</summary>
+    public async Task<CompareState?> FetchCompareAsync(string compareId, CancellationToken ct = default)
+    {
+        using var response = await _http.GetAsync($"/api/compare/{Uri.EscapeDataString(compareId)}", ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        return await ReadAsync<CompareState>(response, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>choice: original / alternative / tie / dismiss. A 409 (already voted, or expired) is ignored.</summary>
+    public async Task VoteCompareAsync(string compareId, string choice, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsJsonAsync($"/api/compare/{Uri.EscapeDataString(compareId)}/vote",
+            new CompareVote { Choice = choice }, JarvisJson.Options, ct).ConfigureAwait(false);
+        if (response.StatusCode != System.Net.HttpStatusCode.Conflict)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
+    // ==========================================
     // Projects / workspaces
     // ==========================================
 

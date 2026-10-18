@@ -327,6 +327,20 @@ def test_fetch_url_the_model_composed_asks():
     assert _fetch_decision("https://files.example/x", msgs).allowed is False
 
 
+def test_fetch_url_names_a_sign_in_wall_instead_of_empty_content():
+    # On device 2026-10-17: told only "empty content", the 9B summarised other pages as the thread.
+    with _fake_page("<html><body><div>Reddit</div></body></html>"):
+        res = fetch_url("https://www.reddit.com/r/x/comments/1/t/")
+    assert res.startswith("Error:") and "sign-in page" in res and "Don't present pages found elsewhere" in res
+    login = httpx.Response(200, text="<html><body>Welcome, log in</body></html>",
+                           headers={"content-type": "text/html"},
+                           request=httpx.Request("GET", "https://old.example/login/?dest=x"))
+    hop = httpx.Response(302, headers={"location": "https://old.example/login/?dest=x"})
+    with patch("httpx.Client", return_value=_redirecting_client(hop, login)), \
+         patch("app.agent.tools.fetch_url._resolves_to_local_network", return_value=False):
+        assert "sign-in page" in fetch_url("https://old.example/r/x/comments/1/t/")
+
+
 def test_fetch_url_without_provenance_keeps_the_old_rule():
     assert evaluate_tool_permission("fetch_url", {"url": "https://example.org/anything"}).allowed is True
 

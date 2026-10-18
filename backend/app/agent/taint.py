@@ -66,6 +66,9 @@ def source_of(tool: str, args: dict[str, Any], ctx: dict[str, Any]) -> Optional[
         resolved = _resolve(str(args.get("file_path") or args.get("name") or ""), ctx.get("workspace_path"))
         if resolved is None:
             return None
+        if str(ctx.get("chat_mode") or "").upper() == "FREEFORM" and tool == "read_file":
+            # The user's own folders hold downloads and mail attachments: anything could be in there.
+            return "a file from your folders"
         if _is_upload(resolved, ctx.get("workspace_path"), ctx.get("project_id")):
             return "an uploaded file"
         with _lock:

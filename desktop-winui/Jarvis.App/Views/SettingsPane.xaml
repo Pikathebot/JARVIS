@@ -13,8 +13,8 @@
 
     <!--
         The Settings window's content (PLAN 4.8b2; design: the "Jarvis Settings window" canvas).
-        Two glass slabs over the desktop: the section list on regular glass, the page on thick
-        glass (its XAML text must read over any desktop). One page shows at a time; the others are
+        Two glass slabs over the desktop, both thick glass: XAML text on either must read over
+        any desktop (the section list on regular glass didn't). One page shows at a time; the others are
         Collapsed, which takes their glass controls off the scene too.
     -->
     <UserControl.Resources>
@@ -56,7 +56,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Sections -->
-        <glass:GlassSlab x:Name="SidebarSlab" SlabCornerRadius="{StaticResource RadiusPanel}">
+        <glass:GlassSlab x:Name="SidebarSlab" Material="Thick" TintAmount="0.62" Frost="36" SlabCornerRadius="{StaticResource RadiusPanel}">
             <StackPanel Padding="8,14,8,8" Spacing="2">
                 <TextBlock Text="Settings" Style="{StaticResource Title3Text}" Margin="10,6,10,14" />
                 <Button x:Name="NavGeneral" Style="{StaticResource NavButton}" Tag="General" Click="Nav_Click">

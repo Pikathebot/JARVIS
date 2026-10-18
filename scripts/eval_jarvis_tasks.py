@@ -39,8 +39,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_tool_chain as btc  # noqa: E402  (Server, World, the five chain tasks)
 
 NOW = datetime(2026, 10, 16, 18, 30)
-MAX_ROUNDS = 8
+MAX_ROUNDS = 5  # the orchestrator's max_iterations; then one answer round (loop guard)
 PRE_RESEARCH = True  # --no-pre-research measures the research tool alone
+MAX_TOKENS = 8192  # settings.llama_max_tokens
 SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "seed": 42}
 
 
@@ -411,6 +412,14 @@ def with_context(user_text: str, ctx: str) -> str:
             + ctx + "]").strip()
 
 
+def upgrade_search(name: str, args: dict[str, Any], offered: list[dict[str, Any]], user_text: str):
+    """orchestrator._upgrade_search, on the schema dicts the eval offers."""
+    names = [t.get("function", {}).get("name") for t in offered]
+    cls = _orch().AgentOrchestrator
+    bare = cls.__new__(cls)  # _upgrade_search needs no orchestrator state
+    return bare._upgrade_search(name, args, [{"name": n} for n in names], {"user_message": user_text})
+
+
 def wants_research(message: str) -> bool:
     from app.agent.research import wants_research as w
     return w(message)
@@ -513,8 +522,10 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
             live = messages + [{"role": "user", "content": with_context(user_text, turn_ctx)}]
             final = ""
             nudged = claim_checked = False
+            final_nudge, need_answer = o._NUDGE_FINAL, False
+            last_call = None
             for _ in range(MAX_ROUNDS):
-                req = {"messages": live, "tool_choice": "auto", "max_tokens": 4096, "cache_prompt": True,
+                req = {"messages": live, "tool_choice": "auto", "max_tokens": MAX_TOKENS, "cache_prompt": True,
                        "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
                 r = client.post("/v1/chat/completions", json=req)
                 r.raise_for_status()
@@ -549,7 +560,7 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                         continue
                     final = content
                     break
-                live.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": tcs})
+                calls = []
                 for tc in tcs:
                     fn = tc.get("function", {})
                     raw = fn.get("arguments", {})
@@ -557,11 +568,39 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                         args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
                     except json.JSONDecodeError:
                         args = {}
-                    out, _ok = run.world.call(fn.get("name", ""), args)
-                    run.calls.append(fn.get("name", ""))
-                    turn_tools.append({"tool": fn.get("name", ""), "args": args,
+                    # the backend's upgrade: a question's web_search runs as research
+                    name, args = upgrade_search(fn.get("name", ""), args, tools[task.mode], user_text)
+                    calls.append((tc, name, args))
+                if last_call is not None and (calls[0][1], json.dumps(calls[0][2], sort_keys=True)) == last_call:
+                    nets.append("repeat-stopped")  # the backend's loop guard: no rerun, answer instead
+                    final_nudge, need_answer = o._NUDGE_REPEAT, True
+                    break
+                live.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": tcs})
+                for tc, name, args in calls:
+                    out, _ok = run.world.call(name, args)
+                    run.calls.append(name)
+                    last_call = (name, json.dumps(args, sort_keys=True))
+                    turn_tools.append({"tool": name, "args": args,
                                        "status": "error" if out.startswith("Error") else "success"})
                     live.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": out})
+            else:
+                nets.append("rounds-spent")
+                need_answer = True
+            if need_answer:
+                # the orchestrator's answer round: tools still offered; a tool call gets a plain completion
+                live.append({"role": "user", "content": final_nudge})
+                req = {"messages": live, "tool_choice": "auto", "max_tokens": MAX_TOKENS, "cache_prompt": True,
+                       "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
+                r = client.post("/v1/chat/completions", json=req)
+                r.raise_for_status()
+                m = r.json()["choices"][0]["message"]
+                content, tcs = _from_text((m.get("content") or "").strip())
+                if m.get("tool_calls") or tcs or not content:
+                    r2 = client.post("/v1/chat/completions", json={k: v for k, v in req.items() if k not in ("tools", "tool_choice")}
+                                     | {"chat_template_kwargs": {"enable_thinking": False}})
+                    r2.raise_for_status()
+                    content = (r2.json()["choices"][0]["message"].get("content") or "").strip()
+                final = content
             run.finals.append(final)
             messages = list(live)
             # replace the live user turn (with context) by the plain one, as the history store would

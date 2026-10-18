@@ -104,6 +104,33 @@ def wants_research(message: str) -> bool:
     return any(int(y) > KNOWLEDGE_CUTOFF_YEAR for y in _YEAR_RE.findall(text))
 
 
+# "find me links to ...", "where can I download ...", "search results for ...": the user wants the
+# pages themselves, which is what web_search gives.
+_LINKS_RE = re.compile(
+    r"\b(?:links?|urls?|websites?|sites|search results|download|downloads|where can i (?:find|get|buy|watch))\b",
+    re.IGNORECASE,
+)
+
+
+# A message that asks something: a question mark, or a question word / "tell me" / "explain" up
+# front, or "look up who ..." anywhere. "execute the command" is not one: on device (2026-10-17) its
+# web_search ran as research on the question "execute the command" and answered nothing.
+_ASKS_RE = re.compile(
+    r"\?|^\s*(?:(?:hey\s+)?jarvis[,\s]+)?(?:what|what's|whats|who|whom|whose|when|where|why|how|which|is|are|"
+    r"was|were|does|do|did|can|could|will|would|should|has|have|tell me|explain|summari[sz]e|describe)\b|"
+    r"\b(?:look up|find out|search(?:\s+for)?|google|check)\s+(?:what|who|when|where|why|how|which|whether|if)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_answer(message: str) -> bool:
+    """True when a search made for this message should come back as an answer (research), not
+    as a list of links (web_search): a message that asks something, unless it asks for links,
+    sites or downloads."""
+    text = (message or "").strip()
+    return bool(text) and bool(_ASKS_RE.search(text)) and not _LINKS_RE.search(text)
+
+
 def wants_news(question: str) -> bool:
     return bool(re.search(r"\b(?:news|headlines?|breaking|today'?s|this week)\b", question or "", re.IGNORECASE))
 

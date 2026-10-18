@@ -22,6 +22,9 @@ public sealed partial class MessageBubbleControl : UserControl
     public event Action<PendingConfirmation>? ApproveRequested;
     public event Action<PendingConfirmation>? DenyRequested;
 
+    /// <summary>A vote on the reply's second take: original / alternative / tie / dismiss.</summary>
+    public event Action<ChatMessage, string>? CompareVoteRequested;
+
     /// <summary>The Undo on a "Remembered/Forgot" line; set by the window that hosts the bubble.
     /// Returns what the line says afterwards, or null when nothing changed.</summary>
     public Func<ToolStep, MemoryLine, Task<string?>>? UndoMemory { get; set; }
@@ -51,7 +54,7 @@ public sealed partial class MessageBubbleControl : UserControl
     /// indefinitely, long after the message has finished streaming. Re-rendering only when an
     /// input actually changed is what breaks it.
     /// </summary>
-    private (string Content, bool Streaming, int ToolSteps, int Confirmations, string? Model)? _rendered;
+    private (string Content, bool Streaming, int ToolSteps, int Confirmations, string? Model, string? Compare, bool Voted)? _rendered;
 
     public MessageBubbleControl()
     {
@@ -110,6 +113,9 @@ public sealed partial class MessageBubbleControl : UserControl
             case nameof(ChatMessage.IsStreaming):
             // A confirmation answered by typing or voice must take its card away at once.
             case nameof(ChatMessage.PendingConfirmations):
+            // A second take arriving (or voted away) shows or hides the compare card.
+            case nameof(ChatMessage.CompareAlternative):
+            case nameof(ChatMessage.CompareVoted):
                 DispatcherQueue.TryEnqueue(RenderNow);
                 break;
 
@@ -149,7 +155,8 @@ public sealed partial class MessageBubbleControl : UserControl
         if (message is null) return;
 
         var signature = (message.Content, message.IsStreaming, message.ToolSteps.Count,
-                         message.PendingConfirmations.Count, message.Model);
+                         message.PendingConfirmations.Count, message.Model, message.CompareAlternative,
+                         message.CompareVoted);
         if (_rendered == signature) return;
         _rendered = signature;
 
@@ -214,7 +221,30 @@ public sealed partial class MessageBubbleControl : UserControl
 
         RenderToolSteps(message);
         RenderConfirmation(message);
+        RenderCompare(message);
         RenderMetadata(message);
+    }
+
+    private void RenderCompare(ChatMessage message)
+    {
+        if (string.IsNullOrEmpty(message.CompareAlternative) || message.CompareVoted || message.IsStreaming)
+        {
+            CompareCard.Visibility = Visibility.Collapsed;
+            CompareHost.Content = null;
+            return;
+        }
+        CompareCard.Visibility = Visibility.Visible;
+        var axis = string.IsNullOrEmpty(message.CompareAxis) ? "" : $" ({message.CompareAxis})";
+        CompareTitle.Text = $"Another take{axis}. Which reads better?";
+        CompareHost.Content = MarkdownRenderer.Render(message.CompareAlternative, false, false);
+    }
+
+    private void CompareVote_Click(object sender, RoutedEventArgs e)
+    {
+        if (_message is { } message && sender is Button { Tag: string choice })
+        {
+            CompareVoteRequested?.Invoke(message, choice);
+        }
     }
 
     private void RenderToolSteps(ChatMessage message)

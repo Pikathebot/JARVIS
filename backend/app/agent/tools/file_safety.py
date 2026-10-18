@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from app.agent.tools.paths import is_inside
+from app.agent.tools.paths import freeform_root, is_inside, workspace_root
 
 logger = logging.getLogger("jarvis.agent.tools.file_safety")
 
@@ -22,6 +22,9 @@ KEEP_PER_FILE = 10
 
 
 def backup_dir(ws_root: Path) -> Path:
+    if ws_root == freeform_root():
+        # Freeform's root is the user's home: keep its backups in Jarvis's own folder, not ~/.jarvis.
+        return workspace_root(None) / ".jarvis" / "backups" / "_freeform"
     return ws_root / ".jarvis" / "backups"
 
 

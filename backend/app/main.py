@@ -46,6 +46,7 @@ from app.routers import (
     models_router,
     confirmations_router,
     rag_debug_router,
+    compare_router,
 )
 from app.awareness.monitor import AwarenessMonitor
 from app.persona import persona_manager
@@ -498,6 +499,7 @@ app.include_router(routines_router)
 app.include_router(models_router)
 app.include_router(confirmations_router)
 app.include_router(rag_debug_router)
+app.include_router(compare_router)
 
 
 

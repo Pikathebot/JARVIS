@@ -166,3 +166,17 @@ public sealed class GovernorPauseRequest
 {
     public string Reason { get; set; } = "User requested manual pause";
 }
+
+/// <summary>GET /api/compare/{id} (PLAN 4.13 #8).</summary>
+public sealed class CompareState
+{
+    public string Id { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string? Axis { get; set; }
+    public string? Alternative { get; set; }
+}
+
+public sealed class CompareVote
+{
+    public string Choice { get; set; } = "";
+}

@@ -373,6 +373,11 @@ class LlamaCppProvider(ModelProvider):
             **sampling,
             **_thinking_override(thinking),
         }
+        if settings.llama_max_tokens > 0:
+            # One reply's thinking + answer. Without a cap a thinking loop ran until the 32k
+            # context filled (PLAN 4.8c); a capped round ends reasoning-only and the loop's
+            # "answer now" nudge takes it from there.
+            payload["max_tokens"] = settings.llama_max_tokens
 
         if tools:
             formatted_tools = []
@@ -471,6 +476,11 @@ class LlamaCppProvider(ModelProvider):
             **sampling,
             **_thinking_override(thinking),
         }
+        if settings.llama_max_tokens > 0:
+            # One reply's thinking + answer. Without a cap a thinking loop ran until the 32k
+            # context filled (PLAN 4.8c); a capped round ends reasoning-only and the loop's
+            # "answer now" nudge takes it from there.
+            payload["max_tokens"] = settings.llama_max_tokens
 
         if tools:
             formatted_tools = []

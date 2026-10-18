@@ -34,17 +34,19 @@ def find_files(
     pattern: str,
     root_dir: str = ".",
     max_results: int = 50,
+    sort_by: str = "newest",
     workspace_path: Optional[str] = None,
     allow_outside: bool = False
 ) -> str:
     """
     Search for files and directories matching a glob wildcard pattern across the workspace (a folder outside it asks the user first).
-    Always use this tool to locate files by name or extension (e.g. '*.py', '*config*', 'test_*.py').
+    Always use this tool to locate files by name or extension (e.g. '*.py', '*config*', 'test_*.py'), or the biggest files in a folder (pattern '*', sort_by 'largest').
 
     Args:
         pattern: Glob pattern to match against file names (e.g. '*.py', '*main*', '*.json').
         root_dir: Root directory path to start searching from (default '.').
         max_results: Maximum number of matched file paths to return (default 50).
+        sort_by: 'newest' (default) or 'largest' (files only, biggest first).
         workspace_path: Optional active project workspace root boundary.
     """
     clean_pattern = str(pattern or "").strip()
@@ -60,6 +62,7 @@ def find_files(
     if not start_path.exists():
         return f"Error: Search directory '{root_dir}' does not exist."
 
+    largest = str(sort_by or "").strip().lower() in ("largest", "size", "biggest")
     found: list[tuple[float, str, str]] = []
     try:
         for root, dirs, files in os.walk(start_path):
@@ -69,12 +72,14 @@ def find_files(
                 rel = os.path.relpath(full, shown_from).replace(os.sep, "/")
                 if not (full.match(clean_pattern) or Path(name).match(clean_pattern)):
                     continue
+                if largest and is_dir:
+                    continue
                 try:
-                    mtime = full.stat().st_mtime
+                    st = full.stat()
                 except OSError:
                     continue
                 facts = "folder" if is_dir else file_facts(full)
-                found.append((mtime, rel + ("/" if is_dir else ""), facts))
+                found.append((st.st_size if largest else st.st_mtime, rel + ("/" if is_dir else ""), facts))
                 if len(found) >= SEARCH_SCAN_CAP:
                     break
             if len(found) >= SEARCH_SCAN_CAP:
@@ -85,8 +90,9 @@ def find_files(
 
     if not found:
         return f"No files or folders matching pattern '{clean_pattern}' were found in '{root_dir}'."
-    found.sort(reverse=True)  # newest first
-    lines = [f"### Found {len(found)} match(es) for '{clean_pattern}' (newest first):"]
+    found.sort(reverse=True)  # newest (or biggest) first
+    order = "biggest first" if largest else "newest first"
+    lines = [f"### Found {len(found)} match(es) for '{clean_pattern}' ({order}):"]
     lines += [f"- `{rel}` ({facts})" for _, rel, facts in found[:max_results]]
     if len(found) > max_results:
         lines.append(f"\n*(Showing {max_results} of {len(found)}. Use a more specific pattern if needed)*")
