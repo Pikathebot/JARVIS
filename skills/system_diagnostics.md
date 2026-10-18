@@ -8,8 +8,8 @@ triggers:
   - check disk
   - system health
 tools:
-  - get_disk_usage
-  - get_system_uptime
+  - get_system_status
+  - list_processes
 ---
 
 ## System Diagnostics Instructions

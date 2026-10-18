@@ -1374,9 +1374,9 @@ voice-mode measurement: it wasn't worth the VRAM risk. Findings 1 and 2 still ap
 tool-less fast turns; CPU temperature answered with the GPU's) -- fixes held until the harness session's
 uncommitted backend work lands. The prism launcher stays for any ternary model selected later.
 
-### 4.15 Harness review: what to take from google-research/harness2 (2026-10-18) -- PLANNED, NOT BUILT
+### 4.15 Harness review: what to take from google-research/harness2 (2026-10-18) -- BUILT 2026-10-18 (#7 as a diagnostic only)
 
-**Status: research only. Nothing below is built or decided; the user picks, one item at a time like 4.13.**
+**Status: the user approved the recommended order 2026-10-18; all seven worked through, results at the end. #7's nudge measured and not shipped.**
 
 **Source:** github.com/google-research/harness2 (main @ `1cfe254`, paper arXiv 2610.14224), **Apache-2.0**: code
 may be copied with the licence notice and a change note; its `third_party/` keeps upstream licences. Nothing here
@@ -1411,7 +1411,9 @@ and give one bounded fallback, never "try again"; "keep the base" is a valid ans
    list (calls, args, results, reasoning length, nets) as JSON; `scripts/eval_contrast.py A.json [B.json]` prints
    per task (a) pass<->fail flips between two result files and (b) for a task that both passed and failed, the
    first round where the runs differ (other tool, other args, answered vs called). No backend change.
-   **Worth it: yes, first.** Feeds 2.3, 2.4, 2.7 and the fine-tune data (4.13 #10). Size S-M (~150 lines).
+   Take traces on **both slots**: fast is now Ternary Bonsai 2 9B (prism llama-server) and nothing in the eval
+   measures fast-slot turns yet.
+   **Worth it: yes, first.** Feeds #3, #4, #7 and the fine-tune data (4.13 #10). Size S-M (~150 lines).
 2. **Fingerprint every eval result; errors left unscored.** harness2 stamps each rollout with a digest of the
    harness that produced it and refuses to reuse or mix rollouts from another one; a failed evaluation stays
    unscored rather than counting as zero. Jarvis's result JSON doesn't record what produced it (results are told
@@ -1441,7 +1443,9 @@ and give one bounded fallback, never "try again"; "keep the base" is a valid ans
    X; tell the user what failed and what you tried"; and a family guard: the 3rd `web_search` in a turn, or
    the 3rd listing of the same tree, is answered with "you have searched N times; use `research`, or answer from
    what you have" instead of running. Everything rides in tool results / user-role nudges after the prefix, so
-   the KV-cache contract holds. **Worth it: yes, after #1**: count error kinds and family repeats in the traces first
+   the KV-cache contract holds. The counters are per-turn state that must survive an approval pause: keep them
+   in `CallHistory` (parked and restored by `paused_turns.ParkedTurn` already) or add them to `ParkedTurn`, or
+   a resumed turn counts from zero. **Worth it: yes, after #1**: count error kinds and family repeats in the traces first
    so the hints target what actually happens. Size S-M.
 5. **Check a write after it happens.** harness2: "a successful write call does not establish usability; reopen
    or mechanically check the deliverable", one of its four recommended hook shapes. Jarvis's `write_file` /
@@ -1450,8 +1454,12 @@ and give one bounded fallback, never "try again"; "keep the base" is a valid ans
    `compile()`, `.csv` -> consistent column count, `.yaml/.toml` if the parser is installed); append "Checked:
    valid JSON" or "Warning: line 12: SyntaxError ..." so the model can fix it in the same turn. Optional: the
    extension matches a format the user named ("save it as CSV"). Deterministic, no model judgement, works on
-   both spaces' paths (resolved through `paths.py` already). **Worth it: yes**, cheap; more as workspace coding
-   use grows. Size S.
+   both spaces' paths (resolved through `paths.py` already). A parked write replayed after approval goes through
+   the same validate -> `_run_tool` path, so the hook covers it. Two rules: the re-read runs inside the pipeline,
+   not as a model tool call, and never counts as a Freeform file-read taint source (`taint.note_write` already
+   marks a file written in a tainted turn); any warning goes in the tool result, not in `said`, since a replayed
+   round's text isn't shown again (`replaying`). **Worth it: yes**, cheap; more as workspace coding use grows.
+   Size S.
 6. **Lint the harness, and give the always-on prompt a budget.** harness2 validates a harness before any run
    (every skill has a trigger line, every referenced script exists, no template braces, always-on text under a
    cap) and throws away one that fails. Jarvis: `test_tool_contract.py` covers tools (registered, tiered,
@@ -1460,7 +1468,9 @@ and give one bounded fallback, never "try again"; "keep the base" is a valid ans
    (`skills/`: 3 files, keyword triggers), and nothing stops the head prompt from growing. Build: tests that
    (a) every tool name in the rules is offered in the space that gets them, (b) each skill parses with non-empty,
    non-colliding triggers, (c) the head prompt (persona + rules + rendered schemas) stays under today's token
-   count + a margin, so growth is a decision, not drift. Plus a CLAUDE.md line: new guidance goes per-turn (skill /
+   count + a margin, so growth is a decision, not drift. (c) measures the prefix exactly as the chat template
+   renders it, by extending the fixture behind `test_per_turn_material_rides_on_the_user_turn_not_the_prefix`
+   (which already pins it byte-stable) rather than a second one. Plus a CLAUDE.md line: new guidance goes per-turn (skill /
    turn context) or into code first, and always-on text grows only by cutting something. For a 9B, always-on
    prose also dilutes attention, not just budget. **Worth it: yes**, Size S.
 7. **Unsourced specifics on web answers (maybe).** harness2's selector checks claims against the source:
@@ -1493,3 +1503,78 @@ empty re-ask); a lessons library (memory and `docs/MILESTONES.md`; #3 adds the e
 **Recommended build order:** 6 (lint + prompt budget) and 2 (fingerprint, unscored errors), both small and
 independent -> 1 (traces + contrast) -> 3 (verdict convention + probe flags, uses 1 and 2) -> 5 (write check) ->
 4 (error kinds + repeat guard, sized from 1's traces) -> 7 only if 1's traces support it. 8 and 9: not planned.
+Reviewed with the main session 2026-10-18: it agrees with the split and the order; §4.15 comes before 4.14.
+**The user approved the recommended order 2026-10-18.**
+
+**Built 2026-10-18 (build/test-verified only, UNCOMMITTED, unverified on device): #6, #2, #1, #3, #5.**
+- #6: lint tests in `test_tool_contract.py` (rules call only real tools with real parameters; each space's
+  rules name only tools it offers; skills parse with distinct triggers and name real tools) and
+  `test_real_head_prefix_is_stable_and_within_budget` beside the prefix test in `test_context_manager.py`
+  (default persona + rules + schemas one JSON per line; budgets: system 6,200 chars, Freeform 25,500, Workspace
+  35,000; today 5,644 / 23,220 / 32,324). CLAUDE.md: "always-on text is the expensive place for guidance".
+  **The lint found two real bugs, fixed:** `skills/unreal-engine/skill.md` told the model to use
+  `unreal.detect_project` / `unreal.read_logs` / `unreal.build` (from the BaseTool stack deleted 2026-09-23) --
+  now find_files / read_file / grep_in_files / execute_command; `skills/system_diagnostics.md` listed
+  `get_disk_usage` / `get_system_uptime` -- now get_system_status / list_processes. **Left as is, for the user:**
+  rules 10 and 18 name `execute_command` and `delete_file`, which Freeform doesn't offer (the call is refused
+  with "switch to a Workspace"); allow-listed in the test. Making the rules per space would keep each space's
+  prefix stable but changes what the model reads -- eval it first if wanted.
+- #2: `scripts/eval_io.py` (stdlib): result files are `{"meta", "results"}` (old bare lists still load); meta =
+  model file + size, head/tool-schema/script digests, git commit + dirty backend files, sampling, slot, probe
+  flags. A server error is `success: null`, out of the totals ("N unscored"). `review_answers.py` reads both
+  formats and prints what two runs differ in.
+- #1: `--trace DIR` writes one JSON per run (pre-runs, every round's calls with args and results, reasoning,
+  nets, answer); `scripts/eval_contrast.py A.json [B.json]` lists flaky tasks with the first step where a passing
+  and a failing seed part ways, and A->B flips. `--slot fast` mirrors the picker on Fast (no tools, thinking
+  off, `_FAST_NO_TOOLS_NOTE`, pre-status, capability answer in code, written-out calls replaced); the prism
+  server is picked for ternary quants. The eval now also puts matched skills in the turn context, as the
+  orchestrator does (it didn't before, so runs from here aren't strictly comparable with older ones; the stamp
+  says so). A missing model file now stops the eval at once (it hung: llama-server exited, the stdout wait didn't).
+- #3: probes `--rules FILE`, `--skills DIR|none`, `--drop-tools SPACE:a,b`, `--no-net {pre-research,pre-status,
+  reasoning-nudge,claim-nudge,repeat-guard,result-hint}`. Convention from here: an eval delta in PLAN/MILESTONES
+  lists each change with a verdict -- helped / hurt / no observed effect / confounded (several changes in one run,
+  or one seed behind it).
+- #5: `agent/tools/file_check.py`, called by write_file and patch_file after a successful write: read back
+  (and, for write_file, compared with what was sent, line endings aside), then .json/.ipynb, .jsonl, .py, .csv,
+  .toml, .yaml parsed; one sentence appended ("Checked: valid JSON." / "Warning: ... line 2 ...; fix it."). Runs
+  inside the tool: no model call, no taint source, replayed writes covered. `test_file_check.py`.
+- #4 (built after the traced runs below): `agent/tool_errors.py` reads a failure's kind from its "Error..." text
+  (timeout / unavailable / not_permitted / bad_input / not_found / other) and `CallHistory.hint_for` appends that
+  kind's one fixed next step to the result the model reads (the card keeps the tool's own text); the same tool
+  failing the same way twice gets "stop calling it; tell the user"; the 3rd web lookup (web_search + research)
+  in a turn gets "answer from what you have" -- a hint, not a refusal, because a 2026-10-16 ishiguro pass took
+  six lookups. Counts live in `CallHistory`, which a paused turn parks and restores. Mirrored in the eval
+  (`result-hint`). Tests: `test_tool_errors.py`, `test_loop_guard.py`.
+- #7: **detector kept as an eval diagnostic, nudge not shipped.** `scripts/eval_grounding.py` lists an answer's
+  multi-word names and 2+-digit numbers found in nothing the turn read; the eval records them per run
+  (`unsourced`) and counts them in the summary. `test_eval_tools.py` covers it with eval_io and the contrast report.
+- 965 backend tests pass (GPU idle). Mid-eval, the two governor API tests failed once in the full suite and
+  passed alone (33/33): the same pair 4.13 records under eval load.
+
+**Traced evals 2026-10-18 (Defiant main, 3 seeds; `scripts/eval_results/2026-10-18-harness2/`).** Verdicts per #3:
+- Main, before #4/#7: **95/123** (10-16 guard run: 104). chain 15/15, web 14/15, workspace 23/24, system 24/27,
+  convo 5/6, closed 14/36. Flips vs 10-16: 3 fail->pass, 12 pass->fail, of which volume-max, cpu-hog and wukong-mod
+  called **no tool at all** ("Setting volume to maximum." with nothing run -- the claim detector misses that
+  phrasing too) and dry-witted 3/3 -> 0/3.
+- **Freeform's file tools (4.13 device-test fix, 2026-10-17) cost Freeform turns -- hurt, 3 seeds.** On the 10
+  Freeform tasks: 10-16 with 21 Freeform tools 28/30, today with 27 tools 18/30, today with the six file tools
+  dropped (`--drop-tools FREEFORM:read_file,list_directory,find_files,grep_in_files,write_file,patch_file`) 24/30
+  (dry-witted 0 -> 3, cpu-hog 2 -> 3, volume-max 1 -> 2, wukong-mod 2 -> 3). Not changed: the user asked for the
+  feature. Options for the user: keep; shorter Freeform schemas for those six; or fewer of them in Freeform.
+  (Probe had #4's hints on; they only fire on errors and web lookups, so confounded for wukong-mod only.)
+- #4 result hints: **no observed effect.** Fired in 4 of 51 web/closed runs, all already failing (ishiguro,
+  python313, coimbatore); in one the model ignored the hint and searched five times. 28/51 with and without.
+  The simulated world rarely errors (6 errors in 123 main runs), so the eval can't show the error hints' value.
+- #7 nudge: **no observed effect on passes, hurt on answers and time.** Offline the detector flagged 9 of 13
+  failing web answers and 0 of 17 passes. Wired in as a one-time nudge: 0/15 on the five tasks where it fired,
+  with and without it; 1.6x the time (first wording) to 3x (second). First wording: the retry went honest but
+  apologetic ("You're right, my apologies") and dropped what it had right; second wording ("automatic check,
+  not from the user"): it invented new specifics ("Richard (Kurt) won the Nobel in 1994"). Taken out of the loop.
+- Fast (MiniCPM5-2B, picker on Fast): **11/123**; 39 answers claim an action it couldn't take (it has no tools),
+  despite `_FAST_NO_TOOLS_NOTE`. Closed 8/36, convo 1/6. A Fast claim detector (like `_NO_TOOLS_REPLY`) is the
+  obvious next step if wanted.
+- No Bonsai fast run: the fast slot went back to MiniCPM5-2B mid-session (8cfb80b, see 4.14), so Fast was
+  measured on what is live now.
+
+**Next:** the user's call on the Freeform tool set; a Fast claim detector if wanted; #4's error hints only show
+on device (real tools fail more than the simulated world). 8 and 9 stay unplanned.

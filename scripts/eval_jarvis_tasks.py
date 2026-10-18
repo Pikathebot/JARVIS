@@ -18,7 +18,14 @@ fixed answer key. The clock is fixed at Friday 2026-10-16 18:30.
 Examples (repo root, venv python; close Jarvis first, the server takes ~5 GB of VRAM)::
 
     python scripts/eval_jarvis_tasks.py models/qwen3.5-9b/Qwen3.5-9B-UD-IQ3_XXS.gguf
-    python scripts/eval_jarvis_tasks.py <model> --only web,system --repeats 3 --json out.json
+    python scripts/eval_jarvis_tasks.py <model> --only web,system --repeats 3 --json out.json --trace out-traces
+    python scripts/eval_jarvis_tasks.py models/bonsai-2-9b/Ternary-Bonsai-2-9B-PQ2_0.gguf --slot fast --json fast.json
+
+The result file carries a run stamp (``eval_io``: model, prompt-prefix and script digests, git
+state); a server error leaves a task unscored instead of failed. ``--trace`` keeps every round
+(calls, arguments, results, reasoning) for ``eval_contrast.py``. To measure one change on its own
+(PLAN 4.15 #3): ``--rules FILE`` swaps TOOL_PROTOCOL_RULES, ``--skills DIR|none`` the skills,
+``--no-net NAME`` turns one safety net off; then compare against a run without it.
 """
 
 from __future__ import annotations
@@ -37,10 +44,16 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_tool_chain as btc  # noqa: E402  (Server, World, the five chain tasks)
+import eval_grounding  # noqa: E402  (unsourced specifics in web answers, PLAN 4.15 #7)
+import eval_io  # noqa: E402  (result files: run stamp, loader)
 
 NOW = datetime(2026, 10, 16, 18, 30)
 MAX_ROUNDS = 5  # the orchestrator's max_iterations; then one answer round (loop guard)
-PRE_RESEARCH = True  # --no-pre-research measures the research tool alone
+SLOT = "main"  # --slot fast: the picker on Fast (no tools, thinking off)
+NETS_OFF: set[str] = set()  # --no-net: safety nets turned off for a probe (PLAN 4.15 #3)
+NET_NAMES = ("pre-research", "pre-status", "reasoning-nudge", "claim-nudge", "repeat-guard", "result-hint")
+SKILLS_LOADER: Any = None  # matched skills ride in the turn context, as in the orchestrator
+TRACE_TEXT = 3000  # chars of each result / reasoning / reply kept in a trace
 MAX_TOKENS = 8192  # settings.llama_max_tokens
 SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "seed": 42}
 
@@ -375,6 +388,11 @@ ACTION_TOOLS = {"launch_app", "focus_app", "set_volume", "set_mute", "media_cont
 # Prompting the way the backend does
 # --------------------------------------------------------------------------------------------
 
+def CallHistory(window: int = 3):
+    from app.agent.validator import CallHistory as C
+    return C(window=window)
+
+
 def _orch():
     import app.agent.orchestrator as o
     return o
@@ -401,15 +419,12 @@ def head_prompt() -> str:
     return build_system_prompt()
 
 
-def turn_context() -> str:
-    from app.agent.orchestrator import build_turn_context
-    return build_turn_context(now=NOW)
-
-
-def with_context(user_text: str, ctx: str) -> str:
-    # mirrors app/memory/context_manager.py: the block rides after the user's words, bracketed
-    return (user_text.rstrip() + "\n\n[Turn context — not part of the user's message; use only if relevant:\n"
+def with_context(user_text: str, ctx: str, directive: str = "") -> str:
+    # mirrors app/memory/context_manager.py: the block rides after the user's words, bracketed;
+    # a turn directive (the fast-model note) goes last, outside the bracket
+    text = (user_text.rstrip() + "\n\n[Turn context — not part of the user's message; use only if relevant:\n"
             + ctx + "]").strip()
+    return (text + "\n\n" + directive.strip()).strip() if directive.strip() else text
 
 
 def upgrade_search(name: str, args: dict[str, Any], offered: list[dict[str, Any]], user_text: str):
@@ -449,7 +464,7 @@ class Result:
     id: str
     group: str
     kind: str
-    success: bool
+    success: bool | None  # None = unscored: the server failed, not the model
     calls: list[str]
     claimed_without_acting: bool
     thinking: list[bool]
@@ -460,6 +475,8 @@ class Result:
     error: str = ""
     nets: list[str] = field(default_factory=list)  # backend safety nets that fired
     layer: str = ""     # failures only: primary failure layer, auto-tagged or "?" for a hand tag
+    rep: int = 0        # seed index (seed = 42 + rep)
+    unsourced: list[str] = field(default_factory=list)  # web answers: specifics in nothing it read
 
 
 # Failure layers (PLAN 4.13 #1, after Odysseus's hardening plan): every failure gets exactly one
@@ -470,11 +487,9 @@ LAYERS = ("route", "contract", "model", "policy", "execution", "evidence", "answ
 READ_TOOLS = {"read_file", "find_files", "grep_in_files", "list_directory"}
 
 
-def auto_layer(task: Task, run: Run, err: str) -> str:
+def auto_layer(task: Task, run: Run) -> str:
     """The clear cases; anything else returns "?" and is tagged by hand after the run."""
     calls = set(run.calls)
-    if err:
-        return "execution"
     if not run.text.strip():
         return "rendering"
     if task.acts and not (calls & ACTION_TOOLS):
@@ -494,67 +509,130 @@ def auto_layer(task: Task, run: Run, err: str) -> str:
     return "?"
 
 
-def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[str, list[dict[str, Any]]]) -> Result:
+def turn_context_for(user_text: str) -> str:
+    """build_turn_context as the orchestrator calls it: the clock plus the skills this message matches."""
+    from app.agent.orchestrator import build_turn_context
+    injection = ""
+    if SKILLS_LOADER is not None:
+        injection = SKILLS_LOADER.build_skill_prompt_injection(SKILLS_LOADER.match_skills(user_text))
+    return build_turn_context(injection, now=NOW)
+
+
+def _round(think: bool, msg: dict[str, Any]) -> dict[str, Any]:
+    thought = (msg.get("reasoning_content") or "").strip()
+    return {"think": think, "reasoning_chars": len(thought), "reasoning": thought[:TRACE_TEXT],
+            "content": (msg.get("content") or "").strip()[:TRACE_TEXT], "calls": [], "net": ""}
+
+
+def run_task(client: httpx.Client, task: Task, head: str,
+             tools: dict[str, list[dict[str, Any]]]) -> tuple[Result, dict[str, Any]]:
+    """One task, the way the backend's stream loop would run it; (result, trace of every round)."""
     run = Run(World(task.files))
     o = _orch()
     NUDGE_TO_ACT, NUDGE_TO_ANSWER, NUDGE_UNRUN_CLAIM = o._NUDGE_TO_ACT, o._NUDGE_TO_ANSWER, o._NUDGE_UNRUN_CLAIM
+    fast = SLOT == "fast"
+    offered = [] if fast else tools[task.mode]  # the fast model gets no tools (orchestrator, is_fast)
     messages: list[dict[str, Any]] = [{"role": "system", "content": head}]
     think_flags: list[bool] = []
     nets: list[str] = []
+    trace_turns: list[dict[str, Any]] = []
+    unsourced: list[str] = []
     tokens = reasoning = 0
     t0 = time.time()
     err = ""
+
+    def request(live: list[dict[str, Any]], think: bool) -> dict[str, Any]:
+        req = {"messages": live, "max_tokens": MAX_TOKENS, "cache_prompt": True,
+               "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING}
+        if offered:
+            req |= {"tool_choice": "auto", "tools": offered}
+        return req
+
     try:
         for user_text in task.turns:
-            think = thinking_for(user_text)
+            think = False if fast else thinking_for(user_text)
             think_flags.append(think)
             turn_tools: list[dict[str, Any]] = []
-            turn_ctx = ctx
-            if PRE_RESEARCH and wants_research(user_text):
+            turn_ctx = turn_context_for(user_text)
+            directive = o._FAST_NO_TOOLS_NOTE if fast else ""
+            rounds: list[dict[str, Any]] = []
+            tt: dict[str, Any] = {"user": user_text, "pre": [], "rounds": rounds, "final": ""}
+            trace_turns.append(tt)
+            if fast and o.asks_capabilities(user_text):
+                # answered in code with the picker on Fast (orchestrator: _FAST_PICKED_CAPABILITIES)
+                nets.append("capabilities-in-code")
+                final = o._FAST_PICKED_CAPABILITIES
+                tt["final"] = final
+                run.finals.append(final)
+                messages += [{"role": "user", "content": user_text}, {"role": "assistant", "content": final}]
+                continue
+            if fast and "pre-status" not in NETS_OFF and asks_status(user_text):
+                # a hardware question on the tool-less fast model: the orchestrator reads the machine
+                # first (without voice mode's "Answer with:" sentence, which needs the live monitor)
+                out, _ok = run.world.call("get_system_status", {})
+                run.calls.append("get_system_status")
+                nets.append("pre-status")
+                tt["pre"].append({"name": "get_system_status", "args": {}, "result": out[:TRACE_TEXT]})
+                turn_ctx = turn_ctx + "\n\n" + o._pre_status_block(out)
+            if not fast and "pre-research" not in NETS_OFF and wants_research(user_text):
                 # the orchestrator's pre-run (PLAN 4.13 #7): research before the model, into the turn context
                 out = run.world.research(user_text)
                 run.calls.append("research")
                 turn_tools.append({"tool": "research", "args": {"question": user_text}, "status": "success"})
                 nets.append("pre-research")
+                tt["pre"].append({"name": "research", "args": {"question": user_text}, "result": out[:TRACE_TEXT]})
                 if "found nothing usable" not in out:
-                    turn_ctx = ctx + "\n\n" + o._pre_research_block(out)
+                    turn_ctx = turn_ctx + "\n\n" + o._pre_research_block(out)
             # the stored history keeps the user's own words; only the live turn carries the context
-            live = messages + [{"role": "user", "content": with_context(user_text, turn_ctx)}]
+            live = messages + [{"role": "user", "content": with_context(user_text, turn_ctx, directive)}]
             final = ""
             nudged = claim_checked = False
             final_nudge, need_answer = o._NUDGE_FINAL, False
             last_call = None
+            history = CallHistory(window=3)  # the stream loop's per-turn counts
             for _ in range(MAX_ROUNDS):
-                req = {"messages": live, "tool_choice": "auto", "max_tokens": MAX_TOKENS, "cache_prompt": True,
-                       "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
+                req = request(live, think)
                 r = client.post("/v1/chat/completions", json=req)
                 r.raise_for_status()
                 body = r.json()
                 tokens += body.get("usage", {}).get("completion_tokens", 0)
                 msg = body["choices"][0]["message"]
+                rd = _round(think, msg)
+                rounds.append(rd)
                 content = (msg.get("content") or "").strip()
                 thought = (msg.get("reasoning_content") or "").strip()
                 reasoning += len(thought)
                 tcs = msg.get("tool_calls") or []
-                if not tcs:
+                if fast:
+                    # no tools to run: a call written out as text becomes the fixed "switch to Main" line
+                    content, replaced = o.drop_unofferable_calls(content)
+                    if replaced:
+                        nets.append("no-tools-reply")
+                        rd["net"] = "no-tools-reply"
+                    tcs = []
+                elif not tcs:
                     content, tcs = _from_text(content)
                 if not tcs:
                     # the backend's stream-loop safety nets (orchestrator._run_provider_stream_loop)
                     if not content:
-                        if thought and not nudged:
+                        if thought and not nudged and "reasoning-nudge" not in NETS_OFF:
                             nudged = True
                             nets.append("reasoning-only-nudge")
+                            rd["net"] = "reasoning-only-nudge"
                             live += [{"role": "assistant", "content": thought},
                                      {"role": "user", "content": NUDGE_TO_ANSWER if turn_tools else NUDGE_TO_ACT}]
                             continue
                         nets.append("empty-resynth")
+                        rd["net"] = "empty-resynth"
                         r2 = client.post("/v1/chat/completions", json={k: v for k, v in req.items() if k not in ("tools", "tool_choice")})
                         r2.raise_for_status()
                         m2 = r2.json()["choices"][0]["message"]
                         content = (m2.get("content") or "").strip() or thought
-                    if not o.changed_something(turn_tools) and not claim_checked and claims_unrun_action(content):
+                    if (not fast and "claim-nudge" not in NETS_OFF and not o.changed_something(turn_tools)
+                            and not claim_checked and claims_unrun_action(content)):
                         claim_checked = True
                         nets.append("claim-nudge")
+                        rd["net"] = "claim-nudge"
                         live += [{"role": "assistant", "content": content},
                                  {"role": "user", "content": NUDGE_UNRUN_CLAIM}]
                         continue
@@ -569,10 +647,13 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                     except json.JSONDecodeError:
                         args = {}
                     # the backend's upgrade: a question's web_search runs as research
-                    name, args = upgrade_search(fn.get("name", ""), args, tools[task.mode], user_text)
+                    name, args = upgrade_search(fn.get("name", ""), args, offered, user_text)
                     calls.append((tc, name, args))
-                if last_call is not None and (calls[0][1], json.dumps(calls[0][2], sort_keys=True)) == last_call:
+                if ("repeat-guard" not in NETS_OFF and last_call is not None
+                        and (calls[0][1], json.dumps(calls[0][2], sort_keys=True)) == last_call):
                     nets.append("repeat-stopped")  # the backend's loop guard: no rerun, answer instead
+                    rd["net"] = "repeat-stopped"
+                    rd["calls"] = [{"name": n, "args": a, "result": "(not run: repeat)"} for _, n, a in calls]
                     final_nudge, need_answer = o._NUDGE_REPEAT, True
                     break
                 live.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": tcs})
@@ -580,8 +661,13 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                     out, _ok = run.world.call(name, args)
                     run.calls.append(name)
                     last_call = (name, json.dumps(args, sort_keys=True))
+                    hint = history.hint_for(name, out) if "result-hint" not in NETS_OFF else ""
+                    if hint:  # the stream loop's result hints (PLAN 4.15 #4)
+                        out = f"{out}\n\n{hint}"
+                        nets.append("result-hint")
                     turn_tools.append({"tool": name, "args": args,
                                        "status": "error" if out.startswith("Error") else "success"})
+                    rd["calls"].append({"name": name, "args": args, "result": out[:TRACE_TEXT]})
                     live.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": out})
             else:
                 nets.append("rounds-spent")
@@ -589,11 +675,13 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
             if need_answer:
                 # the orchestrator's answer round: tools still offered; a tool call gets a plain completion
                 live.append({"role": "user", "content": final_nudge})
-                req = {"messages": live, "tool_choice": "auto", "max_tokens": MAX_TOKENS, "cache_prompt": True,
-                       "chat_template_kwargs": {"enable_thinking": think}, **SAMPLING, "tools": tools[task.mode]}
+                req = request(live, think)
                 r = client.post("/v1/chat/completions", json=req)
                 r.raise_for_status()
                 m = r.json()["choices"][0]["message"]
+                rd = _round(think, m)
+                rd["net"] = "answer-round"
+                rounds.append(rd)
                 content, tcs = _from_text((m.get("content") or "").strip())
                 if m.get("tool_calls") or tcs or not content:
                     r2 = client.post("/v1/chat/completions", json={k: v for k, v in req.items() if k not in ("tools", "tool_choice")}
@@ -601,6 +689,10 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                     r2.raise_for_status()
                     content = (r2.json()["choices"][0]["message"].get("content") or "").strip()
                 final = content
+            tt["final"] = final
+            if any(t["tool"] in eval_grounding.WEB_TOOLS and t["status"] == "success" for t in turn_tools):
+                tt["unsourced"] = eval_grounding.unsourced(final, eval_grounding.turn_sources(live))
+                unsourced += tt["unsourced"]
             run.finals.append(final)
             messages = list(live)
             # replace the live user turn (with context) by the plain one, as the history store would
@@ -609,33 +701,95 @@ def run_task(client: httpx.Client, task: Task, head: str, ctx: str, tools: dict[
                     messages[i] = {"role": "user", "content": user_text}
                     break
             messages.append({"role": "assistant", "content": final})
-    except Exception as exc:  # a server error is a failed task, not a crashed run
+    except Exception as exc:  # a server error leaves the task unscored, not failed (PLAN 4.15 #2)
         err = f"{type(exc).__name__}: {exc}"
     acted = any(c in ACTION_TOOLS for c in run.calls)
-    ok = (not err) and task.check(run)
-    return Result(task.id, task.group, task.kind, ok, run.calls, task.acts and not acted and bool(run.text),
-                  think_flags, time.time() - t0, tokens, reasoning, run.text, err, nets,
-                  "" if ok else auto_layer(task, run, err))
+    ok = None if err else task.check(run)
+    rep = SAMPLING["seed"] - 42
+    result = Result(task.id, task.group, task.kind, ok, run.calls, task.acts and not acted and bool(run.text),
+                    think_flags, time.time() - t0, tokens, reasoning, run.text, err, nets,
+                    "" if ok is not False else auto_layer(task, run), rep, unsourced)
+    trace = {"task": task.id, "rep": rep, "group": task.group, "success": ok, "layer": result.layer,
+             "error": err, "nets": nets, "turns": trace_turns}
+    return result, trace
+
+
+def asks_status(message: str) -> bool:
+    from app.voice.voice_mode import asks_status as a
+    return a(message)
+
+
+def run_meta(a: argparse.Namespace, head: str, tools: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """What produced this run (PLAN 4.15 #2): compare two files with eval_io.compare_meta."""
+    here = Path(__file__).resolve().parent
+    return {
+        "started": datetime.now().isoformat(timespec="seconds"),
+        "model_file": a.model.name, "model_bytes": a.model.stat().st_size if a.model.exists() else None,
+        "slot": SLOT, "ctx": a.ctx, "repeats": a.repeats, "only": a.only,
+        "head_sha": eval_io.sha(head), "head_chars": len(head),
+        "tools_sha": {m: eval_io.sha(json.dumps(t, sort_keys=True)) for m, t in tools.items()},
+        "rules_override": eval_io.file_sha(a.rules) if a.rules else "",
+        "skills_override": a.skills,
+        "tools_dropped": a.drop_tools,
+        "nets_off": sorted(NETS_OFF), "pre_research": "pre-research" not in NETS_OFF,
+        "max_rounds": MAX_ROUNDS, "max_tokens": MAX_TOKENS,
+        "sampling": {k: v for k, v in SAMPLING.items() if k != "seed"},
+        "scripts_sha": eval_io.file_sha(Path(__file__), here / "bench_tool_chain.py", here / "eval_io.py"),
+        "server": Path(btc.SERVER).parent.name,
+        "trace_dir": str(a.trace.resolve()) if a.trace else "",
+        "git": eval_io.git_state(),
+    }
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", type=Path)
-    ap.add_argument("--ctx", type=int, default=32768)
+    ap.add_argument("--ctx", type=int, default=0, help="context size (default: 32768 main, 8192 fast)")
     ap.add_argument("--only", default="", help="comma-separated groups or task ids")
     ap.add_argument("--repeats", type=int, default=1, help="run each task N times (seed varies)")
     ap.add_argument("--json", type=Path)
-    ap.add_argument("--no-pre-research", action="store_true", help="don't research before the model on recency triggers")
+    ap.add_argument("--trace", type=Path, help="write each run's rounds (calls, args, results, reasoning) to this folder")
+    ap.add_argument("--slot", choices=("main", "fast"), default="main",
+                    help="fast = the picker on Fast: no tools, thinking off, the fast-turn note and pre-status")
+    # Probes (PLAN 4.15 #3): test one change without editing the backend.
+    ap.add_argument("--rules", type=Path, help="use this file's text instead of TOOL_PROTOCOL_RULES")
+    ap.add_argument("--skills", default="", help="skills folder to match from (default: the repo's skills/; 'none' = off)")
+    ap.add_argument("--no-net", action="append", default=[], choices=NET_NAMES,
+                    help="turn one safety net off (repeatable)")
+    ap.add_argument("--no-pre-research", action="store_true", help="same as --no-net pre-research")
+    ap.add_argument("--drop-tools", default="", metavar="SPACE:a,b",
+                    help="leave these tools out of a space's offered set, e.g. FREEFORM:read_file,write_file")
     a = ap.parse_args()
-    global PRE_RESEARCH
-    PRE_RESEARCH = not a.no_pre_research
+    if not a.model.is_file():  # llama-server would exit at once and the stdout wait never return
+        raise SystemExit(f"no model file at {a.model}")
+    global SLOT, NETS_OFF, SKILLS_LOADER
+    SLOT = a.slot
+    NETS_OFF = set(a.no_net) | ({"pre-research"} if a.no_pre_research else set())
+    if a.skills.lower() != "none":
+        from app.skills.loader import SkillsLoader
+        SKILLS_LOADER = SkillsLoader(skills_dir=a.skills or None)
+    if a.rules:
+        _orch().TOOL_PROTOCOL_RULES = a.rules.read_text(encoding="utf-8")
+    a.ctx = a.ctx or (8192 if SLOT == "fast" else 32768)
+    from app.agent.runtime_process_manager import exe_for_model
+    btc.SERVER = exe_for_model(a.model, btc.SERVER)  # ternary quants (Bonsai) need the PrismML fork
 
     sel = {s.strip() for s in a.only.split(",") if s.strip()}
     tasks = [t for t in TASKS if not sel or t.group in sel or t.id in sel]
-    head, ctx = head_prompt(), turn_context()
+    head = head_prompt()
     tools = {m: tools_for(m) for m in ("FREEFORM", "WORKSPACE")}
-    print(f"{len(tasks)} tasks x {a.repeats}; head prompt {len(head)} chars; "
-          f"tools freeform {len(tools['FREEFORM'])} / workspace {len(tools['WORKSPACE'])}\n")
+    if a.drop_tools:
+        space, _, names = a.drop_tools.partition(":")
+        drop = {n.strip() for n in names.split(",") if n.strip()}
+        tools[space.upper()] = [t for t in tools[space.upper()] if t["function"]["name"] not in drop]
+    meta = run_meta(a, head, tools)
+    print(f"{len(tasks)} tasks x {a.repeats}; slot {SLOT}; head prompt {len(head)} chars (sha {meta['head_sha']}); "
+          f"tools freeform {len(tools['FREEFORM'])} / workspace {len(tools['WORKSPACE'])}; "
+          f"git {meta['git']['commit']}{'+dirty' if meta['git']['dirty_backend'] else ''}"
+          + (f"; nets off: {','.join(sorted(NETS_OFF))}" if NETS_OFF else "") + "\n")
+    if a.trace:
+        a.trace.mkdir(parents=True, exist_ok=True)
+        (a.trace / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     results: list[Result] = []
     with btc.Server(a.model, a.ctx, thinking=True, mmproj=False):
@@ -643,21 +797,26 @@ def main() -> None:
             for rep in range(a.repeats):
                 SAMPLING["seed"] = 42 + rep
                 for t in tasks:
-                    r = run_task(c, t, head, ctx, tools)
+                    r, trace = run_task(c, t, head, tools)
                     results.append(r)
-                    flag = "PASS" if r.success else "fail"
+                    if a.trace:
+                        (a.trace / f"{t.id}.r{rep}.json").write_text(
+                            json.dumps(trace, indent=1, ensure_ascii=False), encoding="utf-8")
+                    flag = {True: "PASS", False: "fail", None: "ERR "}[r.success]
                     note = " CLAIMED-WITHOUT-ACTING" if r.claimed_without_acting else ""
                     note += f" ERROR {r.error}" if r.error else ""
                     note += f" nets={','.join(r.nets)}" if r.nets else ""
                     note += f" layer={r.layer}" if r.layer else ""
+                    note += f" unsourced={r.unsourced[:4]}" if r.unsourced else ""
                     print(f"{flag}  {t.group:9s} {t.kind:9s} {t.id:28s} think={''.join('1' if x else '0' for x in r.thinking)} "
                           f"{r.seconds:5.1f}s  [{' > '.join(r.calls) or '-'}]{note}", flush=True)
-                    if not r.success:
+                    if r.success is False:
                         print(f"      final: {r.final[:220]!r}", flush=True)
 
     print()
+    scored = [r for r in results if r.success is not None]
     layers: dict[str, int] = {}
-    for r in results:
+    for r in scored:
         if not r.success:
             layers[r.layer] = layers.get(r.layer, 0) + 1
     if layers:
@@ -665,15 +824,22 @@ def main() -> None:
               + ("   ('?' = tag by hand)" if "?" in layers else ""))
     for key in ("group", "kind"):
         agg: dict[str, list[int]] = {}
-        for r in results:
+        for r in scored:
             agg.setdefault(getattr(r, key), [0, 0])
             agg[getattr(r, key)][0] += r.success
             agg[getattr(r, key)][1] += 1
         print(f"by {key}: " + ", ".join(f"{k} {p}/{n}" for k, (p, n) in sorted(agg.items())))
-    print(f"total {sum(r.success for r in results)}/{len(results)}; claimed-without-acting "
-          f"{sum(r.claimed_without_acting for r in results)}; {sum(r.seconds for r in results):.0f}s")
+    unscored = len(results) - len(scored)
+    flagged = [r for r in scored if r.unsourced]
+    if flagged:
+        print(f"web answers with unsourced specifics: {len(flagged)} "
+              f"({sum(1 for r in flagged if not r.success)} of them failed the check)")
+    print(f"total {sum(r.success for r in scored)}/{len(scored)}"
+          + (f" ({unscored} unscored: server errors)" if unscored else "")
+          + f"; claimed-without-acting {sum(r.claimed_without_acting for r in scored)}; "
+            f"{sum(r.seconds for r in results):.0f}s")
     if a.json:
-        a.json.write_text(json.dumps([r.__dict__ for r in results], indent=2, ensure_ascii=False), encoding="utf-8")
+        eval_io.write_results(a.json, meta, [r.__dict__ for r in results])
         print(f"wrote {a.json}")
 
 

@@ -85,6 +85,26 @@ class CallHistory:
     def __init__(self, window: int = 3):
         self.window = max(1, window)
         self.history: list[tuple[str, str]] = []
+        # Whole-turn counts for the result hints (PLAN 4.15 #4). They live here because a turn
+        # paused for approval parks and restores this object, so a resumed turn keeps counting.
+        self.failures: dict[tuple[str, str], int] = {}
+        self.web_calls = 0
+
+    def hint_for(self, tool_name: str, result: str, invalid_args: bool = False) -> str:
+        """The line to append to this call's result for the model, or "" (tool_errors)."""
+        from app.agent.tool_errors import NEXT_STEP, WEB_FAMILY, WEB_HINT_AT, error_kind, stop_line, web_hint
+
+        lines = []
+        kind = "bad_input" if invalid_args else error_kind(result)
+        if kind:
+            seen = self.failures.get((tool_name, kind), 0) + 1
+            self.failures[(tool_name, kind)] = seen
+            lines.append(stop_line(tool_name) if seen >= 2 else NEXT_STEP[kind])
+        if tool_name in WEB_FAMILY:
+            self.web_calls += 1
+            if self.web_calls >= WEB_HINT_AT:
+                lines.append(web_hint(self.web_calls))
+        return " ".join(line for line in lines if line)
 
     def canonicalize_args(self, args: Any) -> str:
         """

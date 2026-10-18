@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
 from app.agent.tools.paths import is_inside, resolve_tool_path
 
@@ -58,7 +59,8 @@ def write_file(
         result = f"Successfully wrote {char_count} characters ({line_count} lines) to '{file_path}'."
         if backup:
             result += f" The previous version is saved as '{shown(backup, ws_root)}'."
-        return result
+        checked = check_written(path, content_str)
+        return f"{result} {checked}" if checked else result
     except Exception as e:
         logger.error("Failed to write file '%s': %s", file_path, e)
         return f"Error writing file '{file_path}': {str(e)}"

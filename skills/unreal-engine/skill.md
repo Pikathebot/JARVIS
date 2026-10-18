@@ -10,9 +10,10 @@ triggers:
   - c++ reflection
   - ue5
 tools:
-  - unreal.detect_project
-  - unreal.read_logs
-  - unreal.build
+  - find_files
+  - read_file
+  - grep_in_files
+  - execute_command
 category: gamedev
 ---
 
@@ -63,7 +64,7 @@ All Unreal Engine reflected types must adhere to strict macro patterns:
 - **UnrealBuildTool (UBT)**: Compiles C++ modules and targets (`UBT.exe {ProjectName}Editor Win64 Development "{ProjectPath}"`).
 - **Unreal Automation Tool (UAT)**: Automates cooking, packaging, and testing (`RunUAT.bat BuildCookRun -project="{ProjectPath}" ...`).
 
-## 4. Available Tools
-- `unreal.detect_project`: Scans for `.uproject` in workspace and returns engine version, modules, and enabled plugins.
-- `unreal.read_logs`: Tails recent output logs from `Saved/Logs/{ProjectName}.log` to diagnose compilation, crash, or cooking errors.
-- `unreal.build`: Dispatches automated build commands through the sandbox manager.
+## 4. Tools to use
+- Find the project: `find_files(pattern="*.uproject")`, then `read_file` it for the engine version, modules and enabled plugins.
+- Logs: `read_file` on `Saved/Logs/{ProjectName}.log` (use `start_line` / `end_line` for the recent part) to diagnose compilation, crash or cooking errors; `grep_in_files` to find an error across logs or sources.
+- Builds: `execute_command` with the UBT or UAT command above.

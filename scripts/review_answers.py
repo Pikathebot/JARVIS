@@ -32,6 +32,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import eval_io  # noqa: E402  (result files, old and new format)
+
 ROOT = Path(__file__).resolve().parent.parent
 VOTES_PATH = ROOT / "data" / "preference_votes.jsonl"
 PORT = 8010  # 8000-8004 are Jarvis's own
@@ -81,8 +84,8 @@ def build_pairs(file_a: Path, file_b: Path, turns: dict[str, list[str]], voted: 
     a, b = model_name(file_a), model_name(file_b)
     if a == b:
         a, b = f"{a} (1)", f"{b} (2)"
-    rows_a = _by_rep(json.loads(file_a.read_text(encoding="utf-8")))
-    rows_b = _by_rep(json.loads(file_b.read_text(encoding="utf-8")))
+    rows_a = _by_rep(eval_io.load_results(file_a)[1])
+    rows_b = _by_rep(eval_io.load_results(file_b)[1])
     pairs = []
     for (task, rep), ra in rows_a.items():
         rb = rows_b.get((task, rep))
@@ -313,6 +316,8 @@ def main() -> None:
 
     pairs = build_pairs(args.a, args.b, task_turns(), voted_keys(args.votes), random.Random())
     print(f"{len(pairs)} pairs to review ({model_name(args.a)} vs {model_name(args.b)}); votes -> {args.votes}")
+    for line in eval_io.compare_meta(eval_io.load_results(args.a)[0], eval_io.load_results(args.b)[0]):
+        print(f"  the runs differ in {line}")
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(Review(pairs, votes_path=args.votes)))
     url = f"http://127.0.0.1:{args.port}"
     print(f"open {url}  (Ctrl+C to stop; already-voted pairs are skipped next time)")

@@ -2425,6 +2425,13 @@ class AgentOrchestrator:
                     tainted_by = tainted_by or taint.source_of(t_name, t_args, taint_ctx)
                 yield {"event": "tool_end", "data": tool_item}
 
+                # One fixed next step after a failure, a stop line after the same failure twice, a
+                # nudge to answer after the third web lookup (PLAN 4.15 #4). The card shows the
+                # tool's own result; the model and the stored history get the hint too.
+                hint = call_history.hint_for(t_name, result_str, invalid_args=not val_result.valid)
+                if hint:
+                    result_str = f"{result_str}\n\n{hint}"
+                    metrics.nets.append("result-hint")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": t_id,

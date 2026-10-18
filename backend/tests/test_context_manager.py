@@ -343,3 +343,48 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
     assert "ACombatCharacter" in last["content"]
     assert last["content"].index("what now?") < last["content"].index("VRAM 5934")
     assert "not part of the user's message" in last["content"]
+
+
+# What the head prefix may cost, in characters, as of 2026-10-18 + ~10%: system message (default
+# persona + TOOL_PROTOCOL_RULES) 5,644; tool schemas 17,576 (Freeform) / 26,680 (Workspace). The
+# whole prefix is re-read on a cache miss and, on a 9B, every always-on line competes for attention.
+# Raise a number only on purpose, after cutting what you can (PLAN 4.15 #6).
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25500, "WORKSPACE": 35000}
+
+
+@pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])
+def test_real_head_prefix_is_stable_and_within_budget(memory_test_env, space):
+    """
+    The same contract as above with the real head: the default persona, TOOL_PROTOCOL_RULES and
+    the space's tool schemas, which the chat template renders into the system message as one JSON
+    object per line. Two turns with different per-turn material must leave it byte-identical,
+    and it must stay under HEAD_BUDGET_CHARS so prompt growth is a decision rather than drift.
+    """
+    import json
+
+    from app.agent.orchestrator import build_system_prompt
+    from app.agent.tool_schema import convert_tool_to_openai_schema
+    from app.agent.tools.registry import tools_for_space
+    from app.persona.profiles import BUILTIN_PERSONAS, DEFAULT_PERSONA_ID
+
+    store, _ = memory_test_env
+    cm = ContextManager(memory_store=store)
+    head = build_system_prompt(BUILTIN_PERSONAS[DEFAULT_PERSONA_ID])
+    heads = []
+    for clock in ("Saturday 2026-10-18 09:00", "Saturday 2026-10-18 09:01"):
+        pkg = cm.build_context(
+            session_id=f"head-{space}", user_message="hi", system_prompt=head,
+            turn_context=f"Current time: {clock}", chat_mode=space, max_context_tokens=32768,
+        )
+        heads.append(pkg.messages[0])
+    assert heads[0] == heads[1]
+    assert "Current time" not in heads[0]["content"]
+
+    tools = [s for s in (convert_tool_to_openai_schema(t) for t in tools_for_space(space)) if s]
+    rendered_tools = "\n".join(json.dumps(t, ensure_ascii=False) for t in tools)
+    system_chars = len(heads[0]["content"])
+    assert system_chars <= HEAD_BUDGET_CHARS["system"], (
+        f"head system message is {system_chars} chars, over {HEAD_BUDGET_CHARS['system']}")
+    total = system_chars + len(rendered_tools)
+    assert total <= HEAD_BUDGET_CHARS[space], (
+        f"{space} head prefix is {total} chars (tools {len(rendered_tools)}), over {HEAD_BUDGET_CHARS[space]}")

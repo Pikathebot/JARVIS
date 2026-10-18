@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from app.config import settings
+from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
 from app.agent.tools.file_kinds import closest_region
 from app.agent.tools.paths import is_inside, resolve_tool_path
@@ -119,7 +120,8 @@ def patch_file(
         result = f"Successfully patched {where} (replaced {old_lines} line(s) with {new_lines} line(s){times}, delta: {sign} lines)."
         if backup:
             result += f" The previous version is saved as '{shown(backup, ws_root)}'."
-        return result
+        checked = check_written(path)
+        return f"{result} {checked}" if checked else result
     except Exception as e:
         logger.error("Failed to patch file '%s': %s", file_path, e)
         return f"Error patching file '{file_path}': {str(e)}"

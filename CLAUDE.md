@@ -23,7 +23,7 @@ WinUI port and the model changes, and wrong about models, clients and paths in p
 Backend, from the repo root (`pytest.ini` sets `pythonpath = backend .`, `asyncio_mode = strict`
 so async tests need `@pytest.mark.asyncio`):
 ```powershell
-.\.venv\Scripts\python.exe -m pytest                                   # ~2 min; 733 pass (2026-10-02)
+.\.venv\Scripts\python.exe -m pytest                                   # ~2 min; 965 pass (2026-10-18)
 .\.venv\Scripts\python.exe -m pytest backend/tests/test_x.py::test_name
 cd backend; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -105,6 +105,11 @@ path runs instead.
   template rejects a second system message. Breaking this silently re-prefills the whole
   conversation every turn (measured 1363->1642 tokens vs 112-198). Pinned by
   `test_per_turn_material_rides_on_the_user_turn_not_the_prefix`.
+- **Always-on text is the expensive place for guidance.** New guidance goes, in order of
+  preference, into code (a check in the loop or a tool's result), a skill or the per-turn context,
+  and only last into `TOOL_PROTOCOL_RULES` / the persona -- and then by cutting something.
+  `test_real_head_prefix_is_stable_and_within_budget` caps the head's size; the lint tests in
+  `test_tool_contract.py` fail when a rule or skill names a tool or parameter that doesn't exist.
 - **Two spaces, and ephemeral turns.** `chat_mode=FREEFORM` = no project (not even the active
   one), no RAG, no workspace-bound tools (`WORKSPACE_BOUND_TOOLS` in `registry.py`: not offered,
   and refused by `execute_tool`); its sessions are listed apart (`/sessions?chat_mode=FREEFORM`).
