@@ -390,7 +390,8 @@ TASKS: list[Task] = [
          lambda r: any("dark" in m.lower() for m in r.world.memories), acts=True),
     # ---- notes and the to-do list (PLAN 4.16): Markdown files in the user's notes folder
     Task("todo-add", "notes", "skill", ["add milk to my to-do list"],
-         lambda r: bool(re.search(r"- \[ \] .*milk", r.world.note_file("tasks.md"), re.I)), acts=True),
+         # the item, not the request: device 2026-10-18 stored "- [ ] add milk to my list"
+         lambda r: bool(re.search(r"- \[ \] (?!.*\blist\b).*milk", r.world.note_file("tasks.md"), re.I)), acts=True),
     Task("todo-list", "notes", "skill", ["what's on my to-do list?"],
          lambda r: r.has("rent") and r.has("mum"),
          notes={"tasks.md": "# Tasks\n\n- [ ] Pay rent (due 2026-10-17)\n- [ ] Call mum\n- [x] Book flights\n"}),

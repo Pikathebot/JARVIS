@@ -208,6 +208,18 @@ def test_cue_names_the_one_open_task_that_sounds_done(folder):
     assert notes_mod.turn_directive("I bought the milk") == ""        # already ticked off
 
 
+def test_a_whole_request_passed_as_the_text_is_cut_to_the_item(folder):
+    # device 2026-10-18: the 9B called tasks(add, text="add milk to my list")
+    assert tasks("add", text="add milk to my list") == "Added " + notes_mod._describe(
+        notes_mod._parse_tasks(notes_mod._read_tasks()[1])[0]) + "."
+    assert "- [ ] milk <!--" in (folder / "tasks.md").read_text(encoding="utf-8")
+    tasks("add", text="Could you put call the bank on my to-do list please.")
+    assert "- [ ] call the bank <!--" in (folder / "tasks.md").read_text(encoding="utf-8")
+    tasks("add", text="Add the shopping list to the fridge door")   # not a request sentence: kept as typed
+    assert "- [ ] Add the shopping list to the fridge door <!--" in (folder / "tasks.md").read_text(encoding="utf-8")
+    assert "text='milk'" in notes_mod.turn_directive("add milk to my list")
+
+
 def test_cue_stays_quiet_when_two_tasks_match(folder):
     tasks("add", text="Call mum")
     tasks("add", text="Call the bank")

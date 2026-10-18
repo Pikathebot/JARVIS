@@ -1684,7 +1684,13 @@ on my list?" was empty and the model insisted "I did add it". Fixed (build/test-
 eval not re-run -- Jarvis was running): `needs_a_tool` covers "add/put X to my list|to-do|tasks|notes", "note
 that", "make/take a note", "jot down", "tick/cross off"; `_SUBJECTLESS_CLAIM_RE` catches "added ... to your
 list|to-do|tasks|notes"; `notes.turn_directive` has a third cue, "add X to my list" -> `tasks(action='add')`.
-Full suite 1036 pass. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
+Full suite 1036 pass. Committed 213a85f.
+**Retest 18:53-18:54** (`session_mvduwnmm_f7642` Main, `session_mvduxw5c_01ce1` Fast): Fast answered in code
+(OK); Main called the tool -- but with `text="add milk to my list"`, so tasks.md got `- [ ] add milk to my list`.
+Fixed in code (build/test-verified): `tasks add` cuts a whole "(please/could you) add|put X to|on my|the
+list|to-do|tasks" sentence down to X (`_task_item`; other text kept as typed), and the cue now names the item
+(`text='milk'`). Eval `todo-add` now fails a line that still contains "list". Full suite 1037 pass; eval not
+re-run (Jarvis running). Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
 fail when that file runs alone ("no such table: sessions" -- they rely on an earlier file creating the tables).
 
 **Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**

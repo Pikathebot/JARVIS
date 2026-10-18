@@ -211,7 +211,17 @@ _ASKS_NOTE = re.compile(
     r"write (?:this|that|it) down|(?:add|put|save) (?:(?:this|that|it) )?(?:to|in) (?:my|the) notes?)\b", re.I)
 # Device 2026-10-18: "add milk to my list" on Main -> "I've added \"milk\" to your to-do list." and no call.
 _ASKS_TASK = re.compile(
-    r"\b(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?(?:\s+list)?)\b", re.I)
+    r"\b(?:add|put)\s+(?P<item>.{1,80}?)\s+(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?(?:\s+list)?)\b",
+    re.I)
+# The whole request as the task's text (device 2026-10-18: tasks(add, text="add milk to my list")).
+_WHOLE_REQUEST = re.compile(r"\s*(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
+                            + _ASKS_TASK.pattern + r"(?:\s+please)?[\s.!]*", re.I)
+
+
+def _task_item(text: str) -> str:
+    """The item out of a whole "add milk to my list" sentence passed as a task's text; else the text."""
+    m = _WHOLE_REQUEST.fullmatch(text)
+    return m.group("item").strip(" '\"") if m else text
 _SAYS_DONE = re.compile(
     r"\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:just\s+|finally\s+|already\s+)?"
     r"(?:bought|got|did|done|finished|paid|called|rang|emailed|sent|booked|picked up|cleaned|fixed|submitted|"
@@ -230,9 +240,11 @@ def turn_directive(user_message: str) -> str:
     if _ASKS_NOTE.search(text):
         return ("NOTES: the user asked for a note. Write it with notes(action='add', or 'append' to an "
                 "existing note); replying \"noted\" without the tool saves nothing.")
-    if _ASKS_TASK.search(text):
-        return ("TASKS: the user asked to add to their to-do list. Add it with tasks(action='add'); replying "
-                "\"added\" without the tool adds nothing.")
+    m = _ASKS_TASK.search(text)
+    if m:
+        item = m.group("item").strip(" '\"").replace("'", "")
+        return (f"TASKS: the user asked to add to their to-do list. Add it with tasks(action='add', "
+                f"text='{item}'); replying \"added\" without the tool adds nothing.")
     if _SAYS_DONE.search(text):
         try:
             _, lines = _read_tasks()
@@ -450,7 +462,7 @@ def tasks(action: str = "list", text: str = "", due: str = "", task_id: str = ""
         if _is_ephemeral(session_id):
             return _OFF_RECORD
         if act == "add":
-            body = " ".join(str(text or "").split())
+            body = _task_item(" ".join(str(text or "").split()))
             if not body:
                 return "Error: add needs the task's text."
             dup = next((t for t in items if not t.done and t.text.lower() == body.lower()), None)
