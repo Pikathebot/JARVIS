@@ -51,7 +51,12 @@ NOW = datetime(2026, 10, 16, 18, 30)
 MAX_ROUNDS = 5  # the orchestrator's max_iterations; then one answer round (loop guard)
 SLOT = "main"  # --slot fast: the picker on Fast (no tools, thinking off)
 NETS_OFF: set[str] = set()  # --no-net: safety nets turned off for a probe (PLAN 4.15 #3)
-NET_NAMES = ("pre-research", "pre-status", "reasoning-nudge", "claim-nudge", "repeat-guard", "result-hint")
+NET_NAMES = ("pre-research", "pre-status", "reasoning-nudge", "claim-nudge", "repeat-guard", "result-hint",
+             "fast-claim")
+# A reply that says it can't (or that a tool is needed) is a refusal, not a claim: on the tool-less fast
+# slot the old "any text on an action task" flag counted 37 honest refusals as claims (2026-10-18).
+REFUSES = re.compile(r"\b(?:can't|cannot|can\s?not|unable to|not able to|don't have|do not have|no access|"
+                     r"needs a tool|won't be able)\b", re.IGNORECASE)
 SKILLS_LOADER: Any = None  # matched skills ride in the turn context, as in the orchestrator
 TRACE_TEXT = 3000  # chars of each result / reasoning / reply kept in a trace
 MAX_TOKENS = 8192  # settings.llama_max_tokens
@@ -509,11 +514,12 @@ def auto_layer(task: Task, run: Run) -> str:
     return "?"
 
 
-def turn_context_for(user_text: str) -> str:
-    """build_turn_context as the orchestrator calls it: the clock plus the skills this message matches."""
+def turn_context_for(user_text: str, fast: bool = False) -> str:
+    """build_turn_context as the orchestrator calls it: the clock plus the skills this message
+    matches -- none on a tool-less fast turn (orchestrator, is_fast)."""
     from app.agent.orchestrator import build_turn_context
     injection = ""
-    if SKILLS_LOADER is not None:
+    if SKILLS_LOADER is not None and not fast:
         injection = SKILLS_LOADER.build_skill_prompt_injection(SKILLS_LOADER.match_skills(user_text))
     return build_turn_context(injection, now=NOW)
 
@@ -553,7 +559,7 @@ def run_task(client: httpx.Client, task: Task, head: str,
             think = False if fast else thinking_for(user_text)
             think_flags.append(think)
             turn_tools: list[dict[str, Any]] = []
-            turn_ctx = turn_context_for(user_text)
+            turn_ctx = turn_context_for(user_text, fast)
             directive = o._FAST_NO_TOOLS_NOTE if fast else ""
             rounds: list[dict[str, Any]] = []
             tt: dict[str, Any] = {"user": user_text, "pre": [], "rounds": rounds, "final": ""}
@@ -609,6 +615,11 @@ def run_task(client: httpx.Client, task: Task, head: str,
                     if replaced:
                         nets.append("no-tools-reply")
                         rd["net"] = "no-tools-reply"
+                    elif "fast-claim" not in NETS_OFF and o.claims_without_tools(content, user_text):
+                        # ...and so does a claimed (or promised) action: nothing can have run
+                        content = o._NO_TOOLS_REPLY
+                        nets.append("fast-claim")
+                        rd["net"] = "fast-claim"
                     tcs = []
                 elif not tcs:
                     content, tcs = _from_text(content)
@@ -706,7 +717,8 @@ def run_task(client: httpx.Client, task: Task, head: str,
     acted = any(c in ACTION_TOOLS for c in run.calls)
     ok = None if err else task.check(run)
     rep = SAMPLING["seed"] - 42
-    result = Result(task.id, task.group, task.kind, ok, run.calls, task.acts and not acted and bool(run.text),
+    claimed = task.acts and not acted and bool(run.text) and not REFUSES.search(run.text)
+    result = Result(task.id, task.group, task.kind, ok, run.calls, claimed,
                     think_flags, time.time() - t0, tokens, reasoning, run.text, err, nets,
                     "" if ok is not False else auto_layer(task, run), rep, unsourced)
     trace = {"task": task.id, "rep": rep, "group": task.group, "success": ok, "layer": result.layer,

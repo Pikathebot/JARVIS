@@ -398,6 +398,9 @@ def test_status_answers_the_plain_usage_questions():
     assert voice_mode.status_answer("cpu usage", s) == "The CPU is at 12%."
     for said in ["temperature?", "new CPU", "gpu prices", "gpu driver update"]:
         assert voice_mode.status_answer(said, s) == "", said
+    # Nothing reads the CPU's temperature: say so instead of passing the GPU's off as it
+    assert voice_mode.status_answer("What's my CPU temperature?", s) == \
+        "The CPU is at 12%; I can't read the CPU's temperature, only the GPU's, which is at 52 degrees."
     # Not a usage question, or a "which app" one (list_processes, MiniCPM), or not about this machine.
     for said in ["Which apps are using the most CPU?", "what's eating my RAM", "open the gpu settings",
                  "what's the temperature outside?", "play some music", "how much is a new CPU"]:

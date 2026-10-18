@@ -383,6 +383,21 @@ def claims_unrun_action(content: str) -> bool:
     return False
 
 
+# The fast model's reply to "remind me to stretch in 20 minutes" was "I'll keep that in mind"
+# (eval 2026-10-18): no reminder exists. After "remember that ..." the same words can be true --
+# the post-reply memory capture runs on fast turns too -- so only a reminder request counts.
+_ASKS_REMINDER = re.compile(r"\b(?:remind|reminder|timer|alarm|wake me)\b", re.IGNORECASE)
+_KEEP_IN_MIND = re.compile(r"\bI(?:'ll| will)\s+(?:keep\s+(?:that|this|it)\s+in\s+mind|remember)\b", re.IGNORECASE)
+
+
+def claims_without_tools(content: str, user_message: Optional[str]) -> bool:
+    """A reply on a turn with no tools (the fast model) that says it did, or will do, something
+    only a tool could."""
+    if claims_unrun_action(content):
+        return True
+    return bool(_ASKS_REMINDER.search(user_message or "") and _KEEP_IN_MIND.search(content or ""))
+
+
 def changed_something(tools_used: list[Any]) -> bool:
     """Whether a tool that changes state ran successfully this turn (reads and failures don't count)."""
     for item in tools_used or []:
@@ -707,11 +722,11 @@ def workspace_file_listing(workspace_path: Path | str, limit: int = WORKSPACE_LI
 
 def freeform_turn_note() -> str:
     return (
-        "SPACE: Freeform conversation, no project. The file tools (read_file, list_directory, "
-        f"find_files, grep_in_files, write_file, patch_file) work on the user's own folders, rooted at "
-        f"{freeform_root()}: a relative path like 'Downloads' or 'Documents/notes.txt' resolves there. "
-        "Saving a file asks the user once. Running commands, deleting files, git and artifacts need a "
-        "Workspace: if asked for those, say so plainly. Never write a tool call out as text."
+        "SPACE: Freeform conversation, no project. find_files, read_file and write_file work on the "
+        f"user's own folders, rooted at {freeform_root()}: a relative path like 'Downloads' or "
+        "'Documents/notes.txt' resolves there (find_files with pattern '*' lists a folder). Saving a file "
+        "asks the user once. Running commands, deleting or editing files in place, git and artifacts need "
+        "a Workspace: if asked for those, say so plainly. Never write a tool call out as text."
     )
 
 
@@ -1223,6 +1238,14 @@ class AgentOrchestrator:
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []
             turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
+            if active_skill_names:
+                # Skills describe tool workflows; on a turn with no tools they read as "you can". On
+                # 2026-10-18 the UE5 skill ("you are equipped with ... tools") turned "search the web
+                # for the latest Unreal release" into "I can search the web for ..." and nothing else.
+                active_skill_names = []
+                turn_context = build_turn_context(
+                    "", profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
+                    recent=recent_objects.describe(session_id))
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
@@ -1439,7 +1462,9 @@ class AgentOrchestrator:
 
             # Fallback tool call extraction from text if needed
             if not tools:
-                content, _ = drop_unofferable_calls(content)  # nothing offered: it can't run
+                content, replaced = drop_unofferable_calls(content)  # nothing offered: it can't run
+                if not replaced and claims_without_tools(content, (tool_context or {}).get("user_message")):
+                    content = _NO_TOOLS_REPLY
             elif not tool_calls:
                 content, extracted_calls = extract_tool_calls_from_text(content)
                 if extracted_calls:
@@ -1896,6 +1921,14 @@ class AgentOrchestrator:
             # runs on main always gets the space's full set, so main's prompt prefix never changes.
             combined_tools = []
             turn_directive = "\n\n".join(d for d in (turn_directive, _FAST_NO_TOOLS_NOTE) if d)
+            if active_skill_names:
+                # Skills describe tool workflows; on a turn with no tools they read as "you can". On
+                # 2026-10-18 the UE5 skill ("you are equipped with ... tools") turned "search the web
+                # for the latest Unreal release" into "I can search the web for ..." and nothing else.
+                active_skill_names = []
+                turn_context = build_turn_context(
+                    "", profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
+                    recent=recent_objects.describe(session_id))
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
@@ -2243,6 +2276,11 @@ class AgentOrchestrator:
                     if replaced:
                         logger.info("Model '%s' wrote a tool call on a turn with no tools; replaced the reply.", model)
                         metrics.nets.append("no-tools")
+                    elif claims_without_tools(content, (tool_context or {}).get("user_message")):
+                        # Nothing can have run: a claim on this turn is false whatever it says.
+                        logger.info("Model '%s' claimed an action on a turn with no tools; replaced the reply.", model)
+                        content, replaced = _NO_TOOLS_REPLY, True
+                        metrics.nets.append("fast-claim")
                 elif not tool_calls:
                     cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
                     if extracted_calls:

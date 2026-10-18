@@ -1578,3 +1578,23 @@ Reviewed with the main session 2026-10-18: it agrees with the split and the orde
 
 **Next:** the user's call on the Freeform tool set; a Fast claim detector if wanted; #4's error hints only show
 on device (real tools fail more than the simulated world). 8 and 9 stay unplanned.
+
+**Follow-ups built 2026-10-18 (main session, user's calls), 976 backend tests pass, not seen on device:**
+- **Freeform file tools trimmed to three** (`find_files`, `read_file`, `write_file`; `list_directory`,
+  `grep_in_files`, `patch_file` are Workspace-only again, `WORKSPACE_BOUND_TOOLS`; the Freeform note says
+  `find_files` with '*' lists a folder). Same 10 Freeform tasks, Defiant, 3 seeds
+  (`scripts/eval_results/2026-10-18-freeform-trim/`): **25/30** (six tools 18, none 24, 10-16 28). Per task, six ->
+  three: dry-witted 0->3, cpu-hog 2->3, prompt-length 2->3, wukong-mod 2->3, volume-max 1->2; hybrid-kv 0 in every
+  setup (knowledge). Verdict: **helped**. Left: one volume-max run still answered "Setting volume to maximum." with no
+  call -- a gerund claim the detector doesn't match (main's claim nudge then never fires).
+- **The "39 claims" on Fast were the eval's flag, not the model.** It counted any text answer on an action task;
+  on the tool-less fast slot that is every honest refusal ("I can't delete folders ... Main or Auto would"). Re-scored:
+  **2 of 123** real claims, both "I'll keep that in mind" after a reminder request. The flag now skips refusals
+  (`REFUSES` in the eval), so claimed-without-acting counts are not comparable with earlier runs.
+- **Fast claim detector:** on a turn with no tools, a reply `claims_unrun_action` flags, or "I'll keep that in
+  mind / remember" after a reminder request (`claims_without_tools`), becomes `_NO_TOOLS_REPLY` (net `fast-claim`,
+  mirrored in the eval). After "remember that ..." the words stay: the memory capture runs on fast turns too.
+- **No skill text on tool-less fast turns** (both loops; eval mirrors it): the UE5 skill had turned "search the web
+  for the latest Unreal release" into "I can search the web for ...".
+- **"CPU temperature?"** -> "The CPU is at N%; I can't read the CPU's temperature, only the GPU's, which is at N
+  degrees." (`status_answer`, shared with voice mode), instead of the GPU's temperature beside the CPU load.

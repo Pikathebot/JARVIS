@@ -114,6 +114,55 @@ async def test_fast_answers_what_it_can_do_in_code(monkeypatch, picked, expected
     assert roles == ["user", "assistant"]
 
 
+@pytest.mark.parametrize("reply,message,claims", [
+    ("I've opened Notepad for you.", "open notepad", True),
+    ("Muted.", "mute the sound", True),
+    ("sir, stretching is a good idea. I'll keep that in mind.", "remind me to stretch in 20 minutes", True),
+    # after "remember ..." the words can be true: the post-reply memory capture runs on fast turns
+    ("I'll keep that in mind.", "remember that I like dark mode", False),
+    ("I can't open Notepad on this model; Main or Auto can.", "open notepad", False),
+    ("17 times 23 is 391.", "what's 17 times 23?", False),
+])
+def test_claims_on_a_turn_with_no_tools(reply, message, claims):
+    assert orch_mod.claims_without_tools(reply, message) is claims
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_action_on_the_fast_model_is_replaced(tmp_path):
+    p = ScriptedProvider([_text_turn("Done. I've muted the volume.")])
+    events = [ev async for ev in _orch()._run_provider_stream_loop(
+        provider=p, session_id="fast-claim", model="fast", system_prompt="sys", tools=[],
+        conversation_messages=[{"role": "user", "content": "mute the sound"}], chat_mode=ChatMode.FREEFORM,
+        workspace_path=tmp_path, tool_context={"user_message": "mute the sound", "session_id": "fast-claim"})]
+    done = events[-1]["data"]
+    assert done["replace_content"] is True and done["response"] == orch_mod._NO_TOOLS_REPLY
+    assert "fast-claim" in done["metrics"]["nets"]
+
+
+@pytest.mark.asyncio
+async def test_no_skill_text_on_a_fast_turn(monkeypatch):
+    """2026-10-18: the UE5 skill ("equipped with ... tools") made the fast model promise a web search."""
+    o = _orch()
+    monkeypatch.setattr(o, "_prefer_loaded_slot", lambda d, f, r, m: (d, True, None))
+    seen = {}
+
+    def build_context(**kwargs):
+        seen.update(kwargs)
+        return MagicMock(messages=[], system_prompt="sys", retrieved_chunks_used=0, retrieved_chunks_dropped=0,
+                         budget_report={})
+
+    async def fake_loop(**kwargs):
+        seen["active_skills"] = kwargs.get("active_skills")
+        yield {"event": "done", "data": {"response": "ok", "tools_used": []}}
+
+    monkeypatch.setattr(o.context_manager, "build_context", build_context)
+    monkeypatch.setattr(o, "_run_provider_stream_loop", fake_loop)
+    msg = "Search the web for the latest Unreal Engine release."
+    assert o.skills_loader.match_skills(msg)  # the UE5 skill does match this message
+    _ = [ev async for ev in o.run_stream(msg, session_id="fast-skills", requested_model="fast", chat_mode="FREEFORM")]
+    assert "Skill Active" not in seen["turn_context"] and seen["active_skills"] == []
+
+
 def test_the_fast_note_overrides_the_freeform_file_tools_line():
     assert "whatever the space note says" in orch_mod._FAST_NO_TOOLS_NOTE
     assert "never write a tool call out as text" in orch_mod._FAST_NO_TOOLS_NOTE

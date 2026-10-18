@@ -68,7 +68,9 @@ _RULE_CALL = re.compile(r"'([a-z_]+)\(([^)]*)\)'")
 _RULE_NAME = re.compile(r"'([a-z]+_[a-z_]+)'")
 # Named by the shared rules but Workspace-only, so absent from Freeform's tool list. Freeform's
 # execute_tool refuses them with "switch to a Workspace". Add a tool here only on purpose.
-_NAMED_BUT_WORKSPACE_ONLY = {"delete_file", "execute_command"}
+_NAMED_BUT_WORKSPACE_ONLY = {"delete_file", "execute_command",
+                             # Freeform's file tools trimmed to three (2026-10-18, eval 4.15)
+                             "list_directory", "grep_in_files", "patch_file"}
 
 
 def _schema_params(name):

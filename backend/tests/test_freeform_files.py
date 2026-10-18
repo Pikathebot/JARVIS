@@ -25,17 +25,21 @@ def _ctx(**extra):
     return {"chat_mode": "FREEFORM", "workspace_path": str(Path(settings.workspace_path)), "session_id": "s", **extra}
 
 
-def test_freeform_offers_the_plain_file_tools_but_nothing_project_bound():
+def test_freeform_offers_three_file_tools_and_nothing_project_bound():
     names = {t.__name__ for t in tools_for_space("FREEFORM")}
-    assert {"read_file", "list_directory", "find_files", "grep_in_files", "write_file", "patch_file"} <= names
+    assert {"read_file", "find_files", "write_file"} <= names
+    # all six cost unrelated Freeform turns (eval 2026-10-18), so the user trimmed them to three
+    assert not names & {"list_directory", "grep_in_files", "patch_file"}
     assert not names & {"delete_file", "execute_command", "git_status", "create_artifact"}
 
 
 def test_relative_paths_resolve_in_the_users_folders(home):
     (home / "Downloads" / "big.bin").write_bytes(b"x" * 5000)
     (home / "Downloads" / "small.txt").write_text("hi")
-    out = execute_tool("list_directory", {"directory_path": "Downloads"}, _ctx())
+    out = execute_tool("find_files", {"pattern": "*", "root_dir": "Downloads"}, _ctx())
     assert "big.bin" in out and "small.txt" in out
+    assert execute_tool("read_file", {"file_path": "Downloads/small.txt"}, _ctx()).strip().endswith("hi")
+    assert execute_tool("list_directory", {"directory_path": "Downloads"}, _ctx()).startswith("Error")
 
 
 def test_find_files_can_list_the_biggest_first(home):
@@ -72,7 +76,7 @@ def test_reads_in_the_users_folders_run_and_outside_them_ask(home, tmp_path):
     assert inside.allowed
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    outside = evaluate_tool_permission("list_directory", {"directory_path": str(elsewhere)},
+    outside = evaluate_tool_permission("find_files", {"pattern": "*", "root_dir": str(elsewhere)},
                                        chat_mode=ChatMode.FREEFORM, workspace_path=str(home))
     assert not outside.allowed and "home folder" in outside.reason
 

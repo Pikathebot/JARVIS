@@ -465,14 +465,17 @@ def execute_tool(
 
 # A Freeform conversation has no project, so nothing bound to a project (artifacts, git, running
 # commands, deleting) is offered there -- and execute_tool refuses it even if the model calls one
-# anyway (a model can name a tool it was never offered). The plain file tools are offered and work
-# on the user's own folders (``paths.freeform_root``, home by default): reads there run, every
-# write asks (user's call, 2026-10-17, after "save the summary in Downloads" had no way to save).
+# anyway (a model can name a tool it was never offered). Three file tools are offered and work on
+# the user's own folders (``paths.freeform_root``, home by default): find_files, read_file and
+# write_file -- reads there run, every write asks (user's call, 2026-10-17, after "save the summary in
+# Downloads" had no way to save). All six cost Freeform turns that had nothing to do with files
+# (eval 2026-10-18: 28/30 -> 18/30), so the user trimmed them to these three the same day.
 FREEFORM_MODE = "FREEFORM"
 WORKSPACE_BOUND_TOOLS = frozenset({
     "delete_file", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
     "git_status", "git_diff", "git_log", "git_commit", "git_switch",
     "git_restore", "git_push", "git_pull",
+    "list_directory", "grep_in_files", "patch_file",
 })
 
 

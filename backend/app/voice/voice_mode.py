@@ -145,6 +145,11 @@ def status_answer(utterance: str, snapshot: Callable[[], Any]) -> str:
         parts = ["cpu", "ram", "gpu"]
     if "temp" in parts and "gpu" in parts:
         parts.remove("temp")  # the GPU line already says how hot
+    elif "temp" in parts and "cpu" in parts:
+        # Nothing reads the CPU's temperature. "What's my CPU temperature?" was answered with the
+        # CPU's load and the GPU's temperature side by side (2026-10-18), which reads as the CPU's.
+        said["temp"] = "I can't read the CPU's temperature, only the GPU's" + (
+            f", which is at {s.gpu_temp_c:.0f} degrees" if s.gpu_temp_c is not None else "")
     text = "; ".join(said[p] for p in parts)
     return text[0].upper() + text[1:] + "."
 
