@@ -181,3 +181,73 @@ def test_reading_notes_is_not_a_change_for_the_claim_check():
     assert not orch_mod.changed_something([{"tool": "notes", "args": {"action": "find"}, "status": "success"}])
     assert not orch_mod.changed_something([{"tool": "tasks", "args": {"action": "list"}, "status": "success"}])
     assert orch_mod.changed_something([{"tool": "tasks", "args": {"action": "add"}, "status": "success"}])
+
+
+# --- the per-turn cue ---
+
+def test_cue_points_at_notes_when_a_note_is_asked_for(folder):
+    for msg in ("note that the guest wifi password is on the router", "Make a note: dentist Tuesday",
+                "jot this down -- call the bank", "add this to my notes"):
+        assert notes_mod.turn_directive(msg).startswith("NOTES:"), msg
+    for msg in ("what did I note about the dentist?", "notes are useful", "write me a poem"):
+        assert notes_mod.turn_directive(msg) == "", msg
+
+
+def test_cue_names_the_one_open_task_that_sounds_done(folder):
+    tasks("add", text="Buy milk")
+    tasks("add", text="Call mum")
+    tid = notes_mod._parse_tasks(notes_mod._read_tasks()[1])[0].id
+    cue = notes_mod.turn_directive("I bought the milk")
+    assert cue.startswith("TASKS:") and "Buy milk" in cue and tid in cue
+    assert notes_mod.turn_directive("I bought a new phone") == ""      # no open task shares a word
+    assert notes_mod.turn_directive("did I buy milk?") == ""          # not a "done" statement
+    tasks("done", task_id=tid)
+    assert notes_mod.turn_directive("I bought the milk") == ""        # already ticked off
+
+
+def test_cue_stays_quiet_when_two_tasks_match(folder):
+    tasks("add", text="Call mum")
+    tasks("add", text="Call the bank")
+    assert notes_mod.turn_directive("I called mum and the bank") == ""
+
+
+def test_cue_without_a_tasks_file_is_empty(folder):
+    assert notes_mod.turn_directive("I finished the report") == ""
+
+
+async def _user_turn(monkeypatch, store, message):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tests.fake_providers import ClientBackedProvider
+
+    sent = []
+
+    async def reply(model=None, messages=None, tools=None):
+        sent.append(messages)
+        yield {"type": "token", "delta": "Done."}
+        yield {"type": "done", "content": "Done.", "tool_calls": []}
+
+    monkeypatch.setattr(orch_mod.AgentOrchestrator, "_slot_has_vision", lambda self, slot, provider: False)
+    skills = MagicMock(match_skills=MagicMock(return_value=[]), build_skill_prompt_injection=MagicMock(return_value=""))
+    orch = orch_mod.AgentOrchestrator(provider=ClientBackedProvider(MagicMock(chat_stream=reply)),
+                                      openrouter_client=MagicMock(), memory_store=store,
+                                      compactor=MagicMock(compact=AsyncMock(return_value=([], None))),
+                                      skills_loader=skills,
+                                      mcp_manager=MagicMock(get_tool_definitions=MagicMock(return_value=[])))
+    _ = [ev async for ev in orch.run_stream(user_message=message, session_id="n1", chat_mode="FREEFORM",
+                                             voice_route="act")]
+    return [m for m in sent[0] if m["role"] == "user"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_cue_rides_on_the_user_turn_and_not_in_ephemeral_chats(folder, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.memory.ephemeral import EphemeralMemoryStore
+
+    store = MagicMock()
+    store.get_or_create_session.return_value = {"chat_mode": "FREEFORM"}
+    store.get_messages.return_value = []
+    msg = "note that the guest wifi password is on the router"
+    assert "NOTES: the user asked for a note" in await _user_turn(monkeypatch, store, msg)
+    assert "NOTES:" not in await _user_turn(monkeypatch, EphemeralMemoryStore(store), msg)

@@ -36,6 +36,7 @@ from app.agent.memory_capture import capture_memory
 from app.agent import compare, paused_turns, recent_objects, taint
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
+from app.agent.tools.notes import turn_directive as notes_turn_directive
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
@@ -347,7 +348,7 @@ _NUDGE_REPEAT = (
 _UNRUN_ACTION_CLAIM_RE = re.compile(
     r"\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+)?"
     r"(?:(?:attempted|tried)\s+to\s+\w+|opened|launched|started|closed|killed|terminated|deleted|"
-    r"removed|saved|created|written|wrote|sent|muted|unmuted|copied|moved|renamed|ran|executed|"
+    r"removed|saved|created|written|wrote|sent|muted|unmuted|copied|moved|renamed|ran|executed|recorded|marked|ticked|"
     r"set the volume|turned (?:up|down|off|on)|paused|skipped|focused|brought)\b",
     re.IGNORECASE,
 )
@@ -358,7 +359,7 @@ _UNRUN_ACTION_CLAIM_RE = re.compile(
 _SUBJECTLESS_CLAIM_RE = re.compile(
     r"(?:^|[.!?\n]\s*)(?:done[,.!:\s-]+)?"
     r"(?:bumped|saved|updated|created|wrote|deleted|removed|copied|opened|launched|closed|killed|"
-    r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled)\b"
+    r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled|marked|ticked)\b"
     # ...or mid-sentence with a concrete target: "Action items copied to clipboard:" (2026-10-16)
     r"|\b(?:copied|saved|written|added|moved)\s+to\s+(?:your\s+|the\s+)?"
     r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)",
@@ -1276,6 +1277,10 @@ class AgentOrchestrator:
                 turn_context = build_turn_context(
                     "", profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
                     recent=recent_objects.describe(session_id))
+        if combined_tools and not self.is_ephemeral:
+            # "note that ..." / "I bought the milk" got "Noted, sir." and no call (PLAN 4.16 eval):
+            # point at notes/tasks for this turn only. Ephemeral chats can't write them, so no pointer.
+            turn_directive = "\n\n".join(d for d in (turn_directive, notes_turn_directive(user_message)) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
@@ -1959,6 +1964,10 @@ class AgentOrchestrator:
                 turn_context = build_turn_context(
                     "", profile_context=self._space_context(effective_mode_str, resolved_project_id, workspace_path),
                     recent=recent_objects.describe(session_id))
+        if combined_tools and not self.is_ephemeral:
+            # "note that ..." / "I bought the milk" got "Noted, sir." and no call (PLAN 4.16 eval):
+            # point at notes/tasks for this turn only. Ephemeral chats can't write them, so no pointer.
+            turn_directive = "\n\n".join(d for d in (turn_directive, notes_turn_directive(user_message)) if d)
         resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)

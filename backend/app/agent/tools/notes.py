@@ -201,6 +201,46 @@ def notes(action: str = "list", title: str = "", text: str = "", query: str = ""
     return "Error: action must be add, append, find, read or list."
 
 
+# --- the per-turn cue ---------------------------------------------------------------------------
+
+# Eval 2026-10-18 (Defiant, 3 seeds): "note that the guest wifi password is on the router" -> "Noted,
+# sir." and "I bought the milk" -> "The milk is noted.", 0/3 each, no tool. The schemas alone don't
+# make the 9B reach for these on a conversational message, so code points at the tool for this turn.
+_ASKS_NOTE = re.compile(
+    r"\b(?:note (?:that|down|this|it)|make a note|take a note|jot (?:down|this|that|it)|"
+    r"write (?:this|that|it) down|(?:add|put|save) (?:(?:this|that|it) )?(?:to|in) (?:my|the) notes?)\b", re.I)
+_SAYS_DONE = re.compile(
+    r"\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:just\s+|finally\s+|already\s+)?"
+    r"(?:bought|got|did|done|finished|paid|called|rang|emailed|sent|booked|picked up|cleaned|fixed|submitted|"
+    r"returned|posted|ordered|renewed|cancelled|handed in|took)\b|\b(?:is|are|'s) (?:done|sorted|finished)\b", re.I)
+_STOP = frozenset("the a an my to of for and with on in at it this that just i we have has did got".split())
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in _STOP}
+
+
+def turn_directive(user_message: str) -> str:
+    """A one-line pointer for this turn when the message plainly asks for a note, or says that an
+    open task (sharing a word with the message) is done; "" otherwise. Rides on the user turn."""
+    text = user_message or ""
+    if _ASKS_NOTE.search(text):
+        return ("NOTES: the user asked for a note. Write it with notes(action='add', or 'append' to an "
+                "existing note); replying \"noted\" without the tool saves nothing.")
+    if _SAYS_DONE.search(text):
+        try:
+            _, lines = _read_tasks()
+        except OSError:
+            return ""
+        said = _words(text)
+        hits = [t for t in _parse_tasks(lines) if not t.done and said & _words(t.text)]
+        if len(hits) == 1:
+            t = hits[0]
+            return (f"TASKS: the open task \"{t.text}\" (id {t.id}) sounds done. If it is, tick it off with "
+                    f"tasks(action='done', task_id='{t.id}').")
+    return ""
+
+
 # --- tasks --------------------------------------------------------------------------------------
 
 _TASK_LINE = re.compile(r"^(?P<indent>\s*)[-*] \[(?P<mark>[ xX])\] (?P<rest>.*)$")

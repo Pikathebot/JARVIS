@@ -185,6 +185,11 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     ("Action items copied to clipboard:\n- Bob: book the venue", True),
     ("The summary is saved to todo_summary.txt.", True),
     ("Changes are saved to disk when the buffer flushes.", False),
+    # 2026-10-18 notes eval: a to-do "ticked off" after only tasks(list), or no call at all
+    ("Done. Marked \"Buy milk\" as complete.", True),
+    ("I have recorded that you bought the milk.", True),
+    ("Ticked off: Buy milk.", True),
+    ("Exams are marked out of 100.", False),
     # offers, questions and plain facts are not claims
     ("I'll open it if you want.", False),
     ("Want me to set a reminder? I'll remind you whenever you say.", False),

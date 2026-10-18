@@ -1658,8 +1658,21 @@ Permissions: everything runs except `tasks remove` (asks); taint sinks only for 
 ephemeral sessions read but never write. `remember`'s `task` kind now says personal to-dos go to `tasks`. Head
 budget: Freeform 20.8k -> 22.5k of 25.5k chars, Workspace 32.3k -> 34.0k of 35k. Tests: `test_notes_tasks.py` (22); full suite 1019 pass. Eval: five `notes` tasks in
 `eval_jarvis_tasks.py` (todo-add/list/done, note-add/find) over the real code in a temp folder.
-Still to do: re-run the Freeform set (3 seeds) with Jarvis closed -- a phase costing more than a point there gets
-its schema cut. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
+Freeform set re-run 2026-10-18 16:02 (Defiant, 3 seeds, `scripts/eval_results/2026-10-18-notes/`): the ten
+non-notes tasks 28/30 with `notes`/`tasks` offered vs 24/30 without (the gap is knowledge-task noise) -- **no
+cost, schemas kept**. Notes tasks 9/15: `todo-done` ("I bought the milk" -> "I have recorded that you bought the
+milk.") and `note-add` ("Noted, sir.") 0/3 each, no tool called.
+**Fix (built after the power cut, build/test-verified, unverified on device):** `notes.turn_directive` -- a
+one-line per-turn pointer on the user turn (never the prefix): "note that / make a note / jot down / add this to my
+notes" -> use `notes`; a done-statement ("I bought/finished/paid ...") sharing a word with exactly one open task ->
+name that task and its id for `tasks(action='done')` (two matches or none: nothing). Added in both turn paths when
+the turn has tools and the chat isn't ephemeral; mirrored in the eval (`--no-net notes-cue` turns it off). 5 tests
+in `test_notes_tasks.py`. With the cue: notes 14/15 -- the one miss listed the tasks, then said "Done. Marked
+\"Buy milk\" as complete."; the claim check didn't know "marked", so `recorded|marked|ticked` joined
+`_UNRUN_ACTION_CLAIM_RE` / `_SUBJECTLESS_CLAIM_RE` (4 test cases). The eval also counted every notes/tasks write
+as claimed-without-acting (not in `ACTION_TOOLS`); now a logged notes/tasks write counts as acting. Final run
+(`with-cue2`): **notes 15/15, total 43/45 (both misses `hybrid-kv` knowledge), claimed-without-acting 0**; full
+suite 1028 pass. Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
 fail when that file runs alone ("no such table: sessions" -- they rely on an earlier file creating the tables).
 
 **Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**

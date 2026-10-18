@@ -52,7 +52,7 @@ MAX_ROUNDS = 5  # the orchestrator's max_iterations; then one answer round (loop
 SLOT = "main"  # --slot fast: the picker on Fast (no tools, thinking off)
 NETS_OFF: set[str] = set()  # --no-net: safety nets turned off for a probe (PLAN 4.15 #3)
 NET_NAMES = ("pre-research", "pre-status", "reasoning-nudge", "claim-nudge", "repeat-guard", "result-hint",
-             "fast-claim")
+             "fast-claim", "notes-cue")
 # A reply that says it can't (or that a tool is needed) is a refusal, not a claim: on the tool-less fast
 # slot the old "any text on an action task" flag counted 37 honest refusals as claims (2026-10-18).
 REFUSES = re.compile(r"\b(?:can't|cannot|can\s?not|unable to|not able to|don't have|do not have|no access|"
@@ -220,6 +220,14 @@ class World(btc.World):
         if str(args.get("action") or "list") not in ("list", "find", "read"):
             self.actions.append((name, args))
         return out
+
+    def notes_directive(self, user_text: str) -> str:
+        """orchestrator: notes.turn_directive on a turn with tools, over this run's notes folder."""
+        from app.agent.tools import notes as nm
+        from app.config import settings
+
+        settings.notes_dir = str(self.notes_dir)
+        return "" if "notes-cue" in NETS_OFF else nm.turn_directive(user_text)
 
     def notes(self, **args: Any) -> str:
         return self._notes_call("notes", args)
@@ -606,7 +614,7 @@ def run_task(client: httpx.Client, task: Task, head: str,
             think_flags.append(think)
             turn_tools: list[dict[str, Any]] = []
             turn_ctx = turn_context_for(user_text, fast)
-            directive = o._FAST_NO_TOOLS_NOTE if fast else ""
+            directive = o._FAST_NO_TOOLS_NOTE if fast else run.world.notes_directive(user_text)
             rounds: list[dict[str, Any]] = []
             tt: dict[str, Any] = {"user": user_text, "pre": [], "rounds": rounds, "final": ""}
             trace_turns.append(tt)
@@ -760,7 +768,8 @@ def run_task(client: httpx.Client, task: Task, head: str,
             messages.append({"role": "assistant", "content": final})
     except Exception as exc:  # a server error leaves the task unscored, not failed (PLAN 4.15 #2)
         err = f"{type(exc).__name__}: {exc}"
-    acted = any(c in ACTION_TOOLS for c in run.calls)
+    # notes/tasks act only when they write (World logs those); their list/find/read are reads
+    acted = any(c in ACTION_TOOLS for c in run.calls) or any(n in ("notes", "tasks") for n, _ in run.world.actions)
     ok = None if err else task.check(run)
     rep = SAMPLING["seed"] - 42
     claimed = task.acts and not acted and bool(run.text) and not REFUSES.search(run.text)
