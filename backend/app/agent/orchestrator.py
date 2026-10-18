@@ -33,7 +33,7 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
-from app.agent import compare, recent_objects, taint
+from app.agent import compare, paused_turns, recent_objects, taint
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
 from app.agent.provider_factory import get_model_provider
@@ -80,6 +80,34 @@ _FUNCTION_TAG = re.compile(
 # markup must not stand as the reply.
 _NO_TOOLS_REPLY = ("That needs a tool, and the fast model answering this turn has none. "
                    "Switch the model to Main or Auto and ask again.")
+
+# "What tools do you have?" on the fast model is answered in code: on device (2026-10-18) Bonsai
+# read the no-tools note and still opened with "I can manage your files, hardware, and local
+# processes directly". The whole message has to be the question ("what can you do about the lag?"
+# is not one).
+_ASKS_CAPABILITIES = re.compile(
+    r"\s*(?:hey\s+|so\s+|ok(?:ay)?\s+)?(?:jarvis[,\s]+)?(?:"
+    r"(?:what|which)\s+(?:tools|capabilities|abilities|skills)\s+(?:do\s+you\s+have|have\s+you\s+got|can\s+you\s+use)"
+    r"|what\s+(?:can|could)\s+you\s+do(?:\s+for\s+me)?"
+    r"|what\s+are\s+you\s+(?:able\s+to\s+do|capable\s+of)"
+    r"|what\s+are\s+your\s+(?:tools|capabilities|abilities|skills)"
+    r"|(?:list|show)\s+(?:me\s+)?your\s+tools"
+    r")(?:\s+(?:here|now|right\s+now))?[\s,]*(?:jarvis|sir)?\s*[?.!]*\s*", re.I)
+_CAPABILITIES_ALL = ("read, find and save files in your folders, search the web and read pages, open and "
+                     "switch apps, type and press keys for you, control volume and media, look at your screen, "
+                     "check the system's readings and running apps, set reminders, and remember things you "
+                     "tell me to")
+_FAST_PICKED_CAPABILITIES = ("You've picked the Fast model, so right now I can only talk: answer questions, "
+                             "explain and write from what's in this conversation. I can't touch files, the web "
+                             "or apps from here. Switch the model to Main or Auto and I can "
+                             + _CAPABILITIES_ALL + ".")
+_AUTO_CAPABILITIES = ("I can " + _CAPABILITIES_ALL + ". Quick chat runs on the Fast model; anything that "
+                      "needs a tool goes to Main.")
+
+
+def asks_capabilities(user_message: str) -> bool:
+    return bool(_ASKS_CAPABILITIES.fullmatch(user_message or ""))
+
 
 def drop_unofferable_calls(content: str) -> tuple[str, bool]:
     """On a turn with no tools: (the reply, whether a written-out tool call replaced it). The text
@@ -454,15 +482,36 @@ _FAST_NO_TOOLS_NOTE = (
     "You have no tools in this turn (the fast model is answering), whatever the space note says. "
     "If the user asked for something that needs one -- doing something on the computer, files, "
     "the web, live readings not given below -- say plainly that the fast model can't and Main can. "
-    "Never say you did it, and never write a tool call out as text."
+    "Never say you did it, and never write a tool call out as text. If asked what you can do or "
+    "which tools you have: on this model you can only talk and answer from what this message gives "
+    "you; Main or Auto has the tools (files, the web, apps on this computer). Don't list tools or "
+    "claim control over the machine."
 )
 
 PRE_STATUS_TIMEOUT_SECONDS = 10.0
 
 
-def _pre_status_block(result: str) -> str:
-    return ("LIVE READINGS (measured just now for this message; answer from these, never from "
-            "memory):\n" + result.strip())
+def _pre_status_block(result: str, answer: str = "") -> str:
+    """The readings for a hardware question on the fast model. With the asked-for part as a
+    sentence on top: on device it pasted the whole line (battery, drives) for "GPU temperature?"."""
+    head = "LIVE READINGS (measured just now for this message; answer from these, never from memory):"
+    if not answer:
+        return head + "\n" + result.strip()
+    return (f"{head}\nAnswer with: {answer}\n"
+            f"All readings (quote more only if the user asks): {result.strip()}")
+
+
+def _status_sentence(user_message: str) -> str:
+    """Voice mode's sentence for just the parts asked about, from the sample the pre-run took."""
+    try:
+        from app.main import awareness_monitor
+        from app.voice.voice_mode import status_answer
+
+        snapshot = awareness_monitor.last_snapshot
+        return status_answer(user_message, lambda: snapshot) if snapshot is not None else ""
+    except Exception as e:
+        logger.debug("No status sentence: %s", e)
+        return ""
 
 
 def looks_like_action(user_message: str) -> bool:
@@ -1184,7 +1233,7 @@ class AgentOrchestrator:
             item, found = await self._pre_status(active_session_id, tool_context)
             pre_tools.append(item)
             if found:
-                turn_context = "\n\n".join([turn_context, _pre_status_block(found)])
+                turn_context = "\n\n".join([turn_context, _pre_status_block(found, _status_sentence(user_message))])
 
         # A clearly recent question: research before the model (PLAN 4.13 #7)
         if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
@@ -1774,6 +1823,33 @@ class AgentOrchestrator:
         active_session_id = session_id or "default"
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
+        parked = paused_turns.take(active_session_id, approved_action_ids)
+        if parked is not None:
+            # The approval of a turn that paused: run the calls it asked about and carry on. No
+            # routing, pre-runs or context rebuild, and the user's message is already stored.
+            logger.info("Resuming the turn paused for %s.", sorted(parked.pending_ids))
+            async for ev in self._run_provider_stream_loop(
+                provider=self.provider,
+                session_id=active_session_id,
+                conversation_messages=parked.messages,
+                tools=parked.tools,
+                model=parked.model,
+                system_prompt=parked.messages[0]["content"],
+                approved_action_ids=approved_action_ids,
+                max_iterations=parked.max_iterations,
+                route_reason=parked.route_reason,
+                chat_mode=parked.chat_mode,
+                profile=parked.profile,
+                active_skills=parked.active_skills,
+                compaction_info=None,
+                workspace_path=parked.workspace_path,
+                tool_context=parked.tool_context,
+                thinking=parked.thinking,
+                resume=parked,
+            ):
+                yield ev
+            return
+
         resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
             self._resolve_turn_scope(project_id, active_session_id, chat_mode)
         )
@@ -1824,6 +1900,20 @@ class AgentOrchestrator:
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
+        if is_fast and not voice_route and asks_capabilities(user_message):
+            # Answered in code: the fast model describes Main's tools as its own.
+            reply = _FAST_PICKED_CAPABILITIES if requested_model else _AUTO_CAPABILITIES
+            self.memory_store.append_message(active_session_id, role="user", content=user_message)
+            self.memory_store.append_message(active_session_id, role="assistant", content=reply)
+            yield {"event": "token", "data": {"delta": reply}}
+            yield {"event": "done", "data": {
+                "response": reply, "reasoning": "", "model": decision.model, "provider": decision.provider,
+                "status": "completed", "session_id": active_session_id,
+                "route_reason": "Answered in code: what the assistant can do.", "fallback_used": False,
+                "compaction_performed": None, "active_skills": active_skill_names, "tools_used": [],
+            }}
+            return
+
         # 2a. A hardware question on the tool-less fast model: read the machine first.
         pre_tools: list[dict[str, Any]] = []
         if self._should_pre_status(user_message, combined_tools, voice_route):
@@ -1832,7 +1922,7 @@ class AgentOrchestrator:
             yield {"event": "tool_end", "data": item}
             pre_tools.append(item)
             if found:
-                turn_context = "\n\n".join([turn_context, _pre_status_block(found)])
+                turn_context = "\n\n".join([turn_context, _pre_status_block(found, _status_sentence(user_message))])
 
         # 2b. A clearly recent question: research before the model (PLAN 4.13 #7)
         if self._should_pre_research(user_message, combined_tools, voice_route, approved_action_ids):
@@ -2068,6 +2158,7 @@ class AgentOrchestrator:
         tool_context: Optional[dict[str, Any]] = None,
         thinking: Optional[bool] = None,
         prior_tools: Optional[list[dict[str, Any]]] = None,
+        resume: Optional[paused_turns.ParkedTurn] = None,
     ):
         ws_root = Path(workspace_path or settings.workspace_path).resolve()
         tool_ctx = dict(tool_context or {"workspace_path": str(ws_root), "session_id": session_id})
@@ -2092,57 +2183,71 @@ class AgentOrchestrator:
         nudged = False
         claim_checked = False
         metrics = TurnMetrics()
+        first_round = 0
+        if resume is not None:
+            # An approval of a parked turn: carry on where it stopped, replaying its paused round.
+            # What it said before the pause is in the earlier bubble; `said` covers this request only.
+            tools_used, metrics, call_history = resume.tools_used, resume.metrics, resume.call_history
+            nudged, claim_checked = resume.nudged, resume.claim_checked
+            tainted_by = resume.tainted_by or tainted_by
+            first_round = resume.round_index
 
-        for iteration in range(max_iterations):
-            logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
-            stream_gen = provider.stream_chat(
-                model=model,
-                messages=messages,
-                tools=tools if tools else None,
-                profile=profile,
-                thinking=thinking,
-            )
+        for iteration in range(first_round, max_iterations):
+            replaying = resume is not None
+            if resume is not None:
+                # The paused round's calls exactly as the model made them; its text already showed.
+                content, tool_calls, full_reasoning, replaced = resume.content, resume.tool_calls, "", False
+                resume = None
+            else:
+                logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
+                stream_gen = provider.stream_chat(
+                    model=model,
+                    messages=messages,
+                    tools=tools if tools else None,
+                    profile=profile,
+                    thinking=thinking,
+                )
 
-            done_event = None
-            accumulated_tool_calls = []
-            accumulated_reasoning: list[str] = []
+                done_event = None
+                accumulated_tool_calls = []
+                accumulated_reasoning: list[str] = []
 
-            async for ev in stream_gen:
-                event_type = ev.get("event")
-                if event_type == "text_delta":
-                    yield {"event": "token", "data": {"delta": ev.get("content", "")}}
-                elif event_type == "reasoning_delta":
-                    accumulated_reasoning.append(ev.get("content", ""))
-                    yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
-                elif event_type == "tool_draft":
-                    yield {"event": "tool_draft", "data": {"tool": ev.get("tool", "tool"), "args_delta": ev.get("args_delta", "")}}
-                elif event_type == "tool_call":
-                    accumulated_tool_calls.append(ev.get("tool_call"))
-                elif event_type == "done":
-                    done_event = ev
-                elif event_type == "error":
-                    yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
-                    return
+                async for ev in stream_gen:
+                    event_type = ev.get("event")
+                    if event_type == "text_delta":
+                        yield {"event": "token", "data": {"delta": ev.get("content", "")}}
+                    elif event_type == "reasoning_delta":
+                        accumulated_reasoning.append(ev.get("content", ""))
+                        yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
+                    elif event_type == "tool_draft":
+                        yield {"event": "tool_draft", "data": {"tool": ev.get("tool", "tool"), "args_delta": ev.get("args_delta", "")}}
+                    elif event_type == "tool_call":
+                        accumulated_tool_calls.append(ev.get("tool_call"))
+                    elif event_type == "done":
+                        done_event = ev
+                    elif event_type == "error":
+                        yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
+                        return
 
-            raw_done = done_event.get("raw", {}) if done_event else {}
-            metrics.add_round(raw_done)
-            content = raw_done.get("content", "") or ""
-            tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
-            full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
-            self._log_model_reply(model, content, tool_calls)
+                raw_done = done_event.get("raw", {}) if done_event else {}
+                metrics.add_round(raw_done)
+                content = raw_done.get("content", "") or ""
+                tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
+                full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
+                self._log_model_reply(model, content, tool_calls)
 
-            replaced = False
-            if not tools:
-                # Nothing was offered, so a call written out as text can't run: say so instead.
-                content, replaced = drop_unofferable_calls(content)
-                if replaced:
-                    logger.info("Model '%s' wrote a tool call on a turn with no tools; replaced the reply.", model)
-                    metrics.nets.append("no-tools")
-            elif not tool_calls:
-                cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
-                if extracted_calls:
-                    tool_calls = extracted_calls
-                    content = cleaned_content
+                replaced = False
+                if not tools:
+                    # Nothing was offered, so a call written out as text can't run: say so instead.
+                    content, replaced = drop_unofferable_calls(content)
+                    if replaced:
+                        logger.info("Model '%s' wrote a tool call on a turn with no tools; replaced the reply.", model)
+                        metrics.nets.append("no-tools")
+                elif not tool_calls:
+                    cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
+                    if extracted_calls:
+                        tool_calls = extracted_calls
+                        content = cleaned_content
 
             if not tool_calls:
                 if not content.strip():
@@ -2246,12 +2351,23 @@ class AgentOrchestrator:
                 registry = get_confirmation_registry()
                 registry.ask(session_id, pending_list)
                 taint.park(session_id, tainted_by)
+                # The client shows `response` in place of what streamed: keep what the model already
+                # wrote this turn (on device a whole summary vanished behind the approval card).
+                shown = said + ([content.strip()] if content.strip() and not replaying else [])
+                # The approval resumes this turn rather than re-running it (paused_turns).
+                paused_turns.park(session_id, paused_turns.ParkedTurn(
+                    pending_ids={p["action_id"] for p in pending_list},
+                    messages=messages, content=content or "", tool_calls=list(tool_calls),
+                    round_index=iteration, tools=tools, model=model, thinking=thinking, profile=profile,
+                    route_reason=route_reason, chat_mode=chat_mode, active_skills=list(active_skills or []),
+                    workspace_path=str(ws_root), tool_context=dict(tool_context or {}),
+                    max_iterations=max_iterations, tools_used=tools_used, metrics=metrics,
+                    call_history=call_history, nudged=nudged, claim_checked=claim_checked, tainted_by=tainted_by,
+                ))
                 prompt = build_confirmation_prompt(
                     pending_list, persona_manager.get_active(), re_asked=registry.last_ask_was_repeat
                 )
-                # The client shows `response` in place of what streamed: keep what the model already
-                # wrote this turn (on device a whole summary vanished behind the approval card).
-                shown = said + ([content.strip()] if content.strip() else []) + [prompt["text"]]
+                shown = shown + [prompt["text"]]
                 yield {
                     "event": "confirmation_required",
                     "data": {
@@ -2267,7 +2383,7 @@ class AgentOrchestrator:
                 return
 
             messages.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
-            if content.strip():
+            if content.strip() and not replaying:
                 said.append(content.strip())
             for tc in normalized_tool_calls:
                 t_name = tc["name"]

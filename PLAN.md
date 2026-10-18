@@ -969,7 +969,132 @@ staging were not needed yet; they come with Phase 2's async ring.
 
 ### 4.13 Harness review: what to take from Odysseus (started 2026-10-16)
 
-**Handoff (end of 2026-10-16 session) -- start here.**
+**Device test 2026-10-17 and its fixes -- start here.** All UNCOMMITTED (with the night's work below), ask
+before committing. User's results: Defiant loads cleanly and sounds like Jarvis; metrics footer readable;
+tray quit OK; "summarise <reddit url> and save it in Downloads" looped (harness checks stopped there). Fixes,
+build/test-verified only (905 backend tests, WinUI builds), **unverified on device**:
+- **Freeform gets file tools on the user's own folders** (user's call): read_file, list_directory,
+  find_files, grep_in_files, write_file, patch_file, rooted at `paths.freeform_root()` (home, or
+  `FREEFORM_FILES_ROOT`). Reads inside run, outside ask; every write asks once (`ChatMode.FREEFORM`);
+  backups go to `<workspace>/.jarvis/backups/_freeform`; a Freeform read_file taints the turn. Delete,
+  commands, git, artifacts stay Workspace-only. Before, the model had no way to save and improvised with
+  notepad + type_text / set_clipboard / remember, each stopping for approval (taint), which looked like a loop.
+  `find_files(sort_by="largest")` for "the biggest files in Downloads" (it had called list_processes).
+- **Fast model** (the picker was on Fast): a hardware question on a tool-less turn pre-runs
+  `get_system_status` and the readings ride on the user turn (`_should_pre_status`, voice's `asks_status`);
+  the no-tools note is on every fast turn; a `<function name=...>` call written as text is parsed, and on a
+  turn with no tools the reply becomes a fixed "switch to Main/Auto" line (`replace_content` on `done`, the
+  client swaps the bubble text).
+- `web_search` runs as `research` only when the message asks something (`_ASKS_RE`): "execute the command"
+  had been researched. Reddit (and any redirect to a login page) now says "sign-in page, don't present other
+  pages as its summary" instead of "empty content". Text the model wrote beside its calls is kept in front of
+  the approval card (it had replaced a whole summary).
+- The night's "flaky" test failures were `test_compare.py` creating tables with `create_all` instead of the
+  migrations (the default project was never seeded); fixed, not GPU load.
+- Device checks next: Freeform "biggest 3 files in Downloads", "summarise <url> and save it in Downloads"
+  (one approval), Fast + "GPU temperature?", Reddit link. Then the earlier list (compare card, "did you do it?").
+
+**Second device test 2026-10-17 (12:17-12:24) and its fixes -- BUILT 2026-10-18, UNCOMMITTED, unverified on device.**
+What was built (build/test-verified only; WinUI builds):
+- #1 `agent/paused_turns.py`: the stream loop parks the turn at an approval card (messages, the round's raw
+  calls, tools_used, metrics, call history, taint, model/thinking/tools); `run_stream` takes it when an approved
+  id matches the card and runs `_run_provider_stream_loop(resume=...)`, which replays the paused round's calls
+  without a model call and carries on. No routing/pre-run/context rebuild, user message not stored again.
+  Deny (`/api/confirmations/{id}/deny`) and `DELETE /sessions/{id}` drop it; expiry = taint's `PARK_SECONDS`.
+  A partial approval (one of two cards) re-asks the rest and parks again. **Only the stream path parks**: the
+  legacy non-stream `/chat` (`run`, unused by the client) still re-runs. Tests: `test_paused_turns.py`.
+  Card preview: `MessageBubbleControl.DescribeArgs` shows `name: value` lines, long/multi-line values (a write's
+  content, patch blocks) as their first 10 lines / 600 chars + "… N more lines" (was one escaped JSON line).
+- #2 `find_files`: both orders are rankings, so it walks every match (cap 200k matches or 20 s, said in the
+  result if hit), keeps the top `max_results` in a heap, and computes file facts only for those. The old
+  2000 cap is gone. Test in `test_freeform_files.py`.
+- #3 (a) `_pre_status_block(result, answer)` leads with "Answer with: <status_answer sentence>" (from the sample
+  the pre-run just took, `awareness_monitor.last_snapshot`), the full line under it; "GPU temperature" gives the
+  GPU line with its temperature, no battery/drives. (b) `_FAST_NO_TOOLS_NOTE` says what Fast can do and that
+  Main/Auto has the tools.
+Device checks: "summarise <wiki url> and save it in Downloads" -> one card showing the summary's first lines,
+approve -> saved once, no second card; "biggest 3 files in Downloads"; Fast "GPU temperature?" and "what tools
+do you have?".
+
+**Third device test 2026-10-18 (08:31-08:37; Jarvis sessions `session_mvd8nnc2_a406a` Main, `_mvd8qtqf_dd0ac` Fast).**
+Fast is now Ternary Bonsai 2 9B (prism llama-server, swap main->fast ~11 s, 3363 MiB).
+- OK: UE5 summary + save: one card, approved, log "Resuming the turn paused for [...]", the parked write
+  ran once (1487 chars to `~/Downloads/Unreal_Engine_5_summary.md`), answer "Done. Saved ...". User message
+  stored once. #1 works on device.
+- OK: "biggest 3 files in Downloads": 3181 matches ranked (past the old 2000 cap), top 71 MB zip.
+- OK: Windows summary + save: card, **denied** 2 s later, nothing written. The second half (ask again,
+  approve) wasn't tried.
+- BROKEN: Fast "GPU temperature?" -> "The fast model cannot access hardware telemetry ... ask Main". No pre-run:
+  `asks_status` rejects a bare noun phrase because `_OURS` wants "my/the GPU" ("what's my GPU temperature?"
+  and "how hot is the GPU?" match; "GPU temperature?" and "gpu temp" don't). **Fixed 2026-10-18:**
+  `_is_bare_reading` in `voice_mode.py`: up to 5 words made only of part + reading words ("GPU temperature?",
+  "cpu usage", "check gpu temp now") count as about this machine; "temperature?", "new CPU", "gpu prices",
+  "gpu driver update" still don't. Shared with voice mode, so voice gets it too. Seen working on device 2026-10-18.
+- HALF: Fast "What tools do you have?" -> mentions Main handles web searches/telemetry, but still opens with
+  "I can manage your files, hardware, and local processes directly". Bonsai follows the note only partly; the
+  persona's "majordomo" line wins. **Fixed 2026-10-18 (user's call: a fixed answer):** `asks_capabilities`
+  (the whole message must be the question; "what can you do about the lag?" isn't) on a fast turn is answered
+  in code before any model runs: Fast picked -> "You've picked the Fast model, so right now I can only talk
+  ... Switch to Main or Auto and I can <list>"; Auto routed to fast -> "I can <list>. Quick chat runs on Fast;
+  anything that needs a tool goes to Main". The list mirrors Freeform's tools. Seen working on device 2026-10-18.
+- Not seen in the log: whether the card showed the summary preview (ask the user).
+- Main used the "stopped after reasoning only" nudge after both the write and find_files (Defiant); answers
+  came through, so the net did its job.
+
+Results: biggest files OK (find_files sort_by=largest); Fast GPU question gives real numbers, no `<function>`
+text; Reddit on Fast gives the generic no-tools line. Broken, in order of weight:
+
+1. **An approval re-runs the whole turn, so a model-written save never finishes.** "summarise <wiki url> and save
+   the summary in Downloads": fetch_url, then write_file with the whole summary in `content` (nothing shown in
+   chat) -> approval card. Approving re-sends the message with the `act_` id (the repeated user messages in the
+   session are those re-sends), the model writes a different summary, the hash differs, a new card: forever.
+   Short args (open notepad, a path) re-hash the same, which is why this didn't show before.
+   Plan: **resume the paused turn instead of re-running it.**
+   - Where a turn stops for approval (`_run_provider_stream_loop` ~L2235 and the non-stream twin ~L1660), park
+     the turn's state next to the taint (`taint.park`): the `messages` list so far, the round's normalized
+     tool calls (approved and pending), `tools_used`, `said`, metrics, the taint, the model/thinking used. Keyed
+     by session, consumed once, expiry = `CONFIRMATION_TIMEOUT_SECONDS` + a margin (same as `PARK_SECONDS`).
+   - On a continuation (`approved_action_ids` that `filter_approvals` lets through and that cover a parked
+     turn's pending calls): don't route, pre-run, rebuild context or re-store the user message; restore the
+     parked state, run exactly the parked calls (their args, not new ones), append their results, and enter
+     the loop at the next round. A continuation with no parked turn (restart, expiry) keeps today's path.
+   - A denied card (`deny`) drops the parked turn.
+   - Voice mode has its own `_Pending` (voice_mode.py ~L439) and already replays its steps: leave it.
+   - Card preview: for write_file/patch_file the pending item carries `content`; the client card shows the
+     first ~10 lines / ~600 chars (MessageBubbleControl's confirmation area), so the user sees what is saved.
+   - Tests: approval of a write with model-generated content runs once and writes the parked content even if a
+     re-run would differ (ScriptedProvider whose second run returns other text); the user message is stored
+     once; an expired park falls back; a deny clears it; taint still applies to the resumed round.
+2. **find_files stops at SEARCH_SCAN_CAP (2000) entries, so sort_by=largest ranks only the first 2000 found**
+   (the user's Downloads hit it: "Found 2000 match(es)"). For `largest`: walk everything (with a much higher
+   safety cap, e.g. 200k entries, said in the result if hit), keep the top N with `heapq.nlargest`. Test with a
+   tree past the cap where the biggest file is found late.
+3. **Fast-model tidy-ups.** (a) The hardware answer pasted the whole status line (battery, drives): put
+   `status_answer(user_message, snapshot)` (voice's sentence for just the asked parts) at the top of the LIVE
+   READINGS block as "Answer with:" and the full line under it. (b) "what tools do you have?" on Fast listed
+   Main's tools and said "direct control over your machine": add to `_FAST_NO_TOOLS_NOTE` that on this model it
+   can only talk and answer from what it's given, and that Main or Auto has the tools.
+4. **Not ours, check when seen again:** the governor evicted main at 12:20:47 for 97% external GPU compute
+   (4 s debounce) right after a 97 s write_file generation; the Bonsai session said it had finished. Check
+   `governor` samples for the offending process next time before touching thresholds.
+
+**Handoff (2026-10-16 night, halted mid-task).** All UNCOMMITTED, ask before committing:
+- Fixes: stream loop's answer round when rounds run out / a call repeats (`_NUDGE_FINAL`/`_NUDGE_REPEAT`; before,
+  the stream ended with no `done` = empty reply), `web_search` for a question runs as `research`
+  (`_upgrade_search`, malformed calls excluded), `max_tokens` cap (`LLAMA_MAX_TOKENS`, 8192). Tests:
+  `test_loop_guard.py`, additions in `test_research.py`, `test_llamacpp_provider.py`, `test_tools.py`. Eval mirrors
+  them (MAX_ROUNDS 5). Defiant eval re-run (`scripts/eval_results/2026-10-16-guard/`): **104/123** (was 100):
+  web 15/15 (was 12), workspace 24/24 (was 22), no empty "rendering" failures left (were 5); chain 14/15 (was
+  15/15) with 1 claimed-without-acting -- look at that one. Remaining failures are knowledge (18).
+- #8 in-app compare built: `agent/compare.py`, `routers/compare.py`, hook on `done` in `run_stream`
+  (`COMPARE_RATE`, 1/15), client card in `MessageBubbleControl` + polling in `ChatViewModel`. `test_compare.py`
+  passes; WinUI builds. conftest now sets `COMPARE_RATE=0` and a temp votes path.
+- **Open:** the last two full runs failed different tests (2, then 4: test_database_schema::test_get_db_dependency,
+  two test_governor API tests, test_permissions integration), both while the Defiant eval was loading the GPU --
+  re-run with the GPU idle before blaming tonight's changes. Then PLAN notes for
+  the fixes/#8, commit (two commits: fixes, then #8).
+
+**Earlier handoff (end of 2026-10-16 session).**
 - Done and committed: plan + eval `06f0611`; part 1 `0e014ae` (#13, claim detector, #1, #3, #9, #4); part 2
   `3473319` (#6). All build/test-verified only (836 backend tests, WinUI builds); **nothing seen on device**.
 - #7 research built 2026-10-16 late (see #7 below), **uncommitted**; 864 tests, WinUI builds; eval re-run done.
@@ -1193,3 +1318,134 @@ resumes the taint the paused turn parked (120 s). Voice mode's direct plans pass
 **Build order for the batch (agreed items):** 13 + claim detector (small) -> 1 (eval layers) -> 3 (fail-fast
 refusals) -> 9 (metrics footer) -> 4 (recent objects) -> 6 (taint gate) -> 7 (research) -> 8 (review page, then
 in-app compare) -> 2 (sealed set, as new requests come in) -> 12 (notes/tasks, calendar, email) -> 10 (fine-tune).
+
+### 4.14 Text unreadable over a white background (raised by the user 2026-10-18; after 4.13 and the model work)
+
+The user: with a white background, the text isn't readable. Queued until the harness and model work
+(4.13, the fast-slot switch to Ternary Bonsai 2 9B) is finished.
+Confirmed by the user: it is a white window or wallpaper showing through the glass (the glass refracts and
+frosts it, so light text over a light slab loses contrast), not the Light appearance. Start with snapshots
+(`scripts\snapshot-window.ps1`) over a white window, in each appearance, and measure text-to-background
+contrast numerically. Likely
+directions: a tint floor or local darkening under text that follows how bright the captured backdrop is,
+and/or text colour per appearance, as iOS 26 does over bright content. Keep GlassLab's copy in step.
+
+### 4.15 Harness review: what to take from google-research/harness2 (2026-10-18) -- PLANNED, NOT BUILT
+
+**Status: research only. Nothing below is built or decided; the user picks, one item at a time like 4.13.**
+
+**Source:** github.com/google-research/harness2 (main @ `1cfe254`, paper arXiv 2610.14224), **Apache-2.0**: code
+may be copied with the licence notice and a change note; its `third_party/` keeps upstream licences. Nothing here
+needs copying. What it is matters: harness2 is **not an agent loop**. It is a harness *optimiser* that wraps
+OpenCode or Codex as the executor and rewrites the executor's harness (system prompt, guardrails, memory, tool
+guidance, skills, scripts, subagents, plugins/hooks) between benchmark runs. Per task: k reference runs on the base
+harness -> a proposer (a frontier model) edits the harness on two axes, INV (how the agent works: tool use,
+sequencing, completion) and DOM (what a practitioner knows) -> each edit is probed by re-running the same task ->
+a composer merges what the trajectories support -> a blind selector picks one deliverable from an anonymous pool
+that includes the unmodified harness's -> a reflector writes per-edit verdicts and at most one lesson to a library
+the next task reads. No ground truth is used during refinement. Its baseline harness files are empty
+(stock OpenCode), so there's no tool loop, retry or gate code to borrow. There is no `docs/plans`; the docs are
+`SETUP`, `BENCHMARKS`, `EXPERIMENTS`; the substance is in `harness2/core/prompts.py`, `recursion.py`,
+`selection.py`, `tree.py`, `runmark.py`. Reported gains: up to +11.5 points (WorkBuddy), +4.5 (JobBench), with
+GLM-5 / Gemini 3.5 Flash.
+
+So most of what transfers is **evidence discipline for the eval** (Jarvis's own harness changes are made by
+Claude sessions reading eval runs, which is a manual Propose-Probe-Compose) plus a few **in-loop deterministic
+hooks** its proposer prompt recommends. Its key rules, paraphrased: always-on prose is the expensive place for
+guidance, so prefer on-demand pieces, scripts and in-loop hooks, and cut something whenever always-on text is
+added; a hook is the only guidance the model can't skip; a successful write doesn't mean the file is usable, so
+check it; on a tool error, tell bad input apart from timeout, missing capability, permission and unread output,
+and give one bounded fallback, never "try again"; "keep the base" is a valid answer.
+
+**Candidates** (what harness2 does / what Jarvis does today / worth it? / size):
+
+1. **Full trajectories in the eval + a contrast report.** harness2's whole method compares several runs of the
+   *same task* and finds where their behaviour first diverges. Jarvis's `eval_jarvis_tasks.py` keeps only call
+   names, final text, nets and layer per run: no args, tool results or reasoning. The flaky tasks (wukong-mod,
+   tn-headlines, wukong-studio, strawberry, remember-dark, enhance-prompt, prompt-length) pass on some seeds and
+   fail on others, which is exactly the contrast it uses. Build: `--trace DIR` writes each run's full message
+   list (calls, args, results, reasoning length, nets) as JSON; `scripts/eval_contrast.py A.json [B.json]` prints
+   per task (a) pass<->fail flips between two result files and (b) for a task that both passed and failed, the
+   first round where the runs differ (other tool, other args, answered vs called). No backend change.
+   **Worth it: yes, first.** Feeds 2.3, 2.4, 2.7 and the fine-tune data (4.13 #10). Size S-M (~150 lines).
+2. **Fingerprint every eval result; errors left unscored.** harness2 stamps each rollout with a digest of the
+   harness that produced it and refuses to reuse or mix rollouts from another one; a failed evaluation stays
+   unscored rather than counting as zero. Jarvis's result JSON doesn't record what produced it (results are told
+   apart by folder name), and a server error is a failed task (`layer=execution`). Build: a header in the JSON
+   with model file + size, sha of the head prompt (persona + `TOOL_PROTOCOL_RULES` + rendered schemas), of the
+   tool schemas, of the eval script, git HEAD + dirty flag, sampling and flags; `success: null` for errors,
+   left out of totals and listed apart; `review_answers.py` and the contrast report warn when two files' prompt
+   hashes differ for a reason other than the change being tested. **Worth it: yes**, it's what makes "104 vs 100"
+   trustworthy. Size S.
+3. **One verdict per change, and probe overrides.** harness2's reflector writes a row per edited component --
+   helped / hurt / no observed effect / **confounded** -- and records a lesson only when un-confounded rows
+   support it (NO_ENTRY is a valid result). Jarvis records eval deltas in prose, often for several changes at
+   once: the 2026-10-16-guard run (100 -> 104) carried three fixes together, so which one moved web 12 -> 15 is
+   confounded. Build: (a) a convention in PLAN/MILESTONES: an eval delta lists each change with its verdict, and
+   "confounded" when they landed together; (b) eval flags to test one change without editing the backend:
+   `--rules FILE` (alternate `TOOL_PROTOCOL_RULES`), `--skills DIR`, `--no-net NAME` (turn one safety net off;
+   `--no-pre-research` is the existing example). **Worth it: yes** (a) costs nothing; (b) Size S.
+4. **Error kinds with one fixed next step, plus a same-tool repeat guard.** harness2's INV axis: split tool errors
+   into bad input / not found / not permitted / unavailable / timeout / empty, give one bounded fallback and a stop
+   condition, never "retry"; its "plugin" hooks append a targeted hint when an error signature keeps recurring
+   and rein in a tool that runs away. Jarvis: `ToolPipeline` already has a post-hook list (only
+   `truncate_oversized` is in it); hints are per tool (timeout: "do not repeat the same call"; sign-in page; git
+   outside a repo, 4.13 #3); `CallHistory` stops only an *identical* consecutive call. The eval's 8-round loops were
+   `web_search` with varied queries and repeated directory listings (they now end at the 5-round cap with the
+   final-answer nudge, but late). Build: a post-hook that tags `Error...` results with a kind and appends that
+   kind's one-line next step; a per-turn counter so the same tool failing the same way twice gets "stop calling
+   X; tell the user what failed and what you tried"; and a family guard: the 3rd `web_search` in a turn, or
+   the 3rd listing of the same tree, is answered with "you have searched N times; use `research`, or answer from
+   what you have" instead of running. Everything rides in tool results / user-role nudges after the prefix, so
+   the KV-cache contract holds. **Worth it: yes, after #1**: count error kinds and family repeats in the traces first
+   so the hints target what actually happens. Size S-M.
+5. **Check a write after it happens.** harness2: "a successful write call does not establish usability; reopen
+   or mechanically check the deliverable", one of its four recommended hook shapes. Jarvis's `write_file` /
+   `patch_file` return "Successfully wrote N characters (L lines)" without re-reading. Build: a post-hook on both:
+   re-read from disk, confirm the size, and for known types parse it (`.json` -> `json.loads`, `.py` ->
+   `compile()`, `.csv` -> consistent column count, `.yaml/.toml` if the parser is installed); append "Checked:
+   valid JSON" or "Warning: line 12: SyntaxError ..." so the model can fix it in the same turn. Optional: the
+   extension matches a format the user named ("save it as CSV"). Deterministic, no model judgement, works on
+   both spaces' paths (resolved through `paths.py` already). **Worth it: yes**, cheap; more as workspace coding
+   use grows. Size S.
+6. **Lint the harness, and give the always-on prompt a budget.** harness2 validates a harness before any run
+   (every skill has a trigger line, every referenced script exists, no template braces, always-on text under a
+   cap) and throws away one that fails. Jarvis: `test_tool_contract.py` covers tools (registered, tiered,
+   described, clean refusals); nothing checks that `TOOL_PROTOCOL_RULES` (4,319 chars, 20 numbered rules, some naming
+   tools like `remind_me`, `reminders`) names only tools that exist in each space, nothing lints skills
+   (`skills/`: 3 files, keyword triggers), and nothing stops the head prompt from growing. Build: tests that
+   (a) every tool name in the rules is offered in the space that gets them, (b) each skill parses with non-empty,
+   non-colliding triggers, (c) the head prompt (persona + rules + rendered schemas) stays under today's token
+   count + a margin, so growth is a decision, not drift. Plus a CLAUDE.md line: new guidance goes per-turn (skill /
+   turn context) or into code first, and always-on text grows only by cutting something. For a 9B, always-on
+   prose also dilutes attention, not just budget. **Worth it: yes**, Size S.
+7. **Unsourced specifics on web answers (maybe).** harness2's selector checks claims against the source:
+   "reject invented specifics; where the source is silent, prefer the answer that says so". Jarvis's claim nudge
+   catches *actions* claimed without a tool; nothing checks *facts* claimed without a source. The wukong-mod miss
+   is this case: snippet read, mod name invented (4.13 #7 already floats "research before answering when the reply
+   names something the snippets don't"). Build: on a turn whose answer follows web tools, pull the answer's
+   specifics (capitalised names, numbers with units, years) and look for each in this turn's tool results; if
+   one is in none of them, one nudge: "'X' isn't in what you read: check it with `research` or say you couldn't
+   confirm it". Risk: false positives on paraphrase and the model's real knowledge. **Worth it: only if #1's
+   traces show the detector would have caught the eval's web misses without firing on its passes.** Size M.
+8. **Automated Propose-Probe-Compose over Jarvis's harness.** The headline method. It needs a frontier
+   proposer (cloud cost, and Jarvis's eval data is the user's own tasks), 4k rollouts + 3k proposer calls per task (its own count) on one 8 GB GPU
+   (a 41-task pass is 4-7 min: 822-1264 s for 3 seeds, one model at a time), and with 41 dev tasks overfitting is likely
+   (4.13 #2's sealed set isn't built yet). Claude sessions already run this loop by hand; #1-#3 give them its
+   evidence. **Not now.** Revisit once the sealed set exists and #1-#3 have run for a while. Size L.
+9. **Blind best-of-n at answer time.** harness2 picks among candidate deliverables with an anonymous judge.
+   For Jarvis that means two or more generations per turn and the 9B as judge: double the latency for a weak
+   judge. The in-app compare (4.13 #8) already collects the user's blind votes, which is the useful half.
+   **No.**
+
+**Already covered, nothing to take:** answer-key leak checks and train/test splits (4.13 #2 sealed set);
+"evidence is data, not instructions" (the taint gate, 4.13 #6, enforces this in code instead of prose); one
+retry with the rejection reason, then fall back (stream-loop validation errors go back to the model, round-capped;
+the non-stream path repairs then escalates); subagents for "big input, small answer" (`research.py` does this in
+code); "the costliest failure is reasoning until the budget is gone" (`LLAMA_MAX_TOKENS`, reasoning-only nudge,
+empty re-ask); a lessons library (memory and `docs/MILESTONES.md`; #3 adds the evidence rule to it); cost ledgers
+(metrics footer, eval totals).
+
+**Recommended build order:** 6 (lint + prompt budget) and 2 (fingerprint, unscored errors), both small and
+independent -> 1 (traces + contrast) -> 3 (verdict convention + probe flags, uses 1 and 2) -> 5 (write check) ->
+4 (error kinds + repeat guard, sized from 1's traces) -> 7 only if 1's traces support it. 8 and 9: not planned.

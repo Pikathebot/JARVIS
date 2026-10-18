@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.agent import paused_turns
 from app.agent.confirmations import get_confirmation_registry
 
 logger = logging.getLogger("jarvis.routers.confirmations")
@@ -29,7 +30,8 @@ async def list_pending(session_id: str | None = None) -> dict[str, Any]:
 
 @router.post("/{action_id}/deny", response_model=dict)
 async def deny(action_id: str) -> dict[str, Any]:
-    """The user declined: drop the ask so no timeout is announced for it."""
+    """The user declined: drop the ask so no timeout is announced for it, and the turn it paused."""
+    paused_turns.drop_action(action_id)
     entry = get_confirmation_registry().deny(action_id)
     if entry is None:
         raise HTTPException(

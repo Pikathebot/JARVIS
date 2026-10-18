@@ -1,13 +1,16 @@
+import heapq
 import os
 import re
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 from app.config import settings
 from app.agent.tools.paths import is_inside, resolve_tool_path
 from app.agent.tools.file_kinds import CLUTTER_DIRS, file_facts, is_binary
 
-SEARCH_SCAN_CAP = 2000
+RANK_SCAN_CAP = 200_000  # find_files weighs this many matches at most
+RANK_SCAN_SECONDS = 20.0
 GREP_MAX_BYTES = 5 * 1024 * 1024
 GREP_LINE_CHARS = 200
 
@@ -63,13 +66,22 @@ def find_files(
         return f"Error: Search directory '{root_dir}' does not exist."
 
     largest = str(sort_by or "").strip().lower() in ("largest", "size", "biggest")
-    found: list[tuple[float, str, str]] = []
+    try:
+        limit = max(1, int(max_results))
+    except (TypeError, ValueError):
+        limit = 50
+    # Both orders are rankings, so every match is weighed, not just the first ones found (on device
+    # "the biggest files in Downloads" ranked only the first 2000). Only the top `limit` are
+    # kept; the walk stops at RANK_SCAN_CAP matches or RANK_SCAN_SECONDS and says so.
+    top: list[tuple[float, str, str]] = []  # min-heap of (size or mtime, shown path, full path)
+    matched = 0
+    cut_short = ""
+    deadline = time.monotonic() + RANK_SCAN_SECONDS
     try:
         for root, dirs, files in os.walk(start_path):
             dirs[:] = [d for d in dirs if d not in CLUTTER_DIRS]
             for name, is_dir in [(d, True) for d in dirs] + [(f, False) for f in files]:
                 full = Path(root) / name
-                rel = os.path.relpath(full, shown_from).replace(os.sep, "/")
                 if not (full.match(clean_pattern) or Path(name).match(clean_pattern)):
                     continue
                 if largest and is_dir:
@@ -78,24 +90,34 @@ def find_files(
                     st = full.stat()
                 except OSError:
                     continue
-                facts = "folder" if is_dir else file_facts(full)
-                found.append((st.st_size if largest else st.st_mtime, rel + ("/" if is_dir else ""), facts))
-                if len(found) >= SEARCH_SCAN_CAP:
+                matched += 1
+                rel = os.path.relpath(full, shown_from).replace(os.sep, "/") + ("/" if is_dir else "")
+                item = (st.st_size if largest else st.st_mtime, rel, str(full) if not is_dir else "")
+                if len(top) < limit:
+                    heapq.heappush(top, item)
+                elif item > top[0]:
+                    heapq.heapreplace(top, item)
+                if matched >= RANK_SCAN_CAP:
+                    cut_short = f"stopped after {RANK_SCAN_CAP:,} matches"
                     break
-            if len(found) >= SEARCH_SCAN_CAP:
+            if not cut_short and time.monotonic() > deadline:
+                cut_short = f"stopped after {RANK_SCAN_SECONDS:.0f} s"
+            if cut_short:
                 break
     except Exception as e:
         logger.error("find_files error: %s", e)
         return f"Error searching files: {str(e)}"
 
-    if not found:
+    if not top:
         return f"No files or folders matching pattern '{clean_pattern}' were found in '{root_dir}'."
-    found.sort(reverse=True)  # newest (or biggest) first
+    ranked = sorted(top, reverse=True)  # newest (or biggest) first
     order = "biggest first" if largest else "newest first"
-    lines = [f"### Found {len(found)} match(es) for '{clean_pattern}' ({order}):"]
-    lines += [f"- `{rel}` ({facts})" for _, rel, facts in found[:max_results]]
-    if len(found) > max_results:
-        lines.append(f"\n*(Showing {max_results} of {len(found)}. Use a more specific pattern if needed)*")
+    lines = [f"### Found {matched} match(es) for '{clean_pattern}' ({order}):"]
+    lines += [f"- `{rel}` ({file_facts(Path(full)) if full else 'folder'})" for _, rel, full in ranked]
+    if matched > len(ranked):
+        lines.append(f"\n*(Showing {len(ranked)} of {matched}. Use a more specific pattern if needed)*")
+    if cut_short:
+        lines.append(f"*(The search {cut_short}, so this ranks only what it saw: say so if it matters.)*")
     return "\n".join(lines)
 
 

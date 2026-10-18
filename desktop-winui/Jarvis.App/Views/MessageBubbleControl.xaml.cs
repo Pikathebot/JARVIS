@@ -280,12 +280,45 @@ public sealed partial class MessageBubbleControl : UserControl
         ConfirmationReason.Text = confirmation.Reason ?? "";
         try
         {
-            ConfirmationArgs.Text = JsonSerializer.Serialize(confirmation.ArgsRaw, new JsonSerializerOptions { WriteIndented = true });
+            ConfirmationArgs.Text = confirmation.ArgsRaw.ValueKind == JsonValueKind.Object
+                ? DescribeArgs(confirmation.ArgsRaw)
+                : JsonSerializer.Serialize(confirmation.ArgsRaw, new JsonSerializerOptions { WriteIndented = true });
         }
         catch
         {
             ConfirmationArgs.Text = confirmation.ArgsRaw.ToString();
         }
+    }
+
+    private const int PreviewLines = 10;
+    private const int PreviewChars = 600;
+
+    /// <summary>One "name: value" line per argument. Text the model wrote (a write's content, a
+    /// patch's blocks) shows as its first lines, so the user sees what will be saved -- as JSON it
+    /// was one escaped line of the whole summary.</summary>
+    private static string DescribeArgs(JsonElement args)
+    {
+        var lines = new List<string>();
+        foreach (var arg in args.EnumerateObject())
+        {
+            if (arg.Value.ValueKind != JsonValueKind.String)
+            {
+                lines.Add($"{arg.Name}: {arg.Value.GetRawText()}");
+                continue;
+            }
+            var text = arg.Value.GetString() ?? "";
+            if (!text.Contains('\n') && text.Length <= 120)
+            {
+                lines.Add($"{arg.Name}: {text}");
+                continue;
+            }
+            var all = text.Replace("\r\n", "\n").Split('\n');
+            var shown = string.Join("\n", all.Take(PreviewLines));
+            if (shown.Length > PreviewChars) shown = shown[..PreviewChars] + "…";
+            var rest = all.Length - PreviewLines;
+            lines.Add($"{arg.Name}:\n{shown}" + (rest > 0 ? $"\n… {rest} more line{(rest == 1 ? "" : "s")}" : ""));
+        }
+        return string.Join("\n", lines);
     }
 
     private void RenderMetadata(ChatMessage message)

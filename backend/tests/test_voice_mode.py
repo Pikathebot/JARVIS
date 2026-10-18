@@ -393,6 +393,11 @@ def test_status_answers_the_plain_usage_questions():
     assert voice_mode.status_answer("how hot is the gpu", s) == \
         "The GPU is at 3% with 5.1 of 8 gigabytes of VRAM in use, 52 degrees."
     assert voice_mode.status_answer("How's my laptop doing?", s).startswith("The CPU is at 12%; you're using")
+    # Bare readings count too (device test 2026-10-18: "GPU temperature?" got none)
+    assert voice_mode.status_answer("GPU temperature?", s).endswith("52 degrees.")
+    assert voice_mode.status_answer("cpu usage", s) == "The CPU is at 12%."
+    for said in ["temperature?", "new CPU", "gpu prices", "gpu driver update"]:
+        assert voice_mode.status_answer(said, s) == "", said
     # Not a usage question, or a "which app" one (list_processes, MiniCPM), or not about this machine.
     for said in ["Which apps are using the most CPU?", "what's eating my RAM", "open the gpu settings",
                  "what's the temperature outside?", "play some music", "how much is a new CPU"]:

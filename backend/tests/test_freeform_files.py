@@ -47,6 +47,25 @@ def test_find_files_can_list_the_biggest_first(home):
     assert [o.split("`")[1] for o in order] == ["Downloads/b.bin", "Downloads/c.zip", "Downloads/a.txt"]
 
 
+def test_largest_weighs_every_file_not_the_first_ones_found(home, monkeypatch):
+    from app.agent.tools import file_search
+    folder = home / "Downloads" / "many"
+    folder.mkdir()
+    for i in range(30):
+        (folder / f"f{i:02}.txt").write_bytes(b"x" * (i + 1))
+    (home / "Downloads" / "zz_late").mkdir()
+    (home / "Downloads" / "zz_late" / "huge.bin").write_bytes(b"x" * 5000)
+    out = execute_tool("find_files", {"pattern": "*", "root_dir": "Downloads", "sort_by": "largest",
+                                      "max_results": 3}, _ctx())
+    order = [line.split("`")[1] for line in out.splitlines() if line.startswith("- ")]
+    assert order == ["Downloads/zz_late/huge.bin", "Downloads/many/f29.txt", "Downloads/many/f28.txt"]
+    assert "Found 31 match(es)" in out and "Showing 3 of 31" in out
+
+    monkeypatch.setattr(file_search, "RANK_SCAN_CAP", 10)
+    out = execute_tool("find_files", {"pattern": "*", "root_dir": "Downloads", "sort_by": "largest"}, _ctx())
+    assert "stopped after 10 matches" in out
+
+
 def test_reads_in_the_users_folders_run_and_outside_them_ask(home, tmp_path):
     inside = evaluate_tool_permission("read_file", {"file_path": "Downloads/x.txt"},
                                       chat_mode=ChatMode.FREEFORM, workspace_path=str(home))

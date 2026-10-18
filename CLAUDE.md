@@ -50,7 +50,10 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
 - **Models actually served** come from `data/models.json` (per-slot selection) ahead of `.env`.
   As of 2026-10-16: main = `models/defiant-fable-9b/Defiant-Fable-9B-IQ3_XXS.gguf` (+ Q8_0 projector, 32k
   ctx; switched from `models/qwen3.5-9b/Qwen3.5-9B-UD-IQ3_XXS.gguf`, kept as fallback, after the eval and
-  the user's blind votes, PLAN 4.13 #8), fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only). `backend/.env`'s
+  the user's blind votes, PLAN 4.13 #8). As of 2026-10-18 fast = `models/bonsai-2-9b/Ternary-Bonsai-2-9B-PQ2_0.gguf`
+  (Ternary Bonsai 2 9B, + Q8_0 projector, 8k ctx; replaced `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf`). Ternary
+  quants (`pq2_0`, `ptq1_0`) launch on the PrismML fork, `tools/llama-cpp-prism/llama-server.exe`
+  (`runtime_process_manager.py`); stock llama-server rejects them. `backend/.env`'s
   `LLAMA_*_MODEL_PATH` / `MAIN_MODEL` still name the older Q3_K_XL and 4B -- stale, not live.
   `GET /api/models` is the truth at runtime.
 - **Ports:** 8000 backend, 8001 llama-server (the chat model), 8002 image-captioner sidecar,

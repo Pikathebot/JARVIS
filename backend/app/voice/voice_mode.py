@@ -88,6 +88,19 @@ def _gb(mb: float) -> str:
     return f"{mb / 1024:.1f}".rstrip("0").rstrip(".")
 
 
+_SHORT_WORDS = re.compile(
+    r"\b(?:cpu|processor|ram|memory|gpu|vram|graphics|card|temp(?:erature)?s?|usage|load|status|percent(?:age)?|"
+    r"current|now|right|check|and)\b", re.I)
+
+
+def _is_bare_reading(u: str) -> bool:
+    """"GPU temperature?", "cpu usage", "gpu temp": nothing but part and reading words. Said to
+    Jarvis on this PC, that is about this machine (device test 2026-10-18: the bare "GPU
+    temperature?" had no "my", so the fast model got no readings)."""
+    words = re.findall(r"[a-z]+", u.lower())
+    return 0 < len(words) <= 5 and not _SHORT_WORDS.sub("", u.lower()).strip(" ?.!,/&-")
+
+
 def _status_parts(utterance: str) -> list[str]:
     """Which readings a plain usage question about this machine asks for; [] for anything else."""
     u = (utterance or "").strip()
@@ -96,6 +109,8 @@ def _status_parts(utterance: str) -> list[str]:
     parts = [k for k, rx in _PART.items() if rx.search(u)]
     if parts == ["temp"] and not _DEVICE.search(u):
         return []  # "what's the temperature outside?"
+    if parts and _is_bare_reading(u):
+        return parts
     if not parts or ("all" not in parts and not (_ASKS_USAGE.search(u) and _OURS.search(u))):
         return []  # ...and "how much is a new CPU" is shopping, not this machine
     return parts

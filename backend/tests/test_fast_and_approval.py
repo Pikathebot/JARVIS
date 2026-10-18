@@ -73,9 +73,52 @@ async def test_the_pre_read_runs_the_real_tool(monkeypatch):
     assert "LIVE READINGS" in orch_mod._pre_status_block(found)
 
 
+def test_the_readings_lead_with_just_the_part_asked_about(monkeypatch):
+    """Second device test: "GPU temperature?" on Fast pasted the whole line, battery and drives too."""
+    from types import SimpleNamespace
+    from test_voice_mode import _snap
+    monkeypatch.setattr("app.main.awareness_monitor", SimpleNamespace(last_snapshot=_snap()))
+    answer = orch_mod._status_sentence("what's my GPU temperature?")
+    assert answer == "The GPU is at 3% with 5.1 of 8 gigabytes of VRAM in use, 52 degrees."
+    block = orch_mod._pre_status_block("GPU 52°C, battery 80%, C: 120 GB free", answer)
+    assert block.splitlines()[1] == f"Answer with: {answer}"
+    assert "battery 80%" in block  # still there if the user asks for more
+    monkeypatch.setattr("app.main.awareness_monitor", SimpleNamespace(last_snapshot=None))
+    assert orch_mod._status_sentence("what's my GPU temperature?") == ""
+
+
+@pytest.mark.parametrize("q", ["What tools do you have?", "what can you do", "Jarvis, what can you do for me?",
+                               "what are your capabilities", "list your tools", "which tools can you use here?"])
+def test_capability_questions_are_recognised(q):
+    assert orch_mod.asks_capabilities(q)
+
+
+@pytest.mark.parametrize("q", ["what can you do about the lag?", "what tools do you have for video editing",
+                               "which tools should I use to edit video?", "tell me a joke"])
+def test_other_questions_are_not_capability_questions(q):
+    assert not orch_mod.asks_capabilities(q)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("picked,expected", [("fast", orch_mod._FAST_PICKED_CAPABILITIES),
+                                             (None, orch_mod._AUTO_CAPABILITIES)])
+async def test_fast_answers_what_it_can_do_in_code(monkeypatch, picked, expected):
+    """Device test 2026-10-18: Bonsai said "I can manage your files, hardware, and local processes"."""
+    o = _orch()
+    monkeypatch.setattr(o, "_prefer_loaded_slot", lambda d, f, r, m: (d, True, None))
+    monkeypatch.setattr(o, "_run_provider_stream_loop", lambda **_: pytest.fail("the model was asked"))
+    events = [ev async for ev in o.run_stream("What tools do you have?", session_id="caps", requested_model=picked,
+                                              chat_mode="FREEFORM")]
+    assert events[-1]["event"] == "done" and events[-1]["data"]["response"] == expected
+    roles = [c.kwargs["role"] for c in o.memory_store.append_message.call_args_list]
+    assert roles == ["user", "assistant"]
+
+
 def test_the_fast_note_overrides_the_freeform_file_tools_line():
     assert "whatever the space note says" in orch_mod._FAST_NO_TOOLS_NOTE
     assert "never write a tool call out as text" in orch_mod._FAST_NO_TOOLS_NOTE
+    # "what tools do you have?" on Fast listed Main's tools and claimed control of the machine
+    assert "Main or Auto has the tools" in orch_mod._FAST_NO_TOOLS_NOTE
 
 
 @pytest.mark.asyncio
