@@ -109,6 +109,27 @@ def asks_capabilities(user_message: str) -> bool:
     return bool(_ASKS_CAPABILITIES.fullmatch(user_message or ""))
 
 
+# A request only a tool can serve, on a turn where the user picked the fast model: answered in code.
+# On device (2026-10-18) "remind me to stretch in 20 minutes" got "I don't have a reminder system ...
+# set one up in your notes" -- Main has one. Narrower than looks_like_action (which only routes, so a
+# false positive there costs speed): here a false positive refuses a chat turn ("write me a poem"),
+# so only unmistakable asks, at the start of the message.
+_NEEDS_A_TOOL = re.compile(
+    r"\s*(?:hey\s+|ok(?:ay)?\s+)?(?:jarvis[,\s]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:"
+    r"remind\s+me\b|set\s+(?:a|an|me\s+a)\s+(?:reminder|timer|alarm)\b|wake\s+me\b"
+    r"|(?:open|launch|close|quit|kill)\s+(?!up\b|about\b)\w"
+    r"|(?:mute|unmute)\b|turn\s+(?:the\s+)?(?:volume|sound)\b|(?:turn|crank)\s+(?:it\s+)?(?:up|down)\b"
+    r"|search\s+(?:the\s+web|online|google)\b|google\s+\w|look\s+up\s+\w"
+    r"|take\s+a\s+screenshot\b"
+    r")", re.I)
+_FAST_PICKED_ACTION = ("You've picked the Fast model, so right now I can only talk -- that needs a tool. "
+                       "Switch the model to Main or Auto and ask again; Main can " + _CAPABILITIES_ALL + ".")
+
+
+def needs_a_tool(user_message: str) -> bool:
+    return bool(_NEEDS_A_TOOL.match(user_message or ""))
+
+
 def drop_unofferable_calls(content: str) -> tuple[str, bool]:
     """On a turn with no tools: (the reply, whether a written-out tool call replaced it). The text
     around such a call is the run-up to it ("I'll check your system status. One moment.") and
@@ -1939,16 +1960,23 @@ class AgentOrchestrator:
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 
-        if is_fast and not voice_route and asks_capabilities(user_message):
-            # Answered in code: the fast model describes Main's tools as its own.
-            reply = _FAST_PICKED_CAPABILITIES if requested_model else _AUTO_CAPABILITIES
+        caps = is_fast and not voice_route and asks_capabilities(user_message)
+        refuse = is_fast and not voice_route and requested_model and needs_a_tool(user_message)
+        if caps or refuse:
+            # Answered in code: the fast model describes Main's tools as its own, or (picked by the
+            # user, so the turn stays here) says it has no reminders when Main does.
+            if refuse:
+                reply = _FAST_PICKED_ACTION
+            else:
+                reply = _FAST_PICKED_CAPABILITIES if requested_model else _AUTO_CAPABILITIES
             self.memory_store.append_message(active_session_id, role="user", content=user_message)
             self.memory_store.append_message(active_session_id, role="assistant", content=reply)
             yield {"event": "token", "data": {"delta": reply}}
             yield {"event": "done", "data": {
                 "response": reply, "reasoning": "", "model": decision.model, "provider": decision.provider,
                 "status": "completed", "session_id": active_session_id,
-                "route_reason": "Answered in code: what the assistant can do.", "fallback_used": False,
+                "route_reason": ("Answered in code: a request to act on the picked Fast model." if refuse
+                                 else "Answered in code: what the assistant can do."), "fallback_used": False,
                 "compaction_performed": None, "active_skills": active_skill_names, "tools_used": [],
             }}
             return

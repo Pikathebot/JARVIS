@@ -114,6 +114,43 @@ async def test_fast_answers_what_it_can_do_in_code(monkeypatch, picked, expected
     assert roles == ["user", "assistant"]
 
 
+@pytest.mark.parametrize("q", ["remind me to stretch in 20 minutes", "Jarvis, set a timer for 5 minutes",
+                               "can you open notepad", "please mute", "turn the volume up",
+                               "search the web for the latest Unreal Engine release", "look up the weather in Leeds",
+                               "close spotify", "take a screenshot"])
+def test_requests_only_a_tool_can_serve(q):
+    assert orch_mod.needs_a_tool(q)
+
+
+@pytest.mark.parametrize("q", ["write me a poem about rain", "how do I set a reminder on my phone?",
+                               "explain how to open a PDF in Python", "make a list of good sci-fi books",
+                               "fix this sentence: their going home", "what does 'open up' mean?",
+                               "tell me about the open source movement", "what's 17 times 23?"])
+def test_chat_turns_do_not_need_a_tool(q):
+    assert not orch_mod.needs_a_tool(q)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("picked,asked_model", [("fast", False), (None, True)])
+async def test_a_request_to_act_on_picked_fast_is_answered_in_code(monkeypatch, picked, asked_model):
+    """Device test 2026-10-18: "remind me to stretch in 20 minutes" on Fast got "I don't have a
+    reminder system". On Auto such a turn is routed to Main, so only a picked Fast answers here."""
+    o = _orch()
+    monkeypatch.setattr(o, "_prefer_loaded_slot", lambda d, f, r, m: (d, True, None))
+    asked = []
+
+    async def fake_loop(**_):
+        asked.append(True)
+        yield {"event": "done", "data": {"response": "model reply"}}
+    monkeypatch.setattr(o, "_run_provider_stream_loop", fake_loop)
+    events = [ev async for ev in o.run_stream("remind me to stretch in 20 minutes", session_id="act-fast",
+                                              requested_model=picked, chat_mode="FREEFORM")]
+    assert bool(asked) is asked_model
+    if not asked_model:
+        done = events[-1]["data"]
+        assert done["response"] == orch_mod._FAST_PICKED_ACTION and "Main" in done["response"]
+
+
 @pytest.mark.parametrize("reply,message,claims", [
     ("I've opened Notepad for you.", "open notepad", True),
     ("Muted.", "mute the sound", True),
@@ -160,8 +197,10 @@ async def test_no_skill_text_on_a_fast_turn(monkeypatch):
 
     monkeypatch.setattr(o.context_manager, "build_context", build_context)
     monkeypatch.setattr(o, "_run_provider_stream_loop", fake_loop)
-    msg = "Search the web for the latest Unreal Engine release."
+    # (the device-test wording, "Search the web for ...", is now answered in code before skills matter)
+    msg = "What changed in the latest Unreal Engine release?"
     assert o.skills_loader.match_skills(msg)  # the UE5 skill does match this message
+    assert not orch_mod.needs_a_tool(msg)
     _ = [ev async for ev in o.run_stream(msg, session_id="fast-skills", requested_model="fast", chat_mode="FREEFORM")]
     assert "Skill Active" not in seen["turn_context"] and seen["active_skills"] == []
 

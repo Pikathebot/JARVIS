@@ -1622,6 +1622,11 @@ To fix first next session (small, before phase A):
 2. Fast "remind me to stretch in 20 minutes" -> "I don't have a reminder system ... set one up in your notes" (no
    false claim, but wrong: Main/Auto has `remind_me`). Option: on picked-Fast turns where `looks_like_action`
    is true, answer `_NO_TOOLS_REPLY` in code before the model (like the capability answer).
+   **Built 2026-10-18** (unverified on device): `looks_like_action` was too broad for a refusal ("write me a
+   poem" matches), so a narrow `needs_a_tool` (reminder/timer/alarm, open/close/quit an app, mute/volume,
+   search the web/look up, screenshot -- at the start of the message) answers `_FAST_PICKED_ACTION` in code on
+   a turn where the user picked Fast. Auto already sends such turns to Main. Device-test #1's wording ("Search
+   the web for ...") now gets the same code answer.
 Not yet tested by the user: #10 glass over a light page while dragging; voice mode (user tests later).
 
 **Phase A -- notes + tasks, local (no account needed).**
