@@ -39,6 +39,7 @@ public static class JarvisPalette
         SyntaxString = Hex(0x30D158), SyntaxNumber = Hex(0xFF9F0A), SyntaxKeyword = Hex(0xBF5AF2), SyntaxType = Hex(0x40C8E0),
 
         RegularTintFloor = 0.20f, ThickTintFloor = 0.62f,
+        BackdropLumaCeiling = 0.33f,
     };
 
     public static readonly JarvisColors Light = new()
@@ -57,6 +58,7 @@ public static class JarvisPalette
         SyntaxString = Hex(0x1E7B34), SyntaxNumber = Hex(0xC93400), SyntaxKeyword = Hex(0x8944AB), SyntaxType = Hex(0x0B7285),
 
         RegularTintFloor = 0.80f, ThickTintFloor = 0.90f,
+        BackdropLumaFloor = 0.80f,
     };
 
     public static readonly JarvisColors HighContrast = new()
@@ -77,6 +79,7 @@ public static class JarvisPalette
         SyntaxString = Hex(0x30DB5B), SyntaxNumber = Hex(0xFFB340), SyntaxKeyword = Hex(0xDA8FFF), SyntaxType = Hex(0x5DE6FF),
 
         RegularTintFloor = 0.75f, ThickTintFloor = 0.90f,
+        BackdropLumaCeiling = 0.22f,
         DrawsOutline = true, HasShadows = false,
     };
 
@@ -202,6 +205,16 @@ public sealed class JarvisColors
     // Material floors: a slab's tint never goes below these in this appearance.
     public float RegularTintFloor { get; init; }
     public float ThickTintFloor { get; init; }
+
+    /// <summary>Legibility over any backdrop (PLAN 4.14): where the refracted backdrop is brighter
+    /// than this (gamma-encoded luma, 0..1), the renderer raises that pixel's tint toward the
+    /// shape's own (darker) tint colour until it isn't, so light text keeps its contrast over a
+    /// white window. A dark wallpaper is left alone. 1 = off. Dark 0.33: white text ~7.8:1.</summary>
+    public float BackdropLumaCeiling { get; init; } = 1f;
+
+    /// <summary>The same for dark text (Light): a backdrop darker than this is lifted toward the
+    /// shape's (lighter) tint. 0 = off.</summary>
+    public float BackdropLumaFloor { get; init; } = 0f;
 
     /// <summary>High contrast: a 1px <see cref="Outline"/> on every slab and control.</summary>
     public bool DrawsOutline { get; init; }

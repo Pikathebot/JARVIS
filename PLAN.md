@@ -1330,6 +1330,50 @@ contrast numerically. Likely
 directions: a tint floor or local darkening under text that follows how bright the captured backdrop is,
 and/or text colour per appearance, as iOS 26 does over bright content. Keep GlassLab's copy in step.
 
+**Built 2026-10-18 (started early, in parallel with 4.15).** Measured over a light Wikipedia page
+(Dark appearance): reply text and chat titles 1.5-1.9:1, composer placeholder 1.8:1. Cause: in Dark the thick and
+regular slabs have no tint floor (`EffectiveTint` uses 0 in Dark), so the default 20% #1C1C1E tint over white
+came out ~205/255 under white text. Fix: per pixel in `Refraction.hlsl` (`LegibleTint`), where the refracted
+backdrop's luma (encoded, Rec.709 weights) is above the appearance's `BackdropLumaCeiling`, the shape's tint
+amount is raised just enough to bring it down (mirror: `BackdropLumaFloor` for Light's dark text). Only ever
+raised, only toward a tint on the right side of the limit, so white thumbs and accent fills are untouched and
+dark wallpapers keep the clear look. Palette: Dark ceiling 0.33, High contrast 0.22, Light floor 0.80. Passed in
+the refraction constants (32 -> 48 bytes); GlassLab's shader/renderer copy updated the same way. Both shaders
+compile with fxc; app builds.
+After (same page, device snapshot): replies/titles **7.6:1**, placeholder 4.4:1, section headers ("Today",
+LabelSecondary) 2.6:1, the "Runs on this PC" note (LabelTertiary, decoration only) 1.5:1. Open: whether to drop
+the ceiling to 0.28 (headers ~3.2:1, white ~9.5:1, glass ~15% darker over white windows) -- user's call on the
+look. Still to see: Light and High contrast appearances over dark and light backdrops; motion while dragging the
+window across bright/dark content (user). **User's call 2026-10-18: keep 0.33.**
+
+**Fast slot on Ternary Bonsai 2 9B: probe 2026-10-18 (16 turns, picker = Fast, ephemeral, live backend).**
+Speed: ~47 tok/s, first token ~0.5 s warm (11 s on the first turn: the main->fast swap), prompt ~1.66k tokens.
+Good: math, a two-sentence KV-cache explanation, a haiku, a time sum (6:15 pm), a follow-up ("teal"), "did you
+open Notepad?" -> "No", "Open Notepad" -> "can't; that requires Main", hardware readings via the pre-run
+(RAM, bare "VRAM usage?"), "what can you do" (code). No `<function>` text, no claimed actions.
+Found:
+1. **A skill made it promise a search.** "Search the web for the latest Unreal Engine release" -> "I can search the
+   web for ..." and nothing else. "Unreal" triggers the `unreal_engine` skill (2.9 KB of UE5 dev instructions that
+   open "You are equipped with specialized knowledge and tools") on a turn with no tools. Fix: no skill text on
+   tool-less fast turns (skills describe tool workflows). Side note: that skill also fires for news questions
+   that merely name Unreal on main; trigger words are broad.
+2. **"What's my CPU temperature?" -> "The CPU is at 14%; the GPU is at 55 degrees."** The snapshot has no CPU
+   temperature, and `status_answer` substitutes the GPU's. Fix: say it can't read the CPU temperature (GPU's
+   only) and give the CPU load. Shared with voice mode.
+3. Refusals don't always point to Main/Auto: delete -> "do this manually in File Explorer", weather -> "check a
+   weather service". Honest, but the note asks for "Main can". Optional: a fixed line on picked-Fast action turns.
+4. "Which model are you running on?" -> "I am Jarvis ... cannot query". Optional: the served model's name in the
+   fast note (per-turn, so the prefix contract holds).
+5. **Voice mode VRAM, unmeasured since the switch (last voice run 2026-10-14, MiniCPM).** Voice = the fast model
+   (with tools) + Laya (1116 MiB + 200 measured) + Whisper large-v3-turbo on CUDA (int8_float16, ~0.8-1 GB) over
+   the desktop's ~2.8 GB: with Bonsai (3363 MiB) that is ~8.1-8.3 GB of 8.19. MiniCPM left ~1.7 GB. Needs a device
+   test of voice mode; if it doesn't fit, options: MiniCPM or Bonsai PTQ1 (est. 2.3 GB) as the voice model only.
+   Also unchecked: Bonsai's tool calling in voice mode (the Bonsai session benched tool chains, not voice turns).
+**Decision 2026-10-18 (user): Bonsai dropped, fast slot back to MiniCPM5-2B** (`data/models.json`), without the
+voice-mode measurement: it wasn't worth the VRAM risk. Findings 1 and 2 still apply to MiniCPM (skills on
+tool-less fast turns; CPU temperature answered with the GPU's) -- fixes held until the harness session's
+uncommitted backend work lands. The prism launcher stays for any ternary model selected later.
+
 ### 4.15 Harness review: what to take from google-research/harness2 (2026-10-18) -- PLANNED, NOT BUILT
 
 **Status: research only. Nothing below is built or decided; the user picks, one item at a time like 4.13.**

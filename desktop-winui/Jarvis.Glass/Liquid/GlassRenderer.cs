@@ -186,8 +186,9 @@ internal sealed class GlassRenderer : IDisposable
 
         // float2 WindowSize + float2 pad = 16 bytes.
         _displacementConstants = ShaderPipeline.CreateConstantBuffer(_device, 16);
-        // float4 UvRect (16) + float2 WindowSize + float SourceIsCapture + float pad (16) = 32 bytes.
-        _refractionConstants = ShaderPipeline.CreateConstantBuffer(_device, 32);
+        // float4 UvRect (16) + float2 WindowSize + float SourceIsCapture + float MaxBlur (16)
+        // + float4 Legibility (16) = 48 bytes.
+        _refractionConstants = ShaderPipeline.CreateConstantBuffer(_device, 48);
         // float2 WindowSize + float2 pad (16) + float3 LightDir + float pad (16) = 32 bytes.
         _specularRimConstants = ShaderPipeline.CreateConstantBuffer(_device, 32);
         _shapeConstants = ShaderPipeline.CreateConstantBuffer(_device, ShapeConstantsSize);
@@ -527,7 +528,7 @@ internal sealed class GlassRenderer : IDisposable
 
     private void WriteRefractionConstants(Vector4 uvRect, int width, int height, bool sourceIsCapture, float maxBlur)
     {
-        Span<float> data = stackalloc float[8];
+        Span<float> data = stackalloc float[12];
         data[0] = uvRect.X;
         data[1] = uvRect.Y;
         data[2] = uvRect.Z;
@@ -536,6 +537,11 @@ internal sealed class GlassRenderer : IDisposable
         data[5] = height;
         data[6] = sourceIsCapture ? 1f : 0f;
         data[7] = maxBlur;
+        // Legibility over the backdrop (PLAN 4.14). An appearance change re-publishes every shape
+        // (their tints change), which re-renders the cached layers with these.
+        var colors = JarvisPalette.Current;
+        data[8] = colors.BackdropLumaCeiling;
+        data[9] = colors.BackdropLumaFloor;
         WriteConstantBuffer(_refractionConstants, data);
     }
 

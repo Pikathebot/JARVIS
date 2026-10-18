@@ -26,7 +26,23 @@ cbuffer RefractionConstants : register(b0)
     float2 WindowSize;     // pixels
     float SourceIsCapture; // 1 = sample the capture via UvRect, 0 = sample the previous layer 1:1
     float MaxBlur;         // px: the blur radius BlurredTexture was built with (0 = not built)
+    float4 Legibility;     // x = backdrop luma ceiling (1 = off), y = floor (0 = off); see LegibleTint
 };
+
+static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
+
+// Same as Jarvis.Glass's Refraction.hlsl (PLAN 4.14): raise the tint where the backdrop is too
+// bright (or dark) for the appearance's text, only toward a tint on the right side of the limit.
+float LegibleTint(float3 backdrop, float3 tint, float amount)
+{
+    float yb = dot(backdrop, LUMA);
+    float yt = dot(tint, LUMA);
+    if (yt < Legibility.x && yb > Legibility.x)
+        amount = max(amount, (yb - Legibility.x) / (yb - yt));
+    if (yt > Legibility.y && yb < Legibility.y)
+        amount = max(amount, (Legibility.y - yb) / (yt - yb));
+    return saturate(amount);
+}
 
 #define MAX_SHAPES 16
 
@@ -184,7 +200,7 @@ float4 PSMain(VSOutput i) : SV_TARGET
 
     if (s >= 0)
     {
-        color = lerp(color, Shapes[s].Tint.rgb, Shapes[s].Tint.a);
+        color = lerp(color, Shapes[s].Tint.rgb, LegibleTint(color, Shapes[s].Tint.rgb, Shapes[s].Tint.a));
     }
 
     // Force alpha=1: a covered pixel fully replaces what's behind it -- and capture textures
