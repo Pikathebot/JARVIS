@@ -173,9 +173,19 @@ def sync() -> dict[str, int]:
         return n
 
 
+def _done_on(g: dict[str, Any]) -> str:
+    """The local day Google says the task was completed; '' (= today when rendered) if it doesn't say."""
+    stamp = g.get("completed") or ""
+    try:
+        return f"{datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone():%Y-%m-%d}" if stamp else ""
+    except ValueError:
+        return ""
+
+
 def _add_local(nm: Any, lines: list[str], items: list[Any], g: dict[str, Any]) -> Any:
     t = nm._Task(len(lines), "", g.get("status") == "completed", " ".join(g["title"].split()),
                  (g.get("due") or "")[:10], "", nm._new_id(items), "", True)
+    t.done_on = _done_on(g) if t.done else ""
     lines.append("")
     items.append(t)
     return t
@@ -189,6 +199,7 @@ def _copy_into(nm: Any, t: Any, g: dict[str, Any]) -> None:
     t.text, t.due = " ".join(g["title"].split()), due
     if done and not t.done:
         nm._cancel_reminder(t)
+        t.done_on = _done_on(g)
     t.done = done
 
 

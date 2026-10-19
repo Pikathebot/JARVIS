@@ -272,7 +272,7 @@ def turn_directive(user_message: str) -> str:
 _TASK_LINE = re.compile(r"^(?P<indent>\s*)[-*] \[(?P<mark>[ xX])\] (?P<rest>.*)$")
 _META = re.compile(r"\s*<!--\s*(?P<meta>.*?)\s*-->\s*$")
 _DUE = re.compile(r"\s*\(due (?P<date>\d{4}-\d{2}-\d{2})(?: (?P<time>\d{2}:\d{2}))?\)")
-_DONE = re.compile(r"\s*\(done \d{4}-\d{2}-\d{2}\)")
+_DONE = re.compile(r"\s*\(done (?P<date>\d{4}-\d{2}-\d{2})\)")
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
@@ -281,13 +281,18 @@ class _Task:
                  tid: str, reminder: str, stored_id: bool):
         self.index, self.indent, self.done, self.text = index, indent, done, text
         self.due, self.due_time, self.id, self.reminder, self.stored_id = due, due_time, tid, reminder, stored_id
+        self.done_on = ""  # the "(done ...)" date as read; a task ticked off now gets today's
 
     def due_label(self) -> str:
         return f"{self.due} {self.due_time}".strip()
 
     def render(self) -> str:
         due = f" (due {self.due_label()})" if self.due else ""
-        done = f" (done {datetime.now():%Y-%m-%d})" if self.done else ""
+        if self.done and not self.done_on:
+            self.done_on = f"{datetime.now():%Y-%m-%d}"
+        elif not self.done:
+            self.done_on = ""
+        done = f" (done {self.done_on})" if self.done else ""
         meta = f"id:{self.id}" + (f" rem:{self.reminder}" if self.reminder else "")
         return f"{self.indent}- [{'x' if self.done else ' '}] {self.text}{due}{done} <!-- {meta} -->"
 
@@ -315,10 +320,13 @@ def _parse_tasks(lines: list[str]) -> list[_Task]:
         if dm:
             due, due_time = dm.group("date"), dm.group("time") or ""
             rest = rest[:dm.start()] + rest[dm.end():]
+        done_m = _DONE.search(rest)
         rest = _DONE.sub("", rest).strip()
         tid = meta.get("id") or _derived_id(rest)
         tasks.append(_Task(i, m.group("indent"), m.group("mark") != " ", rest, due, due_time, tid,
                            meta.get("rem", ""), "id" in meta))
+        # Kept, so a save doesn't re-date every done task to today (it did until 2026-10-19).
+        tasks[-1].done_on = done_m.group("date") if done_m else ""
     return tasks
 
 

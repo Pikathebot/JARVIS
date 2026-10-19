@@ -266,3 +266,16 @@ async def test_the_cue_rides_on_the_user_turn_and_not_in_ephemeral_chats(folder,
     msg = "note that the guest wifi password is on the router"
     assert "NOTES: the user asked for a note" in await _user_turn(monkeypatch, store, msg)
     assert "NOTES:" not in await _user_turn(monkeypatch, EphemeralMemoryStore(store), msg)
+
+
+def test_a_done_date_survives_later_saves(folder, monkeypatch):
+    notes_mod.notes_dir().mkdir(parents=True, exist_ok=True)
+    (notes_mod.notes_dir() / "tasks.md").write_text(
+        "# Tasks\n\n- [x] Old thing (done 2025-01-02) <!-- id:t0001 -->\n- [ ] Call mum <!-- id:t0002 -->\n",
+        encoding="utf-8")
+    tasks("add", "Buy milk")
+    tasks("done", task_id="mum")
+    md = (notes_mod.notes_dir() / "tasks.md").read_text(encoding="utf-8")
+    assert "Old thing (done 2025-01-02)" in md and "Call mum (done 20" in md
+    tasks("reopen", task_id="mum")
+    assert "Call mum <!--" in (notes_mod.notes_dir() / "tasks.md").read_text(encoding="utf-8")

@@ -135,3 +135,12 @@ def test_maybe_sync_never_raises_and_waits_a_minute(world, monkeypatch):
     monkeypatch.setattr(auth, "status", lambda: {"signed_in": False})
     tasks_sync._last_run[0] = 0.0
     assert tasks_sync.maybe_sync() is None              # signed out: never calls Google
+
+
+def test_a_task_completed_at_google_keeps_googles_date(world):
+    gid = world.add("Renew passport", status="completed")
+    world.tasks[gid]["completed"] = "2025-03-04T10:00:00.000Z"
+    tasks_sync.sync()
+    assert "Renew passport (done 2025-03-04)" in _md()
+    tasks_sync.sync()
+    assert "Renew passport (done 2025-03-04)" in _md()

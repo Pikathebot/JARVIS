@@ -1762,8 +1762,21 @@ fail when that file runs alone ("no such table: sessions" -- they rely on an ear
 - Nudge: `app/awareness/calendar_nudge.py` -- a timed event starting within 10 minutes is emitted once
   (`kind=calendar:<id>`, INFO like a reminder, plus the reminder's toast when Jarvis isn't in front); a moved
   event is announced again. Lifespan loop each minute, local file only. 1 test (26 in `test_calendar.py`).
-- Next: the Settings/chat way to start sign-in (today only `POST /api/google/sign-in`), then a live test once
-  the user has the client JSON (docs/GOOGLE_SETUP.md).
+
+**Live against the user's Google account 2026-10-19 ~09:40-10:00.** Cloud setup done with the user (project
+`jarvis-512104`, Calendar + Tasks APIs, External consent screen, Desktop client "Jarvis desktop" ->
+`data/google_client_secret.json`). **Still "Testing"**: Publish is disabled until Branding has a home page,
+privacy policy and authorised domain, which the user doesn't have -- so the refresh token expires every 7 days
+(Jarvis reports "sign in again"). Signed in through a scratchpad script (no Settings button yet): both scopes
+granted, token in `data/google_token.bin`. Test lines removed from tasks.md (by the user; auto mode blocked
+Claude's edit of the OneDrive file), then the first sync: 6 completed Google tasks -> tasks.md, 3 birthdays
+-> calendar.json; a second sync of each moved nothing. Push to Google not yet exercised live (nothing local
+to send). **Bug found and fixed:** reading tasks.md dropped each "(done YYYY-MM-DD)" and every save wrote
+today's date back, so any change re-dated every done task (phase A bug); now kept (`_Task.done_on`), cleared
+on reopen, and a task pulled from Google takes its `completed` date. The six lines were corrected from Google.
+2 tests; full suite 1079 pass.
+- Next: the Settings button for sign-in/out + status, then the device test on Jarvis ("what's on my calendar",
+  "add X to my calendar" -> appears in Google Calendar, a task ticked off in Google -> ticked in tasks.md).
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice
