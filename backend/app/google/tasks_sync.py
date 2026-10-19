@@ -88,6 +88,29 @@ def _ts(rfc3339: str) -> float:
         return 0.0
 
 
+class SyncRefused(Exception):
+    """The sync would do something it shouldn't do on its own; nothing was changed on either side."""
+
+
+MASS_DELETE = 3  # more than this many deletions, and more than half the links, in one sync is refused
+
+
+def _check_safe(state: dict[str, Any], links: dict[str, dict[str, Any]], path: Path,
+                by_id: dict[str, Any], remote: dict[str, dict[str, Any]]) -> None:
+    """2026-10-19: an eval process synced its own temp tasks.md against the user's Google Tasks, and
+    the user's eight tasks were deleted at Google. The links belong to one tasks.md; and a sync that
+    would delete most of the linked tasks on either side is refused, not run."""
+    here = str(path.resolve())
+    if links and state.get("tasks_file") and state["tasks_file"] != here:
+        raise SyncRefused(f"the Google Tasks links belong to {state['tasks_file']}, not {here}")
+    state["tasks_file"] = here
+    gone_here = sum(1 for tid, link in links.items() if tid not in by_id and link["g"] in remote)
+    gone_there = sum(1 for tid, link in links.items() if tid in by_id and link["g"] not in remote)
+    for gone, side in ((gone_here, "Google"), (gone_there, "tasks.md")):
+        if gone > MASS_DELETE and gone * 2 > len(links):
+            raise SyncRefused(f"{gone} of {len(links)} linked tasks would be deleted from {side} in one sync")
+
+
 def sync() -> dict[str, int]:
     """One two-way sync; counts of what moved. Raises GoogleNotConnected when not signed in."""
     from app.agent.tools import notes as nm
@@ -104,6 +127,7 @@ def sync() -> dict[str, int]:
         touched_local = any(not t.stored_id for t in items)
         nm._assign_ids(items)
         by_id = {t.id: t for t in items}
+        _check_safe(state, links, path, by_id, remote)
         n = {"to_google": 0, "from_google": 0, "created_here": 0, "created_there": 0,
              "deleted_here": 0, "deleted_there": 0}
         drop_local: set[str] = set()
@@ -228,6 +252,8 @@ def maybe_sync(max_age_s: float = 60.0) -> Optional[dict[str, int]]:
         return sync()
     except auth.GoogleNotConnected as exc:
         logger.info("Google Tasks sync skipped: %s", exc)
+    except SyncRefused as exc:
+        logger.warning("Google Tasks sync refused, nothing changed: %s", exc)
     except Exception as exc:
         logger.warning("Google Tasks sync failed (will retry): %s", exc)
     _last_run[0] = time.time()

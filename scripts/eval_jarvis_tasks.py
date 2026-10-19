@@ -42,6 +42,15 @@ from typing import Any, Callable
 
 import httpx
 
+# Never the user's Google account or notes folder (2026-10-19: an eval's `tasks` calls synced its fake
+# to-do lists against the real Google Tasks and deleted the user's tasks there). Set before any app import.
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+_EVAL_HOME = Path(tempfile.mkdtemp(prefix="jarvis-eval-home-"))
+os.environ["JARVIS_GOOGLE_DIR"] = str(_EVAL_HOME / "google")
+os.environ["JARVIS_NOTES_DIR"] = str(_EVAL_HOME / "notes")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_tool_chain as btc  # noqa: E402  (Server, World, the five chain tasks)
 import eval_grounding  # noqa: E402  (unsourced specifics in web answers, PLAN 4.15 #7)

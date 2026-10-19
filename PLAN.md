@@ -1801,6 +1801,27 @@ one retry; both loops; net `lookup-checked`; eval mirror `lookup-nudge`). And a 
 Two tests' fake models ended on a bare "Done." and were adjusted. Eval (Defiant, 3 seeds): notes/calendar/system
 47/48 with the lookup net (it never fired; the miss was the bare "Added."), then notes/calendar 21/21 with the
 bare-claim rule (it fired once on todo-add, which then called `tasks`). Full suite 1093 pass.
+
+**Device test 10:35-10:37** (`session_mvesiev1_ba352`): all four turns called the tool first time (whole year,
+next week, to-do list, add milk -> Google in a second); the new retry never had to fire. User's reading: the
+announcing turns were thinking-off. The log agrees for 10:08-10:10 (announced on "fast verdict, served on main,
+thinking off"; called on the main-slot thinking turns after "use tool call") -- but all four 10:35 turns were
+thinking-off too and acted. So: an intermittent failure of the thinking-off path, now caught by the retry;
+routing left as is unless it recurs.
+
+**INCIDENT 2026-10-19 10:15: the eval deleted the user's Google Tasks.** `eval_jarvis_tasks.py` runs the real
+`tasks` tool; its process didn't override `JARVIS_GOOGLE_DIR`, so `maybe_sync` used the real token and link
+file and synced the eval's temp tasks.md against the user's Google Tasks: the 8 linked tasks were deleted at
+Google, then eval tasks (Pay rent, Call mum, Book flights, Buy milk) created and deleted over several rounds
+(until a calendar task pointed `auth.DATA_DIR` at a temp dir). At 10:35 Jarvis's own sync re-created the 8
+from tasks.md (`created_there: 8`). Net: titles/status/due restored as new Google tasks; the originals had no
+notes, links or subtasks; only Google's completion dates differ (tasks.md kept the real ones). Fixed: the eval
+sets `JARVIS_GOOGLE_DIR`/`JARVIS_NOTES_DIR` to a temp dir before any app import (checked: not signed in); the
+sync refuses (`SyncRefused`, logged, nothing changed) when the links belong to another tasks.md
+(`tasks_file` in the link file) or would delete more than 3 and more than half of the linked tasks on either
+side in one run. 2 tests; full suite 1095 pass. Calendar was not touched (World.calendar no-ops its sync).
+**Rule: any script that imports the backend runs with temp `JARVIS_GOOGLE_DIR` / `JARVIS_NOTES_DIR`** --
+pytest's conftest and the eval do; a new one must too.
 - Next: the Settings button for sign-in/out + status; see on device that announcements now act.
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,

@@ -144,3 +144,24 @@ def test_a_task_completed_at_google_keeps_googles_date(world):
     assert "Renew passport (done 2025-03-04)" in _md()
     tasks_sync.sync()
     assert "Renew passport (done 2025-03-04)" in _md()
+
+
+def test_a_different_tasks_file_is_refused(world, tmp_path, monkeypatch):
+    nm._tasks("add", "Buy milk", "", "", None)
+    tasks_sync.sync()
+    monkeypatch.setattr(settings, "notes_dir", str(tmp_path / "eval-notes"))  # another process's tasks.md
+    with pytest.raises(tasks_sync.SyncRefused):
+        tasks_sync.sync()
+    assert _open_titles(world) == ["Buy milk"]
+    assert tasks_sync.maybe_sync(0.0) is None  # refused quietly in the background path
+
+
+def test_a_mass_deletion_is_refused_and_nothing_changes(world):
+    for item in ("Buy milk", "Call mum", "Pay rent", "Book flights", "Renew passport"):
+        nm._tasks("add", item, "", "", None)
+    tasks_sync.sync()
+    p = nm.notes_dir() / "tasks.md"
+    p.write_text("# Tasks\n\n", encoding="utf-8")  # every line gone at once
+    with pytest.raises(tasks_sync.SyncRefused):
+        tasks_sync.sync()
+    assert len(_open_titles(world)) == 5 and _md() == "# Tasks\n\n"
