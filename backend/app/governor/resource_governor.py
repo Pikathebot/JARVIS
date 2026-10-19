@@ -229,6 +229,9 @@ class ResourceGovernor:
         self._manual_paused = False
         self._manual_pause_reason: Optional[str] = None
         self._manual_resume_override_until: Optional[float] = None
+        # The user's "Governor" switch, off: load is ignored and nothing is unloaded for it. Kept
+        # apart from the override so a pause (Game mode) can't silently turn the governor back on.
+        self._switched_off = False
 
         # 5. External App Watcher State
         self._external_apps_active: dict[str, float] = {}
@@ -501,12 +504,53 @@ class ResourceGovernor:
         self._check_status_transition(trigger_reasons=[f"manual pause: {reason}"])
 
     def force_resume(self) -> None:
-        """Clears manual pause and override states, restoring automated governance."""
+        """Clears manual pause and override states, restoring automated governance -- or, while
+        the user's switch is off, back to ignoring load."""
         self._manual_paused = False
         self._manual_pause_reason = None
-        self._manual_resume_override_until = None
-        logger.info("Governor manually RESUMED (automatic mode restored)")
+        self._manual_resume_override_until = float("inf") if self._switched_off else None
+        logger.info("Governor manually RESUMED (%s)", "switched off: load ignored" if self._switched_off
+                    else "automatic mode restored")
+        if not self._switched_off:
+            self._yield_to_running_apps()
         self._check_status_transition(trigger_reasons=["manual resume: restored automated governance"])
+
+    @property
+    def switched_off(self) -> bool:
+        """The user's "Governor" switch is off (load ignored, nothing unloaded for it)."""
+        return self._switched_off
+
+    def set_switched_off(self, off: bool) -> None:
+        """The user's "Governor" switch. Off = ignore load indefinitely: no unload for metrics or
+        for a watchlisted app, and chat never queues. On = automatic again, yielding at once to a
+        watched app that is already running. Under a manual pause (Game mode) it is only
+        remembered, and applies when the pause ends."""
+        self._switched_off = off
+        logger.info("Governor switched %s by the user", "OFF (load ignored)" if off else "ON")
+        if off:
+            self._pending_external_app_unloads.clear()  # unloads deferred until a turn ends
+        if self._manual_paused:
+            return
+        if off:
+            self._manual_resume_override_until = float("inf")
+        else:
+            if self._manual_resume_override_until == float("inf"):
+                self._manual_resume_override_until = None
+            self._yield_to_running_apps()
+        self._check_status_transition(trigger_reasons=[f"governor switched {'off' if off else 'on'}"])
+
+    def _yield_to_running_apps(self) -> None:
+        """Unload for watched apps that started while load was being ignored."""
+        if not self._external_apps_active or not self.auto_unload_on_throttle:
+            return
+        if self.is_busy:
+            self._pending_external_app_unloads.update(self._external_apps_active)
+            return
+        already_unloaded = self.model_unloaded
+        for label in self._external_apps_active:
+            self._add_unload_reason(reason_id=f"external_app:{label}", source="external_app", label=label)
+        if not already_unloaded:
+            self._trigger_unload_callback()
 
     def clear_error(self) -> None:
         """Clears governor error state, restoring normal governance."""
@@ -555,7 +599,9 @@ class ResourceGovernor:
         if present:
             self._external_apps_active[label] = time.time()
             logger.warning("Governor notified: Heavy external app active: %s", label)
-            if self.is_busy:
+            if self._switched_off and self._is_resume_override_active:
+                logger.info("Governor: switched off by the user, so the model stays loaded for '%s'.", label)
+            elif self.is_busy:
                 self._pending_external_app_unloads.add(label)
                 logger.info("Governor: Deferring auto-unload for '%s' until current Jarvis turn ends.", label)
             else:

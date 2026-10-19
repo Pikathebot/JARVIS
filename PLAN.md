@@ -1939,9 +1939,14 @@ pill and tray item are build-verified only.
 mid-turn when the tool runs -- it must switch after the turn ends); the rule for unlisted games (card
 >= ~90% and external growth >= ~256 MiB); RAM/commit in the governor's picture. Measure on device first:
 RAM and commit charge with Jarvis open in Game mode (the WinUI app + backend stay resident).
-**Found while building:** the popover's existing "Governor" switch, turned *off*, calls `/governor/pause`,
-which makes every chat wait and then fail with 429 -- the opposite of its label ("Unloads the model when
-another app needs the GPU"). Off should probably be `/governor/resume-override` (ignore load). Not changed.
+**Governor switch FIXED 2026-10-19 (test-verified, WinUI builds; not seen on device).** The popover's
+"Governor" switch, turned off, called `/governor/pause`, so every chat queued and then failed with 429 --
+the opposite of its label. Now `POST /governor/auto {enabled}` -> `ResourceGovernor.set_switched_off`:
+off = an indefinite "ignore load" override, and a watchlisted app no longer unloads the model either
+(`report_external_app` used to unload regardless of any override); on = automatic again, and a watched app
+that started meanwhile is yielded to at once. The switch's state is kept apart from the override, so Game
+mode's pause can't turn the governor back on: `force_resume` returns to "ignore load" while the switch is
+off. `/health` reports `governor_auto` and the popover switch follows it. Tests: 3 in `test_governor.py`.
 
 **State 2026-10-19 afternoon:** phase D (Gmail) + the email-draft cue + the tool-call-as-text retry + the
 watchlist entry + this section, COMMITTED ab07422 (not pushed). Game mode (above) built after it, uncommitted. Full suite 1117 pass (the two governor API tests fail only while an eval holds

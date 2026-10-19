@@ -159,6 +159,9 @@ async def test_endpoints_and_chat_while_on(monkeypatch):
         released.append("x")
         return ["the chat model"]
 
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module.memory_store, "count_sessions", lambda: 0)  # /health; no tables needed
     monkeypatch.setattr(gm.game_mode, "_release", fake_release)
     monkeypatch.setattr(gm.game_mode, "_vram_used_mb", lambda: None)
     try:

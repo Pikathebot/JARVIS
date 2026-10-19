@@ -142,6 +142,14 @@ public sealed class JarvisApiClient
         await _http.PostAsync("/governor/resume", content: null, ct).ConfigureAwait(false);
     }
 
+    /// <summary>The "Governor" switch: on = unload the model when another app needs the GPU; off =
+    /// ignore load (chat never queues, nothing is unloaded for it).</summary>
+    public async Task SetGovernorAutoAsync(bool enabled, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync("/governor/auto", new { enabled }, JarvisJson.Options, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "switch the governor").ConfigureAwait(false);
+    }
+
     /// <summary>Game mode on (unload the model, stop the sidecars) or off. On can take a few
     /// seconds: the backend waits for llama-server to exit.</summary>
     public async Task SetGameModeAsync(bool enabled, CancellationToken ct = default)

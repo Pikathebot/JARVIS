@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using Jarvis.Core.Api;
 using Jarvis.Core.Models;
 using Microsoft.UI.Dispatching;
@@ -38,6 +37,10 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
     /// <summary>Game mode (PLAN 4.16b), as the backend last reported it.</summary>
     [ObservableProperty]
     public partial bool GameMode { get; set; }
+
+    /// <summary>The "Governor" switch as the backend last reported it (false = switched off).</summary>
+    [ObservableProperty]
+    public partial bool GovernorAuto { get; set; } = true;
 
     /// <summary>Raised on the UI thread each time the backend goes from unreachable to
     /// reachable -- first launch (the window is built before uvicorn is up) and any restart.
@@ -116,6 +119,7 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
         OllamaConnected = health.OllamaConnected ?? false;
         Throttled = health.GovernorThrottled;
         GameMode = health.GameMode;
+        GovernorAuto = health.GovernorAuto;
         Status = health.Status == "degraded" ? "degraded" : Throttled ? "throttled" : "ok";
     }
 
@@ -126,16 +130,12 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
         finally { PollNow(); }
     }
 
-    [RelayCommand]
-    public async Task PauseAsync(string reason)
+    /// <summary>The "Governor" switch. Off used to call /governor/pause, which made every chat
+    /// queue and then fail with 429 -- the opposite of what the switch says (fixed 2026-10-19).</summary>
+    public async Task SetGovernorAutoAsync(bool enabled)
     {
-        await _api.PauseGovernorAsync(reason).ConfigureAwait(false);
-    }
-
-    [RelayCommand]
-    public async Task ResumeAsync()
-    {
-        await _api.ResumeGovernorAsync().ConfigureAwait(false);
+        try { await _api.SetGovernorAutoAsync(enabled).ConfigureAwait(false); }
+        finally { PollNow(); }
     }
 
     public void Dispose()

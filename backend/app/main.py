@@ -682,6 +682,8 @@ class HealthResponse(BaseModel):
     # without it Windows' foreground lock refuses focus_app.
     pid: int = 0
     game_mode: bool = False
+    # The popover's "Governor" switch (False = switched off by the user: load ignored).
+    governor_auto: bool = True
 
 
 class GovernorPauseRequest(BaseModel):
@@ -749,6 +751,7 @@ async def health_check():
         voice_enabled=wake_detector.is_listening,
         pid=os.getpid(),
         game_mode=game_mode.active,
+        governor_auto=not governor.switched_off,
     )
 
 
@@ -824,6 +827,14 @@ async def governor_resume_override(req: Optional[GovernorResumeOverrideRequest] 
 
 class GameModeRequest(BaseModel):
     enabled: bool
+
+
+@app.post("/governor/auto")
+async def governor_auto(req: GameModeRequest):
+    """The popover's "Governor" switch: on = unload for other apps' GPU use (automatic), off =
+    ignore load until switched back on (chat never queues, nothing is unloaded for it)."""
+    governor.set_switched_off(not req.enabled)
+    return {"status": "ok", "governor_status": governor.status.value, "auto": not governor.switched_off}
 
 
 @app.get("/api/game-mode")

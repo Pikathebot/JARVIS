@@ -47,6 +47,10 @@ public sealed class HealthResponse
     [JsonPropertyName("game_mode")]
     public bool GameMode { get; set; }
 
+    /// <summary>The popover's "Governor" switch: false = switched off (load ignored).</summary>
+    [JsonPropertyName("governor_auto")]
+    public bool GovernorAuto { get; set; } = true;
+
     [JsonPropertyName("ollama_connected")]
     public bool? OllamaConnected { get; set; }
 

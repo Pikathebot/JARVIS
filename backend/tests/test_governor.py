@@ -992,3 +992,59 @@ async def test_paged_model_reload_runs_as_a_model_loading_activity():
     await gov._paged_reload_task
     assert seen == [GovernorStatus.LOADING]
     assert gov.is_busy is False
+
+
+# --- The popover's "Governor" switch (fixed 2026-10-19: off used to pause, so every chat got a 429) ---
+
+@pytest.mark.asyncio
+async def test_switched_off_ignores_load_and_watched_apps_then_yields_when_on():
+    unloads: list[bool] = []
+    gov = ResourceGovernor(enabled=True, on_throttle_unload=lambda: unloads.append(True))
+
+    gov.set_switched_off(True)
+    assert gov.switched_off and gov.status == GovernorStatus.IDLE
+    gov.report_external_app("Cyberpunk 2077", present=True)
+    await asyncio.sleep(0)
+    assert unloads == [] and not gov.model_unloaded
+    assert (await gov.wait_until_healthy(timeout_seconds=0.1))[0] is True
+
+    gov.set_switched_off(False)  # back on with the game still running: yield now
+    await asyncio.sleep(0)
+    assert unloads == [True] and gov.model_unloaded
+    assert gov.status == GovernorStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_a_pause_keeps_the_switch_off_through_it():
+    gov = ResourceGovernor(enabled=True)
+    gov.set_switched_off(True)
+    gov.force_pause("game mode")
+    assert gov.status == GovernorStatus.PAUSED and gov.switched_off
+    gov.force_resume()  # Game mode off: back to ignoring load, not to automatic
+    assert gov.is_manual_override and gov.override_expires_at is None
+    assert gov.status == GovernorStatus.IDLE
+
+    gov.force_pause("game mode")
+    gov.set_switched_off(False)  # switched on during the pause: applies when it ends
+    assert gov.status == GovernorStatus.PAUSED
+    gov.force_resume()
+    assert not gov.manual_override_active and not gov.switched_off
+
+
+@pytest.mark.asyncio
+async def test_governor_auto_endpoint_and_health():
+    import app.main as main_module
+
+    # /health counts sessions: a test DB with no tables yet (this test run alone) must not matter.
+    try:
+        with patch.object(main_module.memory_store, "count_sessions", return_value=0):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+                res = await ac.post("/governor/auto", json={"enabled": False})
+                assert res.json()["auto"] is False
+                assert (await ac.get("/health")).json()["governor_auto"] is False
+                assert governor.status == GovernorStatus.IDLE
+                res = await ac.post("/governor/auto", json={"enabled": True})
+                assert res.json()["auto"] is True
+                assert (await ac.get("/health")).json()["governor_auto"] is True
+    finally:
+        governor.set_switched_off(False)

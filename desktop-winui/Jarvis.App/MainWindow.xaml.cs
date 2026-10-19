@@ -483,6 +483,12 @@ public sealed partial class MainWindow : Window
             try { GameModeToggle.IsOn = GovernorViewModel.GameMode; }
             finally { _syncingGameToggle = false; }
         }
+        if (GovernorViewModel.Status != "offline" && GovernorToggle.IsOn != GovernorViewModel.GovernorAuto)
+        {
+            _syncingGovernorToggle = true;
+            try { GovernorToggle.IsOn = GovernorViewModel.GovernorAuto; }
+            finally { _syncingGovernorToggle = false; }
+        }
         var brush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(kind));
         var model = ShortModelName(GovernorViewModel.ConfiguredModel);
 
@@ -621,11 +627,14 @@ public sealed partial class MainWindow : Window
         if (tab == ArtifactsTab) await RightPanelViewModel.RefreshArtifactsAsync();
     }
 
+    private bool _syncingGovernorToggle;
+
     private async void GovernorToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (GovernorViewModel is null) return; // IsOn="True" in XAML fires this inside InitializeComponent
-        if (GovernorToggle.IsOn) await GovernorViewModel.ResumeAsync();
-        else await GovernorViewModel.PauseAsync("User requested manual pause");
+        if (GovernorViewModel is null || _syncingGovernorToggle) return; // IsOn="True" in XAML fires this inside InitializeComponent
+        if (GovernorToggle.IsOn == GovernorViewModel.GovernorAuto) return;
+        try { await GovernorViewModel.SetGovernorAutoAsync(GovernorToggle.IsOn); }
+        catch { /* the next poll puts the switch back to what the backend says */ }
     }
 
     private bool _syncingGameToggle;
