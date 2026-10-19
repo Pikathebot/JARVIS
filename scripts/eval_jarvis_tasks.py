@@ -50,6 +50,7 @@ import tempfile  # noqa: E402
 _EVAL_HOME = Path(tempfile.mkdtemp(prefix="jarvis-eval-home-"))
 os.environ["JARVIS_GOOGLE_DIR"] = str(_EVAL_HOME / "google")
 os.environ["JARVIS_NOTES_DIR"] = str(_EVAL_HOME / "notes")
+os.environ["JARVIS_BRIEFING_STATE"] = str(_EVAL_HOME / "briefing.json")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_tool_chain as btc  # noqa: E402  (Server, World, the five chain tasks)

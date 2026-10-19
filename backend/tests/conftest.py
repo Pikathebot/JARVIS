@@ -30,6 +30,7 @@ os.environ.setdefault("JARVIS_PREFERENCE_VOTES_PATH", os.path.join(os.path.dirna
 # the real Google token and sync against the user's account.
 os.environ.setdefault("JARVIS_NOTES_DIR", os.path.join(os.path.dirname(_TEST_DB), "notes"))
 os.environ.setdefault("JARVIS_GOOGLE_DIR", os.path.join(os.path.dirname(_TEST_DB), "google"))
+os.environ.setdefault("JARVIS_BRIEFING_STATE", os.path.join(os.path.dirname(_TEST_DB), "briefing.json"))
 
 import pytest
 from unittest.mock import patch

@@ -1838,7 +1838,26 @@ the other Settings rows. Tests: endpoint test extended; full suite 1095 pass; `d
 - Next: phase C (morning briefing), or phase D (Gmail) after a head-budget decision; watch on device that
   announcements now act.
 
-**Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
+**Phase C BUILT 2026-10-19 -- device check 11:10:** first launch of the day emitted "Day briefing for 2026-10-19"
+(0 events/due/overdue, matching the preview) and wrote `data/briefing.json`; the restart after it stayed quiet.
+The tray card's look is the user's to confirm. The user's decisions: no fixed time --
+"the first time when i launch jarvis" (no set hour to turn the laptop on); every day; the machine only if
+something's wrong. `app/awareness/day_briefing.py`: the first time the app is connected each day (an awareness
+subscriber exists; `AwarenessMonitor.has_subscribers`), a day starting at 4 AM (a 1 AM session is still the
+day before), checked every 5 s by a lifespan loop: pull Google first (both `maybe_sync(0)`, 20 s cap, offline
+= brief from local), compose in code, emit (`kind=briefing:<day>`, INFO, the awareness tray), remember the day
+in `data/briefing.json` (`JARVIS_BRIEFING_STATE`; conftest and the eval point it at temp) so restarts that day
+stay quiet. Content: greeting by hour + address term; the date; all-day and timed events today; due today;
+overdue; "N other open tasks"; the next event after today; "Watching: ..." only when the monitor has an active
+condition. Plain lines (the tray is a plain TextBlock; the old briefing's `**bold**` would show), plus a
+spoken version ("Lunch with Sam at 1 PM, Dentist at 4:30 PM ...") in `spoken` for when observations get read
+aloud -- today nothing speaks them (`ObservationReceived` has no subscriber). A scheduled `briefing` routine
+(Settings -> Routines) now gives the same day briefing; `/api/awareness/briefing` keeps the system read-out.
+The chat "brief me at 8" path is dropped (no fixed time; the head has 20 chars left). 6 tests
+(`test_day_briefing.py`); full suite 1101 pass. Preview from the real data, 10:5x: "Good morning, sir. /
+Monday 19 October. / Nothing on the calendar today. / Next: Fri 23 Oct 14:00 Lunch with Sam".
+
+**Phase C -- morning briefing (the plan as written 10-18).** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice
 from a template, no model call needed), spoken + shown through the awareness channel. Set from chat ("brief me at
 8") until Settings gets a field.

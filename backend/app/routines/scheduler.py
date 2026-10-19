@@ -16,7 +16,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from app.awareness.briefing import build_briefing
 from app.awareness.monitor import AwarenessMonitor
 from app.awareness.observations import Observation, Severity
 from app.config import BASE_DIR
@@ -143,20 +142,14 @@ class RoutineScheduler:
                 data={"routine_id": routine.id},
             )
 
-        snapshot = self.monitor.last_snapshot or self.monitor.collect_snapshot()
-        payload = build_briefing(
-            snapshot=snapshot,
-            persona=persona,
-            active_conditions=self.monitor.active_observations(),
-        )
-        return Observation(
-            kind=f"routine:{routine.id}",
-            severity=Severity.INFO,
-            title=routine.name,
-            detail=payload["text"],
-            spoken=payload["spoken"],
-            data={"routine_id": routine.id},
-        )
+        # A scheduled briefing is the day briefing (PLAN 4.16 phase C): events, tasks, and the machine
+        # only when something is being watched. The on-demand status briefing stays build_briefing.
+        from app.awareness.day_briefing import build as build_day_briefing
+
+        observation = build_day_briefing(persona, datetime.now(), self.monitor.active_observations(),
+                                         kind=f"routine:{routine.id}")
+        observation.data["routine_id"] = routine.id
+        return observation
 
     def fire(self, routine: Routine, late_since: Optional[str] = None) -> Observation:
         """Fire a routine immediately, independent of scheduling."""

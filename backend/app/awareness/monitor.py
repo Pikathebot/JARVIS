@@ -231,6 +231,11 @@ class AwarenessMonitor:
 
     # ------------------------------------------------------------ delivery
 
+    @property
+    def has_subscribers(self) -> bool:
+        """A client is connected to the stream (the app is open), so an emit will be seen."""
+        return bool(self._subscribers)
+
     def subscribe(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=64)
         self._subscribers.append(queue)

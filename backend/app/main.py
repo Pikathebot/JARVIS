@@ -436,6 +436,13 @@ async def lifespan(app: FastAPI):
                 logger.warning("Calendar nudge failed: %s", exc)
             await asyncio.sleep(60)
 
+    # The day briefing (PLAN 4.16 phase C): the first time the app is connected each day (from 4 AM).
+    from app.awareness.day_briefing import first_open_loop
+
+    day_brief = asyncio.create_task(first_open_loop(awareness_monitor, persona_manager.get_active))
+    _background_tasks.add(day_brief)
+    day_brief.add_done_callback(_background_tasks.discard)
+
     nudge = asyncio.create_task(_calendar_nudge_loop())
     _background_tasks.add(nudge)
     nudge.add_done_callback(_background_tasks.discard)
