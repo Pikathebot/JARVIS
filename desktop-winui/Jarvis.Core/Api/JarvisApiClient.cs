@@ -489,6 +489,30 @@ public sealed class JarvisApiClient
         PostAsync<object?, Observation>($"/api/routines/{Uri.EscapeDataString(routineId)}/run", null, ct);
 
     // ==========================================
+    // Google account (PLAN 4.16 phase B)
+    // ==========================================
+
+    public Task<GoogleStatus> FetchGoogleStatusAsync(CancellationToken ct = default) =>
+        GetAsync<GoogleStatus>("/api/google/status", ct);
+
+    /// <summary>Opens the user's browser at Google's sign-in; poll <see cref="FetchGoogleStatusAsync"/>
+    /// until <c>SigningIn</c> is false. 409 when the client file is missing.</summary>
+    public async Task StartGoogleSignInAsync(CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync("/api/google/sign-in", content: null, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "start Google sign-in").ConfigureAwait(false);
+    }
+
+    public async Task GoogleSignOutAsync(CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync("/api/google/sign-out", content: null, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "sign out of Google").ConfigureAwait(false);
+    }
+
+    public Task<GoogleSyncResult> SyncGoogleNowAsync(CancellationToken ct = default) =>
+        PostAsync<object?, GoogleSyncResult>("/api/google/sync", null, ct);
+
+    // ==========================================
     // Non-streaming chat (HUD)
     // ==========================================
 

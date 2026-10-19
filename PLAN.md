@@ -1822,7 +1822,21 @@ sync refuses (`SyncRefused`, logged, nothing changed) when the links belong to a
 side in one run. 2 tests; full suite 1095 pass. Calendar was not touched (World.calendar no-ops its sync).
 **Rule: any script that imports the backend runs with temp `JARVIS_GOOGLE_DIR` / `JARVIS_NOTES_DIR`** --
 pytest's conftest and the eval do; a new one must too.
-- Next: the Settings button for sign-in/out + status; see on device that announcements now act.
+
+**Settings -> Accounts built 2026-10-19 -- device-verified 10:48-10:59** (user: "looks good"; log: Sync now
+200, Disconnect -> Google `/revoke` 200, Connect -> status polled every 2 s -> token 200, "Google sign-in
+complete"; links kept, no sync errors after). A new sidebar page "Accounts"
+with a Google card: Status (Connected / Not connected[: last error] / "Finish signing in in your browser…" /
+"Not set up: the client file ... is missing") + Connect | Disconnect (Disconnect needs a second click within
+4 s, then revokes and deletes the sign-in); Access (from the granted scopes: "Calendar events and Tasks");
+Last sync ("Tasks 2 min ago · Calendar just now") + Sync now; a footnote on what syncs, where the sign-in is
+kept, and the weekly re-connect while the Google app is in Testing. Connect posts /sign-in and polls /status
+every 2 s while the page is open (up to 5.5 min). Backend: /status adds `tasks_synced_at` /
+`calendar_synced_at`; new `POST /api/google/sync` runs both syncs, reporting each side's counts or error
+(409 when not signed in). Core: `GoogleStatus`, `GoogleSyncResult`, four client calls. Plain XAML buttons, like
+the other Settings rows. Tests: endpoint test extended; full suite 1095 pass; `dotnet build Jarvis.slnx` OK.
+- Next: phase C (morning briefing), or phase D (Gmail) after a head-budget decision; watch on device that
+  announcements now act.
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice

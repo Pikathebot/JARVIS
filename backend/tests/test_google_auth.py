@@ -121,5 +121,7 @@ def test_the_endpoints(google):
     from app.main import app
 
     client = TestClient(app)
-    assert client.get("/api/google/status").json()["configured"] is True
+    st = client.get("/api/google/status").json()
+    assert st["configured"] is True and st["tasks_synced_at"] is None and st["calendar_synced_at"] is None
     assert client.post("/api/google/sign-out").json() == {"signed_out": False}
+    assert client.post("/api/google/sync").status_code == 409  # not signed in: nothing to sync

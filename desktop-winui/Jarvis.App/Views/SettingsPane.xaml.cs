@@ -11,13 +11,13 @@ namespace Jarvis_App.Views;
 
 /// <summary>
 /// The Settings window's content (PLAN 4.8b2): a section list and one page at a time --
-/// General, Models, Persona, Voice, Routines, Developer, About. Hosted by
+/// General, Models, Persona, Voice, Routines, Accounts, Developer, About. Hosted by
 /// <see cref="SettingsWindow"/>; the pages hold what the old in-window sheet had plus the
 /// Models budget card, the Voice listening sliders and the Developer preview.
 /// </summary>
 public sealed partial class SettingsPane : UserControl
 {
-    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Developer", "About" };
+    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Accounts", "Developer", "About" };
 
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
@@ -84,7 +84,7 @@ public sealed partial class SettingsPane : UserControl
         var panels = new (string Name, FrameworkElement Panel, Button Nav)[]
         {
             ("General", GeneralPage, NavGeneral), ("Models", ModelsPage, NavModels), ("Persona", PersonaPage, NavPersona),
-            ("Voice", VoicePage, NavVoice), ("Routines", RoutinesPage, NavRoutines),
+            ("Voice", VoicePage, NavVoice), ("Routines", RoutinesPage, NavRoutines), ("Accounts", AccountsPage, NavAccounts),
             ("Developer", DeveloperPage, NavDeveloper), ("About", AboutPage, NavAbout),
         };
         foreach (var (name, panel, nav) in panels)
@@ -101,6 +101,7 @@ public sealed partial class SettingsPane : UserControl
         if (page == "Developer") BuildTuningRows();
         else TuningRows.Children.Clear();
         if (page == "Models") RefreshBudget();
+        if (page == "Accounts") _ = RefreshGoogleAsync();
     }
 
     private bool _syncingAppearance;
@@ -594,6 +595,135 @@ public sealed partial class SettingsPane : UserControl
         catch (Exception ex)
         {
             App.Log($"open repo folder failed: {ex.Message}");
+        }
+    }
+
+    // --- Accounts (Google, PLAN 4.16 phase B) ---------------------------------------------------
+
+    private GoogleStatus? _google;
+    private bool _confirmDisconnect;
+
+    private async Task RefreshGoogleAsync()
+    {
+        try
+        {
+            _google = await _api.FetchGoogleStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            _google = null;
+            GoogleStatusText.Text = $"Can't reach the backend ({ex.Message}).";
+            GoogleConnectButton.IsEnabled = GoogleSyncButton.IsEnabled = false;
+            return;
+        }
+        ShowGoogle();
+    }
+
+    private void ShowGoogle()
+    {
+        if (_google is not { } g) return;
+        _confirmDisconnect = false;
+        GoogleConnectButton.Content = g.SignedIn ? "Disconnect" : g.SigningIn ? "Waiting…" : "Connect";
+        GoogleConnectButton.IsEnabled = g.Configured && !g.SigningIn;
+        GoogleSyncButton.IsEnabled = g.SignedIn;
+        GoogleStatusText.Text =
+            !g.Configured ? "Not set up: the client file data\\google_client_secret.json is missing (see docs\\GOOGLE_SETUP.md)."
+            : g.SigningIn ? "Finish signing in in your browser…"
+            : g.SignedIn ? "Connected"
+            : string.IsNullOrEmpty(g.LastError) ? "Not connected" : $"Not connected: {g.LastError}";
+        GoogleAccessText.Text = g.SignedIn ? GoogleAccess(g.Scopes) : "Calendar events and Tasks, once connected";
+        GoogleSyncText.Text = g.SignedIn ? $"Tasks {Ago(g.TasksSyncedAt)} · Calendar {Ago(g.CalendarSyncedAt)}" : "—";
+    }
+
+    private static string GoogleAccess(List<string> scopes)
+    {
+        var parts = new List<string>();
+        if (scopes.Any(s => s.EndsWith("/calendar.events", StringComparison.Ordinal))) parts.Add("Calendar events");
+        if (scopes.Any(s => s.EndsWith("/tasks", StringComparison.Ordinal))) parts.Add("Tasks");
+        return parts.Count == 0 ? "—" : string.Join(" and ", parts);
+    }
+
+    private static string Ago(double? epochSeconds)
+    {
+        if (epochSeconds is not { } s) return "never";
+        var at = DateTimeOffset.FromUnixTimeMilliseconds((long)(s * 1000));
+        var span = DateTimeOffset.UtcNow - at;
+        if (span.TotalSeconds < 60) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} min ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours} h ago";
+        return at.LocalDateTime.ToString("d MMM HH:mm");
+    }
+
+    /// <summary>Connect opens the browser and polls until the sign-in ends (up to the backend's five
+    /// minutes); Disconnect asks for a second click, then revokes and deletes the sign-in.</summary>
+    private async void GoogleConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_google is null)
+        {
+            await RefreshGoogleAsync();
+            return;
+        }
+        if (_google.SignedIn)
+        {
+            if (!_confirmDisconnect)
+            {
+                _confirmDisconnect = true;
+                GoogleConnectButton.Content = "Click again to disconnect";
+                await Task.Delay(4000);
+                if (_confirmDisconnect) ShowGoogle();
+                return;
+            }
+            GoogleConnectButton.IsEnabled = false;
+            try
+            {
+                await _api.GoogleSignOutAsync();
+            }
+            catch (Exception ex)
+            {
+                App.Log($"google sign-out failed: {ex.Message}");
+            }
+            await RefreshGoogleAsync();
+            return;
+        }
+
+        GoogleConnectButton.IsEnabled = false;
+        try
+        {
+            await _api.StartGoogleSignInAsync();
+        }
+        catch (Exception ex)
+        {
+            GoogleStatusText.Text = $"Couldn't start the sign-in: {ex.Message}";
+            GoogleConnectButton.IsEnabled = true;
+            return;
+        }
+        var until = DateTime.UtcNow.AddMinutes(5.5);
+        do
+        {
+            await RefreshGoogleAsync();
+            if (_google is not { SigningIn: true }) break;
+            await Task.Delay(2000);
+        } while (DateTime.UtcNow < until && _page == "Accounts");
+    }
+
+    private async void GoogleSync_Click(object sender, RoutedEventArgs e)
+    {
+        GoogleSyncButton.IsEnabled = false;
+        GoogleSyncText.Text = "Syncing…";
+        try
+        {
+            var result = await _api.SyncGoogleNowAsync();
+            var error = new[] { ("Tasks", result.Tasks), ("Calendar", result.Calendar) }
+                .Where(r => r.Item2.TryGetValue("error", out _))
+                .Select(r => $"{r.Item1}: {r.Item2["error"].GetString()}")
+                .FirstOrDefault();
+            await RefreshGoogleAsync();
+            if (error is not null) GoogleSyncText.Text = $"Sync failed. {error}";
+        }
+        catch (Exception ex)
+        {
+            GoogleSyncText.Text = $"Sync failed: {ex.Message}";
+            GoogleSyncButton.IsEnabled = true;
         }
     }
 }
