@@ -52,7 +52,7 @@ MAX_ROUNDS = 5  # the orchestrator's max_iterations; then one answer round (loop
 SLOT = "main"  # --slot fast: the picker on Fast (no tools, thinking off)
 NETS_OFF: set[str] = set()  # --no-net: safety nets turned off for a probe (PLAN 4.15 #3)
 NET_NAMES = ("pre-research", "pre-status", "reasoning-nudge", "claim-nudge", "repeat-guard", "result-hint",
-             "fast-claim", "notes-cue")
+             "fast-claim", "notes-cue", "lookup-nudge")
 # A reply that says it can't (or that a tool is needed) is a refusal, not a claim: on the tool-less fast
 # slot the old "any text on an action task" flag counted 37 honest refusals as claims (2026-10-18).
 REFUSES = re.compile(r"\b(?:can't|cannot|can\s?not|unable to|not able to|don't have|do not have|no access|"
@@ -741,6 +741,15 @@ def run_task(client: httpx.Client, task: Task, head: str,
                         rd["net"] = "claim-nudge"
                         live += [{"role": "assistant", "content": content},
                                  {"role": "user", "content": NUDGE_UNRUN_CLAIM}]
+                        continue
+                    # orchestrator: "Fetching your calendar." with nothing run gets one retry (device 2026-10-19)
+                    if (not fast and "lookup-nudge" not in NETS_OFF and not turn_tools and not claim_checked
+                            and o.promises_a_lookup(content)):
+                        claim_checked = True
+                        nets.append("lookup-nudge")
+                        rd["net"] = "lookup-nudge"
+                        live += [{"role": "assistant", "content": content},
+                                 {"role": "user", "content": o._NUDGE_UNRUN_LOOKUP}]
                         continue
                     final = content
                     break

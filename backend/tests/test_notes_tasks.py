@@ -238,7 +238,7 @@ async def _user_turn(monkeypatch, store, message):
     sent = []
 
     async def reply(model=None, messages=None, tools=None):
-        sent.append(messages)
+        sent.append(list(messages))  # a copy: a "Done." with no call is sent back, appending to the same list
         yield {"type": "token", "delta": "Done."}
         yield {"type": "done", "content": "Done.", "tool_calls": []}
 

@@ -97,7 +97,7 @@ async def test_the_third_web_lookup_asks_for_an_answer_but_still_runs(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_successful_call_gets_no_hint(tmp_path):
-    p = ScriptedProvider([_call("c1", "web_search", {"query": "a"}), _text_turn("Done.")])
+    p = ScriptedProvider([_call("c1", "web_search", {"query": "a"}), _text_turn("The results say a.")])
     await _run(p, tmp_path)
     assert _tool_messages(p) == ["results for a"]
 

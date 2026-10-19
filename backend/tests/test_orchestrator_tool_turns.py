@@ -11,8 +11,8 @@ import pytest
 from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
 from app.agent.orchestrator import (
-    AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_TO_ANSWER, _NUDGE_UNRUN_CLAIM, _with_system_prompt,
-    TurnMetrics, changed_something, claims_unrun_action, looks_like_action,
+    AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_TO_ANSWER, _NUDGE_UNRUN_CLAIM, _NUDGE_UNRUN_LOOKUP, _with_system_prompt,
+    TurnMetrics, changed_something, claims_unrun_action, looks_like_action, promises_a_lookup,
 )
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
@@ -192,6 +192,10 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     ("Exams are marked out of 100.", False),
     ("I've added \"milk\" to your to-do list.", True),
     ("I've added error handling to the function:", False),
+    # a whole reply of "Added." (eval todo-add 2026-10-19); "Added in 3.12" opening prose is not a claim
+    ("Added.", True),
+    ("Done, sir.", True),
+    ("Added in Python 3.12, the flag controls the JIT.", False),
     # offers, questions and plain facts are not claims
     ("I'll open it if you want.", False),
     ("Want me to set a reminder? I'll remind you whenever you say.", False),
@@ -374,3 +378,42 @@ def test_the_offered_tool_set_is_fixed_per_space():
     assert "execute_command" in names("WORKSPACE") and "execute_command" not in names("FREEFORM")
     assert "launch_app" in names("FREEFORM") and "web_search" in names("FREEFORM")
 
+
+
+@pytest.mark.parametrize("text,promises", [
+    # device 2026-10-19: three announcements, no call, until the user said "use tool call"
+    ("I can list your calendar events for each month, but the calendar API only supports querying by "
+     "\"this year\" or by individual months in a single call. I'll fetch the full year's view in one pass.", True),
+    ("Fetching your full-year calendar.", True),
+    ("Checking your full-year calendar.", True),
+    ("Adding \"need to buy bread\" to your tasks list.", True),
+    ("Let me check your calendar.", True),
+    # offers, plain answers and long answers that merely mention checking are not
+    ("Shall I check the rest of the week?", False),
+    ("I'll check it if you want.", False),
+    ("Nothing on the calendar for today.", False),
+    ("Checking the docs, the flag was added in 3.12. " + "More detail follows here. " * 12, False),
+])
+def test_promises_a_lookup(text, promises):
+    assert promises_a_lookup(text) is promises
+
+
+@pytest.mark.asyncio
+async def test_an_announced_lookup_with_no_call_is_sent_back_once(tmp_path):
+    (tmp_path / "notes.txt").write_text("hello", encoding="utf-8")
+    provider = ScriptedProvider([
+        _text_turn("Fetching your notes."),
+        _read_turn("notes.txt"),
+        _text_turn("It says hello."),
+    ])
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+
+    events = [ev async for ev in orch._run_provider_stream_loop(
+        provider=provider, session_id="lookup-test", model="main", system_prompt="sys",
+        conversation_messages=[{"role": "user", "content": "what's in notes.txt?"}],
+        tools=[read_file], chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+    )]
+
+    assert events[-1]["event"] == "done" and len(provider.calls) == 3
+    assert provider.calls[1]["messages"][-1] == {"role": "user", "content": _NUDGE_UNRUN_LOOKUP}

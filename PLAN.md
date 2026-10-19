@@ -1786,7 +1786,22 @@ reads "this month", "this year"/"the whole year"/"everything" (365 days), "next 
 over a month show the year; an empty agenda names the next event ("The next event is ..."), so "nothing this
 week" carries the birthday. Schema `when` mentions 'this year' (+13 chars). 1 test; full suite 1080 pass.
 Not yet live: a task added in Jarvis reaching Google Tasks (first sync only pulled).
-- Next: the Settings button for sign-in/out + status; retest the agenda answers after a restart.
+
+**Retest 10:08-10:10** (`session_mverk06z_b39af`, after restart): "whats on my calendar for the whole year?" ->
+`agenda(this year)` listed all four events (agenda fix device-verified); "add \"need to buy bread\" to my list"
+-> Google Tasks within a second (`created_there: 1`) -- **all four sync directions device-verified**. Wrong:
+both turns first *announced* instead of acting -- "I'll fetch the full year's view in one pass." / "Fetching
+your full-year calendar." / "Checking your full-year calendar." and "Adding \"need to buy bread\" to your tasks
+list." -- no call until the user typed "use tool call". The claim check only knew claims/promises to *change*
+something. Fixed (build/test-verified, NOT on device): `promises_a_lookup` -- a short reply (<= 300 chars)
+announcing a lookup or action ("I'll fetch/check/...", a sentence opening "Fetching/Checking/Adding/Saving/...",
+"let me ...") on a turn where no tool ran gets one retry with `_NUDGE_UNRUN_LOOKUP` (shares the claim check's
+one retry; both loops; net `lookup-checked`; eval mirror `lookup-nudge`). And a whole reply of "Added." / "Done."
+/ "Noted." now counts as a claim (`_BARE_CLAIM_RE`; eval todo-add said "Added." with no call on 10-18 and 10-19).
+Two tests' fake models ended on a bare "Done." and were adjusted. Eval (Defiant, 3 seeds): notes/calendar/system
+47/48 with the lookup net (it never fired; the miss was the bare "Added."), then notes/calendar 21/21 with the
+bare-claim rule (it fired once on todo-add, which then called `tasks`). Full suite 1093 pass.
+- Next: the Settings button for sign-in/out + status; see on device that announcements now act.
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice
@@ -1806,3 +1821,31 @@ Off-the-record (ephemeral) chats may NOT write notes or tasks (user, 2026-10-18)
 **Defaults to confirm when each phase starts:** the notes folder (or an existing Obsidian vault), the Google Tasks
 list name, the briefing time, and whether off-the-record (ephemeral) chats may write notes/tasks/events (proposal:
 no, like `remember`). The user's timetable is worked out with Jarvis in a chat once B exists.
+
+### 4.17 Logs in Settings -> Developer (raised by the user 2026-10-19) -- PLANNED, NOT BUILT
+
+**Ask:** see the backend's and the model's logs inside the app (Settings -> Developer), instead of opening
+`backend.log` or asking Claude to read it.
+
+**What already exists:** `backend.log` at the repo root (everything the backend logs: routing, tool calls,
+Google syncs, errors); llama-server's stdout/stderr already drained into a 200-line ring buffer
+(`RuntimeProcessManager._recent_output`, `runtime_process_manager.py`); the captioner, embedding and Laya
+sidecars pipe their output the same way but keep nothing; the client's own `launcher-winui.log`,
+`jarvis-glass.log` and `jarvis-app-crash.log` (paths in CLAUDE.md). The Developer page today has only the glass
+tuning controls (`SettingsPane.xaml`, PLAN 4.8d).
+
+**Proposal (to confirm when it starts):**
+- Backend: `GET /api/logs?source=backend|model|sidecars&lines=N` (default 300, capped) -- the tail of
+  `backend.log` read from the end (the file is large; never read it whole), and the model ring buffer (raise it
+  to ~1000 lines, keep a timestamp per line). Sidecars get small ring buffers of their own. Optional
+  `level=warning` filter and `search=` text filter, done server-side.
+- Client: a **Logs** section on the Developer page -- a `GlassSegmented` source picker (Backend / Model /
+  Sidecars / App), a read-only monospace text area (newest at the bottom, follow-tail while scrolled to the end),
+  Refresh + Auto-refresh (every 2 s while the page is open, stopped when it closes), Copy, Open folder.
+  An inline pane, not a popup (glass rule: popups hide glass controls). App source = the client's own logs read
+  from disk by the client.
+- Privacy: logs hold chat text and tool arguments; they never leave the PC (the endpoint is on 127.0.0.1 like the
+  rest). Never show the Google token or client secret -- they are not logged today; keep it that way (a test that
+  greps a log tail for `client_secret`/`refresh_token` after a sign-in).
+- Not in scope: log levels set from the UI, the `LLAMA_PAYLOAD_DUMP_DIR` payload replay (could be a later
+  "dump next request" button).

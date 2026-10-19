@@ -404,9 +404,42 @@ _READ_ONLY_TOOLS = frozenset({
 })
 
 
+# A promise to *look* with nothing looked at (device 2026-10-19, "whats on my calendar for the whole
+# year?"): "I'll fetch the full year's view in one pass." / "Fetching your full-year calendar." /
+# "Checking your full-year calendar." -- three turns, no call, until the user said "use tool call".
+# Then 'add "need to buy bread" to my list' -> "Adding \"need to buy bread\" to your tasks list." and no call.
+# Only a short reply that is all announcement counts; "Checking the docs, ..." in an answer doesn't.
+_LOOKUP_PROMISE_RE = re.compile(
+    r"\bI(?:'ll| will| am going to|'m going to)\s+(?:now\s+|go ahead and\s+)?"
+    r"(?:fetch|check|look|pull|search|get|find|list|grab|retrieve|query)\b"
+    r"|(?:^|[.!?\n]\s*)(?:fetching|checking|looking|pulling|searching|getting|retrieving|loading|querying|"
+    r"adding|saving|opening|launching|creating|setting|scheduling|deleting|removing|marking|ticking|"
+    r"writing|moving|closing|muting|sending|updating|noting)\b",
+    re.IGNORECASE,
+)
+_NUDGE_UNRUN_LOOKUP = (
+    "You said you were doing this, but no tool ran, so nothing happened. Call the tool now, or say "
+    "plainly that you haven't done it."
+)
+
+
+def promises_a_lookup(content: str) -> bool:
+    text = (content or "").strip()
+    if not text or len(text) > 300:
+        return False
+    return any((_LOOKUP_PROMISE_RE.search(s) or _LET_ME_ACT.search(s)) and not _OFFER_RE.search(s)
+               for s in re.split(r"(?<=[.!?])\s+|\n+", text))
+
+
+# A whole reply of "Added." / "Done." (eval todo-add 2026-10-18 and -19, no call). "Added" opening a
+# sentence stays out of _SUBJECTLESS_CLAIM_RE ("Added in Python 3.12, ..."); a reply that is only that is a claim.
+_BARE_CLAIM_RE = re.compile(r"\s*(?:done|added|all set|sorted|ticked off|noted)(?:[,.!]\s*(?:sir|boss)?)?[.!]?\s*",
+                            re.IGNORECASE)
+
+
 def claims_unrun_action(content: str) -> bool:
     text = content or ""
-    if _UNRUN_ACTION_CLAIM_RE.search(text) or _SUBJECTLESS_CLAIM_RE.search(text):
+    if _UNRUN_ACTION_CLAIM_RE.search(text) or _SUBJECTLESS_CLAIM_RE.search(text) or _BARE_CLAIM_RE.fullmatch(text):
         return True
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
         if _PROMISE_RE.search(sentence) and not _OFFER_RE.search(sentence):
@@ -1534,6 +1567,12 @@ class AgentOrchestrator:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
                     continue
+                if tools and not tools_used and not claim_checked and promises_a_lookup(content):
+                    claim_checked = True
+                    logger.info("Model '%s' promised a lookup with no tool call; sending it back once.", model)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_UNRUN_LOOKUP})
+                    continue
 
                 logger.info("No further tool calls requested. Returning final %s response.", provider.name)
                 self.memory_store.append_message(session_id, role="assistant", content=content)
@@ -2370,6 +2409,14 @@ class AgentOrchestrator:
                     metrics.nets.append("claim-checked")
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
+                    yield {"event": "token", "data": {"delta": "\n\n"}}
+                    continue
+                if tools and not tools_used and not claim_checked and promises_a_lookup(content):
+                    claim_checked = True
+                    logger.info("Model '%s' promised a lookup with no tool call; sending it back once.", model)
+                    metrics.nets.append("lookup-checked")
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_UNRUN_LOOKUP})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
 
