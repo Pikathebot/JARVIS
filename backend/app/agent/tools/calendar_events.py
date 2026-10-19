@@ -157,17 +157,28 @@ def parse_duration(text: str) -> tuple[Optional[timedelta], str]:
     return (span, "") if span > timedelta(0) else (None, "Error: the duration must be longer than zero.")
 
 
+_SPAN_RE = re.compile(r"next (\d{1,3}) (day|week|month)s?")
+
+
 def _agenda_range(when: str, now: datetime) -> tuple[Optional[datetime], int, str]:
-    t = " ".join(str(when or "").lower().split())
+    # Device 2026-10-19: "check for the whole year" became when='this week' -- longer spans are read here.
+    t = " ".join(re.sub(r"\b(?:for|the|whole|entire|rest of|of|all)\b", " ", str(when or "").lower()).split())
     today = datetime.combine(now.date(), datetime.min.time())
-    if t in ("", "week", "this week", "the week", "next 7 days", "upcoming", "coming up", "soon"):
+    if t in ("", "week", "this week", "upcoming", "coming up", "soon", "next few days"):
         return today, 7, ""
     if t == "next week":
         return today + timedelta(days=7 - now.weekday()), 7, ""
+    if t in ("month", "this month", "next month"):
+        return today, 31, ""
+    if t in ("year", "this year", "next year", "everything", "anything"):
+        return today, 365, ""
+    m = _SPAN_RE.fullmatch(t)
+    if m:
+        return today, min(365, int(m.group(1)) * {"day": 1, "week": 7, "month": 31}[m.group(2)]), ""
     at, _, err = parse_when(t, now)
     if at is None:
         return None, 0, (f"Error: couldn't read '{when}' for the agenda. Use 'today', 'tomorrow', a weekday, "
-                         "'2026-10-20' or 'this week'.")
+                         "'2026-10-20', 'this week', 'this month' or 'this year'.")
     return datetime.combine(at.date(), datetime.min.time()), 1, ""
 
 
@@ -212,7 +223,7 @@ def calendar(action: str = "agenda", title: str = "", when: str = "", duration: 
     Args:
         action: agenda, find, add, move or delete.
         title: What the event is (add), or its new name (move).
-        when: When (add, move): 'tomorrow 3pm', 'friday 10:00', '2026-10-20 15:00'; a day alone = all day. For agenda: 'today', 'tomorrow', 'friday' or 'this week'.
+        when: When (add, move): 'tomorrow 3pm', 'friday 10:00', '2026-10-20 15:00'; a day alone = all day. For agenda: 'today', 'tomorrow', 'friday', 'this week', 'this month' or 'this year'.
         duration: How long (add, move): '1h', '30m', '1h30m'. Default 1 hour.
         event: Which event (move, delete): its id from the agenda, or some of its words. For find: the words to look for.
     """
@@ -243,9 +254,12 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, sessio
                 return err
             end = start + timedelta(days=days)
             hits = sorted((e for e in _live(events) if start_dt(e) < end and end_dt(e) > start), key=start_dt)
-            span = f"{start:%a %d %b}" if days == 1 else f"{start:%a %d %b} - {end - timedelta(days=1):%a %d %b}"
+            fmt = "%a %d %b %Y" if days > 31 else "%a %d %b"
+            span = f"{start:%a %d %b}" if days == 1 else f"{start:{fmt}} - {end - timedelta(days=1):{fmt}}"
             if not hits:
-                return f"Nothing on the calendar for {span}."
+                # Device 2026-10-19: after "nothing this week" the model said birthdays weren't stored at all.
+                later = sorted((e for e in _live(events) if start_dt(e) >= end), key=start_dt)
+                return f"Nothing on the calendar for {span}." + (f" The next event is {label(later[0])}." if later else "")
             more = f"\n(and {len(hits) - _LIST_MAX} more)" if len(hits) > _LIST_MAX else ""
             return f"{span}:\n" + "\n".join(f"- {label(e)}" for e in hits[:_LIST_MAX]) + more
         if act == "find":

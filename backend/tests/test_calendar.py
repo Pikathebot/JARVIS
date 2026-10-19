@@ -126,7 +126,7 @@ def test_add_and_agenda(cal):
     week = ce.calendar("agenda")
     assert "Tue 20 Oct 15:00-15:45 Dentist" in week and "Fri 23 Oct, all day Mum's birthday" in week
     assert ce.calendar("agenda", when="tomorrow").count("\n- ") == 1
-    assert ce.calendar("agenda", when="today") == "Nothing on the calendar for Mon 19 Oct."
+    assert ce.calendar("agenda", when="today").startswith("Nothing on the calendar for Mon 19 Oct. The next event is")
     assert "has already passed" in ce.calendar("add", title="Standup", when="today 9am")
 
 
@@ -310,3 +310,15 @@ def test_cue_points_at_the_calendar_when_an_event_is_asked_for():
         assert turn_directive(msg).startswith("CALENDAR:"), msg
     assert not turn_directive("what's on my calendar tomorrow?").startswith("CALENDAR:")
     assert turn_directive("add milk to my list").startswith("TASKS:")
+
+
+def test_agenda_reads_longer_spans_and_names_the_next_event(cal):
+    ce.calendar("add", title="Girija Anni birthday", when="2026-11-11 06:00")
+    week = ce.calendar("agenda", when="this week")
+    assert week.startswith("Nothing on the calendar for Mon 19 Oct - Sun 25 Oct.")
+    assert "The next event is" in week and "Wed 11 Nov 06:00-07:00 Girija Anni birthday" in week
+    for when in ("this year", "for the whole year", "next 2 months", "everything"):
+        assert "Girija Anni birthday" in ce.calendar("agenda", when=when), when
+    assert ce.calendar("agenda", when="this year").startswith("Mon 19 Oct 2026 - Mon 18 Oct 2027:")
+    assert ce.calendar("agenda", when="next 3 days") == "Nothing on the calendar for Mon 19 Oct - Wed 21 Oct. " \
+        "The next event is " + ce.label(_events()[0]) + "."

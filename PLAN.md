@@ -1775,8 +1775,18 @@ to send). **Bug found and fixed:** reading tasks.md dropped each "(done YYYY-MM-
 today's date back, so any change re-dated every done task (phase A bug); now kept (`_Task.done_on`), cleared
 on reopen, and a task pulled from Google takes its `completed` date. The six lines were corrected from Google.
 2 tests; full suite 1079 pass.
-- Next: the Settings button for sign-in/out + status, then the device test on Jarvis ("what's on my calendar",
-  "add X to my calendar" -> appears in Google Calendar, a task ticked off in Google -> ticked in tasks.md).
+
+**Device test 2026-10-19 09:57-10:03** (`session_mver6xrq_03c0a`, Main). OK, **device-verified**: "add lunch
+with Sam on my calendar for this Friday 2 PM" -> `calendar(add)` -> Google Calendar (`created_there: 1`, user
+saw it); a task "Testing" added in Google Tasks reached tasks.md on the 10:03 cycle (`created_here: 1`).
+Wrong: "whats on my calendar" -> agenda for today only; "check for the whole year" -> `when='this week'` (the
+tool had no longer span); "check for any birthdays" -> no call, "Birthdays are not currently stored" (three are,
+in Nov/Dec). Fixed in code (build/test-verified, NOT on device -- Jarvis was running, no hot reload): agenda
+reads "this month", "this year"/"the whole year"/"everything" (365 days), "next N days/weeks/months"; spans
+over a month show the year; an empty agenda names the next event ("The next event is ..."), so "nothing this
+week" carries the birthday. Schema `when` mentions 'this year' (+13 chars). 1 test; full suite 1080 pass.
+Not yet live: a task added in Jarvis reaching Google Tasks (first sync only pulled).
+- Next: the Settings button for sign-in/out + status; retest the agenda answers after a restart.
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice
