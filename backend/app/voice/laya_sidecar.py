@@ -24,6 +24,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import settings
+from app.logs import POLL_REQUEST, SIDECAR_RING, stamp
 
 logger = logging.getLogger("jarvis.voice.laya")
 
@@ -81,8 +82,8 @@ class LayaSidecar:
         try:
             for raw in iter(stream.readline, b""):
                 line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    self._recent = (self._recent + [line])[-30:]
+                if line and not POLL_REQUEST.search(line):
+                    self._recent = (self._recent + [stamp(line)])[-SIDECAR_RING:]
                     logger.debug("[laya] %s", line)
         except Exception:
             pass

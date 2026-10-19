@@ -60,6 +60,7 @@ public sealed partial class SettingsPane : UserControl
     /// reliably raised when a window closes, so the window calls this from Closed too).</summary>
     public void Detach()
     {
+        StopLogs();
         ModelsViewModel.PropertyChanged -= Models_PropertyChanged;
         ModelsViewModel.Hub.PropertyChanged -= Hub_PropertyChanged;
         RoutinesViewModel.Routines.CollectionChanged -= Routines_CollectionChanged;
@@ -100,6 +101,8 @@ public sealed partial class SettingsPane : UserControl
         // The Developer page's sliders exist only while it shows (each is a live glass shape).
         if (page == "Developer") BuildTuningRows();
         else TuningRows.Children.Clear();
+        if (page == "Developer") StartLogs();
+        else StopLogs();
         if (page == "Models") RefreshBudget();
         if (page == "Accounts") _ = RefreshGoogleAsync();
     }

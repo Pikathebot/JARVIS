@@ -32,6 +32,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import settings
+from app.logs import POLL_REQUEST, SIDECAR_RING, stamp
 
 logger = logging.getLogger("jarvis.rag.embedding_sidecar")
 
@@ -115,11 +116,11 @@ class EmbeddingSidecar:
         try:
             for raw in iter(stream.readline, b""):
                 line = raw.decode("utf-8", errors="replace").rstrip()
-                if not line:
+                if not line or POLL_REQUEST.search(line):
                     continue
                 with self._output_lock:
-                    self._recent_output.append(line)
-                    del self._recent_output[:-40]
+                    self._recent_output.append(stamp(line))
+                    del self._recent_output[:-SIDECAR_RING]
                 logger.debug("[embedder %s] %s", label, line)
         except Exception:
             pass

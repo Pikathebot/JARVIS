@@ -150,6 +150,16 @@ public sealed class JarvisApiClient
         await EnsureSuccessAsync(response, "switch game mode").ConfigureAwait(false);
     }
 
+    /// <summary>Settings -> Developer -> Logs: source = backend | model | sidecars.</summary>
+    public Task<LogsResponse> FetchLogsAsync(string source, int lines = 300, bool warningsOnly = false,
+        string? search = null, CancellationToken ct = default)
+    {
+        var url = $"/api/logs?source={Uri.EscapeDataString(source)}&lines={lines}&quiet=true"
+            + (warningsOnly ? "&level=warning" : "")
+            + (string.IsNullOrWhiteSpace(search) ? "" : $"&search={Uri.EscapeDataString(search.Trim())}");
+        return GetAsync<LogsResponse>(url, ct);
+    }
+
     public Task<GovernorTelemetry> FetchGovernorStatusAsync(CancellationToken ct = default) =>
         GetAsync<GovernorTelemetry>("/governor/status", ct);
 

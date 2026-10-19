@@ -838,6 +838,19 @@ async def set_game_mode(req: GameModeRequest):
     return await (game_mode.enter() if req.enabled else game_mode.leave())
 
 
+@app.get("/api/logs")
+async def get_logs(source: str = "backend", lines: int = 300, quiet: bool = True, level: str = "",
+                   search: str = ""):
+    """Settings -> Developer -> Logs (PLAN 4.17): the tail of backend.log, or the model's or the
+    sidecars' recent output. ``quiet`` drops the polling noise; ``level=warning``; ``search``."""
+    from app.logs import read_logs
+
+    try:
+        return await asyncio.to_thread(read_logs, source, lines, quiet=quiet, level=level, search=search)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @app.post("/governor/clear-error")
 async def governor_clear_error():
     """Clears governor error state, restoring automated governance."""

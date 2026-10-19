@@ -1953,7 +1953,24 @@ retry fires but doesn't rescue that seed. Possible follow-up: run a text call th
 tool, keyword literals only) instead of sending it back. Gmail is live for the user's account (Gmail API
 enabled, all four scopes granted, unread check OK); not seen in the app yet (Reconnect label, briefing mail line).
 
-### 4.17 Logs in Settings -> Developer (raised by the user 2026-10-19) -- PLANNED, NOT BUILT
+### 4.17 Logs in Settings -> Developer (raised by the user 2026-10-19) -- BUILT 2026-10-19, not seen on device
+
+**Built (backend test-verified, WinUI builds; the page itself not seen on device):** `app/logs.py` +
+`GET /api/logs?source=backend|model|sidecars&lines=300&quiet=true&level=warning&search=`. Backend = the last
+4 MB of `backend.log` (never the whole file; 29 ms on the real 20 MB log), `quiet` drops the 2 s status polls
+and the governor's llama-server probes (keeps 3,627 of 48,729 lines there), `level=warning` keeps warnings
+and errors *with their traceback lines* (415). Model = llama-server's ring, now 1,000 lines, each stamped
+`HH:MM:SS`; Sidecars = captioner + embedding + Laya rings (300 each, stamped, merged by time). The poll
+requests llama-server logs (`request: GET /slots|/health|...`) are dropped as they're drained, or the ring
+would hold nothing else. Client: a **Logs** card at the top of Settings -> Developer -- Backend / Model /
+Sidecars / App switch, a filter box (Enter), Warnings only, Follow (re-reads every 2 s while the page shows;
+stays put if you scroll up), Refresh, Copy, Open folder. App = the client's own logs read from disk
+(`launcher-winui.log`, `jarvis-app.log`, `jarvis-voice.log`, `jarvis-glass.log`, `jarvis-app-crash.log`,
+last 120 lines each under a header). Tests: `test_logs.py` (8). Privacy check: the real `backend.log`
+(20 MB, includes today's Google sign-in and syncs) has no `refresh_token`, `client_secret`,
+`access_token`, `ya29.` or `GOCSPX` anywhere.
+**Follow-ups noticed:** `backend.log` is appended forever (20 MB by 10-19) -- rotate it in `BackendHost`
+(e.g. roll at 20 MB, keep one old file).
 
 **Ask:** see the backend's and the model's logs inside the app (Settings -> Developer), instead of opening
 `backend.log` or asking Claude to read it.

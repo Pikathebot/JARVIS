@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 import httpx
 from app.config import settings
+from app.logs import POLL_REQUEST, stamp
 
 logger = logging.getLogger("jarvis.agent.process_manager")
 
@@ -129,7 +130,8 @@ class RuntimeProcessManager:
         self._externally_managed: bool = False
         self._lock = asyncio.Lock()
         # Bounded so a long-running server cannot grow it without limit; only the tail matters.
-        self._recent_output: deque[str] = deque(maxlen=200)
+        # Also what Settings -> Developer -> Logs shows as "Model" (app/logs.py).
+        self._recent_output: deque[str] = deque(maxlen=1000)
         self._output_lock = threading.Lock()
 
     @property
@@ -330,10 +332,10 @@ class RuntimeProcessManager:
         try:
             for line in iter(stream.readline, b""):
                 decoded = line.decode("utf-8", errors="replace").rstrip()
-                if decoded:
+                if decoded and not POLL_REQUEST.search(decoded):
                     logger.debug("[llama-server %s] %s", stream_name, decoded)
                     with self._output_lock:
-                        self._recent_output.append(f"[{stream_name}] {decoded}")
+                        self._recent_output.append(stamp(f"[{stream_name}] {decoded}"))
         except Exception:
             pass
         finally:

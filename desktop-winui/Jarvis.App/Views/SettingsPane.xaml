@@ -642,6 +642,50 @@
 
                         <!-- ========== Developer (PLAN 4.8d) ========== -->
                         <StackPanel x:Name="DeveloperPage" Spacing="16" Visibility="Collapsed">
+                            <!-- Logs (PLAN 4.17): the backend's, the model's and the sidecars' from /api/logs; the app's own from disk. -->
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Logs" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <glass:GlassSegmented x:Name="LogSourceSwitch" Items="Backend|Model|Sidecars|App" HorizontalAlignment="Stretch"
+                                                      SelectionChanged="LogSource_SelectionChanged" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <Grid Style="{StaticResource SettingsRow}" ColumnSpacing="16">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBox x:Name="LogSearchBox" PlaceholderText="Filter: text to find, then Enter" KeyDown="LogSearchBox_KeyDown" VerticalAlignment="Center" />
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <TextBlock Text="Warnings only" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                                <glass:GlassToggle x:Name="LogWarningsToggle" SwitchScale="0.75" VerticalAlignment="Center" Toggled="LogWarningsToggle_Toggled" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <TextBlock Text="Follow" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                                <glass:GlassToggle x:Name="LogFollowToggle" SwitchScale="0.75" IsOn="True" VerticalAlignment="Center" Toggled="LogFollowToggle_Toggled" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Rectangle Style="{StaticResource RowSeparator}" />
+                                        <ScrollViewer x:Name="LogScroll" Height="380" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollMode="Auto" Padding="14,10">
+                                            <TextBlock x:Name="LogText" Style="{StaticResource DataText}" Foreground="{ThemeResource LabelBrush}"
+                                                       IsTextSelectionEnabled="True" TextWrapping="NoWrap" />
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </Border>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="Refresh" Click="LogRefresh_Click" />
+                                    <Button Grid.Column="1" Content="Copy" Click="LogCopy_Click" />
+                                    <Button Grid.Column="2" Content="Open folder" Click="LogOpenFolder_Click" />
+                                    <TextBlock x:Name="LogStatus" Grid.Column="3" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center" TextAlignment="Right" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,2,4,0"
+                                           Text="The newest lines are at the bottom. The app's 2-second status polls are left out. Logs can hold what you said to Jarvis and what its tools did; they stay on this PC." />
+                            </StackPanel>
+
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Glass material" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
                                 <glass:GlassSegmented x:Name="TuningGroups" Items="Lens|Toggle|Slider|Button|Field|Panels" HorizontalAlignment="Stretch"
