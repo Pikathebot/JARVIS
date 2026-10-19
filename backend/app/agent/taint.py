@@ -33,6 +33,7 @@ FILE_WRITES = frozenset({"write_file", "patch_file"})
 ACTION_SINKS: dict[str, frozenset[str]] = {
     "notes": frozenset({"add", "append"}),
     "tasks": frozenset({"add", "done", "reopen", "edit", "remove"}),
+    "calendar": frozenset({"add", "move", "delete"}),
 }
 
 

@@ -24,6 +24,7 @@ from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 from app.agent.tools.notes import notes, tasks
+from app.agent.tools.calendar_events import calendar
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -76,6 +77,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # The user's notes and to-do list as Markdown (PLAN 4.16)
     "notes": notes,
     "tasks": tasks,
+    "calendar": calendar,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -129,6 +131,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Notes + tasks
     notes,
     tasks,
+    calendar,
 ]
 
 
@@ -367,6 +370,14 @@ class TasksArgs(BaseModel):
     task_id: str = Field(default="", description="Its id from the list, or some of its words (done, reopen, edit, remove)")
 
 
+class CalendarArgs(BaseModel):
+    action: Literal["agenda", "find", "add", "move", "delete"] = Field(default="agenda", description="What to do")
+    title: str = Field(default="", description="The event (add), or a new name (move)")
+    when: str = Field(default="", description="'tomorrow 3pm', '2026-10-20 15:00'; a day alone = all day. Agenda: 'today', 'this week'")
+    duration: str = Field(default="", description="'1h', '30m'; default 1h")
+    event: str = Field(default="", description="Its id, or some of its words (move, delete, find)")
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "list_directory": ListDirectoryArgs,
@@ -413,6 +424,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "forget": ForgetArgs,
     "notes": NotesArgs,
     "tasks": TasksArgs,
+    "calendar": CalendarArgs,
 }
 
 

@@ -235,6 +235,34 @@ class World(btc.World):
     def tasks(self, **args: Any) -> str:
         return self._notes_call("tasks", args)
 
+    def calendar(self, **args: Any) -> str:
+        """The real calendar tool over this run's own calendar.json (never synced: no token there)."""
+        from app.agent.tools import calendar_events as ce
+        from app.google import auth, calendar_sync
+
+        auth.DATA_DIR = self.notes_dir / "google"
+        ce._now, ce._is_ephemeral = (lambda: NOW), (lambda _sid: False)
+        calendar_sync.maybe_sync, calendar_sync.sync_soon = (lambda *a: None), (lambda: None)
+        out = ce.calendar(**{k: v for k, v in args.items() if k in ("action", "title", "when", "duration", "event")})
+        if str(args.get("action") or "agenda") not in ("agenda", "find"):
+            self.actions.append(("calendar", args))
+        return out
+
+    def seed_calendar(self, events: list[tuple[str, str, str]]) -> None:
+        from app.agent.tools import calendar_events as ce
+        from app.google import auth
+
+        auth.DATA_DIR = self.notes_dir / "google"
+        ce.save({"events": [{"id": f"e{i:04x}", "title": t, "start": s, "end": e, "location": "", "gid": "",
+                             "dirty": False, "updated": 0} for i, (t, s, e) in enumerate(events, 1)]})
+
+    def calendar_events(self) -> list[dict[str, Any]]:
+        from app.agent.tools import calendar_events as ce
+        from app.google import auth
+
+        auth.DATA_DIR = self.notes_dir / "google"
+        return [e for e in ce.load()["events"] if not e.get("deleted")]
+
     def note_file(self, name: str) -> str:
         p = self.notes_dir / name
         return p.read_text(encoding="utf-8") if p.is_file() else ""
@@ -280,8 +308,9 @@ class Task:
     check: Callable[["Run"], bool]
     mode: str = "FREEFORM"
     files: dict[str, str] | None = None
-    acts: bool = False
-    notes: dict[str, str] | None = None  # files in the user's notes folder at the start (PLAN 4.16)  # the request asks Jarvis to *do* something (an action tool must run)
+    acts: bool = False  # the request asks Jarvis to *do* something (an action tool must run)
+    notes: dict[str, str] | None = None  # files in the user's notes folder at the start (PLAN 4.16)
+    calendar: list[tuple[str, str, str]] | None = None  # (title, start, end) on the calendar at the start
 
 
 @dataclass
@@ -404,6 +433,15 @@ TASKS: list[Task] = [
          lambda r: r.any("Rao", "3:15", "4 Nov", "November 4"),
          notes={"Dentist.md": "Appointment moved to Tuesday 4 Nov, 3:15pm with Dr Rao.\n",
                 "Shopping.md": "Milk, eggs, coffee.\n"}),
+    # ---- the calendar (PLAN 4.16 phase B): the real tool over a temp calendar.json; NOW is Fri 16 Oct 18:30
+    Task("cal-add", "calendar", "skill", ["put the dentist on my calendar for tuesday at 3pm"],
+         lambda r: any("dentist" in e["title"].lower() and e["start"] == "2026-10-20T15:00"
+                       for e in r.world.calendar_events()), acts=True),
+    Task("cal-agenda", "calendar", "skill", ["what's on my calendar tomorrow?"],
+         lambda r: r.has("brunch") and r.has("climbing") and not r.has("standup"),
+         calendar=[("Brunch with Sam", "2026-10-17T11:00", "2026-10-17T12:30"),
+                   ("Climbing", "2026-10-17T16:00", "2026-10-17T18:00"),
+                   ("Standup", "2026-10-19T09:30", "2026-10-19T09:45")]),
     # ---- the workspace: read what was pointed at, do what was asked
     Task("enhance-prompt", "workspace", "skill",
          ["Read the prompt principles file in the workspace and use it to enhance this prompt: "
@@ -589,6 +627,8 @@ def run_task(client: httpx.Client, task: Task, head: str,
              tools: dict[str, list[dict[str, Any]]]) -> tuple[Result, dict[str, Any]]:
     """One task, the way the backend's stream loop would run it; (result, trace of every round)."""
     run = Run(World(task.files, task.notes))
+    if task.calendar:
+        run.world.seed_calendar(task.calendar)
     o = _orch()
     NUDGE_TO_ACT, NUDGE_TO_ANSWER, NUDGE_UNRUN_CLAIM = o._NUDGE_TO_ACT, o._NUDGE_TO_ANSWER, o._NUDGE_UNRUN_CLAIM
     fast = SLOT == "fast"
@@ -770,7 +810,7 @@ def run_task(client: httpx.Client, task: Task, head: str,
     except Exception as exc:  # a server error leaves the task unscored, not failed (PLAN 4.15 #2)
         err = f"{type(exc).__name__}: {exc}"
     # notes/tasks act only when they write (World logs those); their list/find/read are reads
-    acted = any(c in ACTION_TOOLS for c in run.calls) or any(n in ("notes", "tasks") for n, _ in run.world.actions)
+    acted = any(c in ACTION_TOOLS for c in run.calls) or any(n in ("notes", "tasks", "calendar") for n, _ in run.world.actions)
     ok = None if err else task.check(run)
     rep = SAMPLING["seed"] - 42
     claimed = task.acts and not acted and bool(run.text) and not REFUSES.search(run.text)

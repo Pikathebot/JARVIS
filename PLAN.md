@@ -1690,7 +1690,8 @@ Full suite 1036 pass. Committed 213a85f.
 Fixed in code (build/test-verified): `tasks add` cuts a whole "(please/could you) add|put X to|on my|the
 list|to-do|tasks" sentence down to X (`_task_item`; other text kept as typed), and the cue now names the item
 (`text='milk'`). Eval `todo-add` now fails a line that still contains "list". Full suite 1037 pass; eval not
-re-run (Jarvis running). Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
+re-run (Jarvis running). Committed 2f8711c. **Device-verified 2026-10-18 ~19:00:** "add eggs to my list" ->
+`- [ ] eggs` (user: "works good"). Found on the way (pre-existing, also on b429f96): `test_permissions.py`'s two integration tests
 fail when that file runs alone ("no such table: sessions" -- they rely on an earlier file creating the tables).
 
 **Phase B -- Google sign-in, Google Tasks, calendar (local + Google, two-way).**
@@ -1705,6 +1706,64 @@ fail when that file runs alone ("no such table: sessions" -- they rely on an ear
 - `calendar(action=agenda|find|add|move|delete, ...)`: add runs; move/delete ask (argument-aware tier).
 - Nudge "X in 10 minutes" through `AwarenessMonitor.emit` (new observation kind), spoken and shown like the rest.
 - HTTP via httpx against the REST APIs (already a dependency); `google-auth-oauthlib` only for the sign-in.
+
+**Phase B progress 2026-10-18 19:00-19:10 (build/test-verified; nothing against real Google yet; UNCOMMITTED).**
+- `docs/GOOGLE_SETUP.md`: the user's steps -- own Cloud project, Calendar + Tasks APIs, External consent screen
+  (publish it: "Testing" expires sign-ins after 7 days), Desktop OAuth client JSON -> `data/google_client_secret.json`.
+- `app/google/auth.py`: OAuth desktop flow by hand over httpx (no google-auth dependency): PKCE S256, one-shot
+  loopback server on 127.0.0.1:<random>, state check, `access_type=offline`; token in `data/google_token.bin`
+  encrypted with DPAPI (pywin32, round-trip checked on this PC); refresh with a minute's margin; a 400/401 on
+  refresh = "sign in again"; sign-out revokes + deletes. `JARVIS_GOOGLE_DIR` overrides the folder (conftest points
+  it, and `JARVIS_NOTES_DIR`, at temp dirs). `/api/google/status|sign-in|sign-out` (`routers/google.py`).
+- `app/google/tasks_sync.py`: tasks.md <-> the account's default list ("My Tasks"). Links (local id -> Google id +
+  a fingerprint of text/done/due at the last sync) in `google_tasks_sync.json`, so the Markdown gets nothing new.
+  One side changed -> copied; both -> newer wins (tasks.md mtime vs Google `updated`), Google on a tie; new ->
+  created; deleted on one side and untouched on the other -> deleted (edited there -> brought back). Google keeps a
+  due date only; a local time stays local. A hand-typed line gets its stored id written at once (else the next sync
+  would read another id and delete it at Google -- caught by a test). Runs: the `tasks` tool syncs before it
+  reads (at most once a minute) and in the background after it writes; a loop every 5 min in the lifespan. Never
+  raises into the tool; not signed in = no network.
+- Tests: `test_google_auth.py` (6: PKCE exchange through a fake browser, forged state, refresh, revoke,
+  endpoints), `test_google_tasks_sync.py` (6). Full suite 1049 pass.
+
+**Phase B calendar 2026-10-19 (build/test-verified; nothing against real Google yet; UNCOMMITTED).**
+- Store: `calendar.json` beside the token (`auth.DATA_DIR`, repo-root `data/`), **not** the planned SQLite table --
+  tools are sync functions, and a small JSON file is the repo's pattern for restart-surviving state. Local
+  wall-clock times (`2026-10-20T15:00`, or a date for all-day; end exclusive as at Google). A local change is
+  `dirty` (a delete leaves a `deleted` tombstone) until sent, so adding offline works.
+- `app/agent/tools/calendar_events.py`: `calendar(action=agenda|find|add|move|delete, title, when, duration,
+  event)`. `when` = "tomorrow 3pm", "3pm on friday", ISO, "in 2 hours"; a day alone = all day; agenda takes a
+  day or "this week"/"next week" (default: the next 7 days). Matching by id or words, upcoming first; ambiguity
+  is an error. Move keeps the length. Off-the-record chats read but never write. Offered in Freeform and
+  Workspace. Permissions: agenda/find/add run; move/delete ask (card names the event). Taint sinks: add, move,
+  delete. `changed_something`: agenda/find are reads. `needs_a_tool` (picked Fast): "add/put X to/in my
+  calendar", "what's on my calendar/agenda/schedule"; claim check: "added ... to your calendar".
+- `app/google/calendar_sync.py`: the primary calendar, **a window** (7 days back, 92 ahead, `singleEvents=true`)
+  read every sync instead of `syncToken` (expanded recurring events have no end to page through without a
+  window; one or two requests per sync). Dirty: newer wins (local edit time vs Google `updated`), Google on a
+  tie; local delete sent; deleted at Google but edited here -> re-created. Clean: Google's copy replaces ours;
+  an event missing from the window is checked by id first (moved away != deleted). Cancelled and declined
+  events are left out. One failed write keeps the event dirty for the next sync (no duplicates). Same rhythm as
+  Tasks: before the tool reads (once a minute), in the background after it writes, and the 5-min lifespan loop
+  (now `_google_sync_loop`, both syncs).
+- Head budget: calendar schema 934 chars; Freeform ~23.4k of 25.5k, **Workspace 34,967 of 35,000** (trimmed
+  the schema text to fit) -- the Gmail tool (phase D) will need cuts elsewhere or a budget decision.
+- Tests: `test_calendar.py` (28: time parsing, the tool, permissions, claim/fast checks, sync each way against
+  a fake Calendar API, moved-out-of-window, newer wins, cancelled/declined, failed write, nudge, cue).
+  Full suite 1077 pass.
+- Eval: `cal-add`, `cal-agenda` in `eval_jarvis_tasks.py` (real tool over a temp calendar.json). Run
+  2026-10-19 (Defiant, 3 seeds, `scripts/eval_results/2026-10-19-calendar/`): the ten non-notes tasks of the
+  10-18 comparison 26/30 with `calendar` offered (28/30 on 10-18 with notes, 24/30 without; the misses are
+  hybrid-kv/strawberry knowledge + one open-discord "Opening Discord" with no call) -- within that noise, schema
+  kept. Calendar 3/6 at first: `find(when='tomorrow')` for "what's on tomorrow" (now: find with only a day =
+  that day's agenda, in code) and 'calendar: add event "Dentist" ...' written as text, no call, 2/3 (now: a
+  CALENDAR line in `notes.turn_directive` for "add/put/schedule X to/on/in my calendar"). Re-run `with-cue`:
+  **calendar 6/6, notes 15/15, claimed-without-acting 0**.
+- Nudge: `app/awareness/calendar_nudge.py` -- a timed event starting within 10 minutes is emitted once
+  (`kind=calendar:<id>`, INFO like a reminder, plus the reminder's toast when Jarvis isn't in front); a moved
+  event is announced again. Lifespan loop each minute, local file only. 1 test (26 in `test_calendar.py`).
+- Next: the Settings/chat way to start sign-in (today only `POST /api/google/sign-in`), then a live test once
+  the user has the client JSON (docs/GOOGLE_SETUP.md).
 
 **Phase C -- morning briefing.** Extends the existing `briefing` routine kind (`app/routines`): at the chosen time,
 today's events, tasks due or overdue, and (after D) important unread mail, composed in code (the persona's voice

@@ -105,6 +105,8 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     # asked in words, and a line is as easy to undo by hand; removing a task asks (rule below).
     "notes": RiskTier.LOW_RISK,
     "tasks": RiskTier.LOW_RISK,
+    # The calendar: reading and adding run; moving or deleting an event asks (rule below).
+    "calendar": RiskTier.LOW_RISK,
 }
 
 
@@ -758,6 +760,15 @@ def evaluate_tool_permission(
         which = arguments.get("task_id") or arguments.get("text") or ""
         custom_reason = (f"Removes \"{which}\" from your task list (tasks.md) for good." if which
                          else "Removes a task from your task list (tasks.md) for good.")
+    elif tool_name == "calendar" and str(arguments.get("action", "")).strip().lower() in ("move", "delete"):
+        effective_tier = RiskTier.CONFIRMATION_REQUIRED
+        which = str(arguments.get("event") or "").strip()
+        which = f"\"{which}\"" if which else "an event"
+        if str(arguments.get("action")).strip().lower() == "delete":
+            custom_reason = f"Deletes {which} from your calendar (and Google Calendar)."
+        else:
+            to = str(arguments.get("when") or "").strip()
+            custom_reason = f"Moves {which} on your calendar" + (f" to {to}." if to else ".")
     elif tool_name in _GIT_CARD_TEXT:
         custom_reason = _GIT_CARD_TEXT[tool_name].format(
             file=arguments.get("file_path") or "", branch=arguments.get("branch") or "",

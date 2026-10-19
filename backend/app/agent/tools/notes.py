@@ -31,7 +31,8 @@ logger = logging.getLogger("jarvis.agent.tools.notes")
 
 TASKS_FILE = "tasks.md"
 _SKIP_DIRS = {".obsidian", ".trash", ".git"}
-_lock = threading.Lock()
+_lock = threading.RLock()
+TASKS_LOCK = _lock  # the Google Tasks sync edits tasks.md under the same lock
 _OFF_RECORD = "Not saved: this is an off-the-record conversation, and nothing from it is kept."
 
 
@@ -213,6 +214,10 @@ _ASKS_NOTE = re.compile(
 _ASKS_TASK = re.compile(
     r"\b(?:add|put)\s+(?P<item>.{1,80}?)\s+(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?(?:\s+list)?)\b",
     re.I)
+# Eval 2026-10-19: "put the dentist on my calendar for tuesday at 3pm" -> the text 'calendar: add event
+# "Dentist" for Tuesday at 3pm.' and no call, 2 of 3.
+_ASKS_EVENT = re.compile(
+    r"\b(?:add|put|schedule|book)\b.{1,80}?\b(?:to|on(?:to)?|in(?:to)?)\s+(?:my|the)\s+(?:calendar|diary|schedule)\b", re.I)
 # The whole request as the task's text (device 2026-10-18: tasks(add, text="add milk to my list")).
 _WHOLE_REQUEST = re.compile(r"\s*(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
                             + _ASKS_TASK.pattern + r"(?:\s+please)?[\s.!]*", re.I)
@@ -240,6 +245,9 @@ def turn_directive(user_message: str) -> str:
     if _ASKS_NOTE.search(text):
         return ("NOTES: the user asked for a note. Write it with notes(action='add', or 'append' to an "
                 "existing note); replying \"noted\" without the tool saves nothing.")
+    if _ASKS_EVENT.search(text):
+        return ("CALENDAR: the user asked to add an event. Add it with calendar(action='add', title=..., "
+                "when=...); writing the call out as text, or replying \"added\", adds nothing.")
     m = _ASKS_TASK.search(text)
     if m:
         item = m.group("item").strip(" '\"").replace("'", "")
@@ -321,11 +329,17 @@ def _read_tasks() -> tuple[Path, list[str]]:
     return path, path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
-def _save_tasks(path: Path, lines: list[str], tasks: list[_Task]) -> None:
+def _assign_ids(tasks: list[_Task]) -> None:
+    """Give a hand-typed line (text-derived id) its stored id, as the next write will keep it."""
     for t in tasks:
         if not t.stored_id:
             t.id = _new_id(tasks)
             t.stored_id = True
+
+
+def _save_tasks(path: Path, lines: list[str], tasks: list[_Task]) -> None:
+    _assign_ids(tasks)
+    for t in tasks:
         lines[t.index] = t.render()
     if not lines or not any(ln.startswith("#") for ln in lines[:3]):
         lines = ["# Tasks", ""] + lines
@@ -446,6 +460,16 @@ def tasks(action: str = "list", text: str = "", due: str = "", task_id: str = ""
     act = str(action or "list").strip().lower()
     if act not in ("add", "list", "done", "reopen", "edit", "remove"):
         return "Error: action must be add, list, done, reopen, edit or remove."
+    from app.google.tasks_sync import maybe_sync, sync_soon
+
+    maybe_sync()  # Google's side first, when signed in (at most once a minute; never raises)
+    out = _tasks(act, text, due, task_id, session_id)
+    if act != "list" and not out.startswith(("Error", "Not saved", "Already")):
+        sync_soon()  # and this change to Google, in the background
+    return out
+
+
+def _tasks(act: str, text: str, due: str, task_id: str, session_id: Optional[str]) -> str:
     with _lock:
         path, lines = _read_tasks()
         items = _parse_tasks(lines)

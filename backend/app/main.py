@@ -48,6 +48,7 @@ from app.routers import (
     rag_debug_router,
     compare_router,
 )
+from app.routers.google import router as google_router
 from app.awareness.monitor import AwarenessMonitor
 from app.persona import persona_manager
 from app.routines.scheduler import RoutineScheduler
@@ -412,6 +413,37 @@ async def lifespan(app: FastAPI):
     if settings.confirmation_timeout_seconds > 0:
         await confirmation_watcher.start()
 
+    # Google Tasks <-> tasks.md and Google Calendar <-> calendar.json every few minutes while signed
+    # in (PLAN 4.16 phase B); the tasks and calendar tools also sync before they read and after they
+    # write. Not signed in: never touches the network.
+    async def _google_sync_loop() -> None:
+        from app.google import calendar_sync, tasks_sync
+
+        await asyncio.sleep(20)
+        while True:
+            await asyncio.to_thread(tasks_sync.maybe_sync, 0.0)
+            await asyncio.to_thread(calendar_sync.maybe_sync, 0.0)
+            await asyncio.sleep(300)
+
+    # "Dentist in 10 minutes": checks the local calendar each minute (no network).
+    async def _calendar_nudge_loop() -> None:
+        from app.awareness.calendar_nudge import nudge_once
+
+        while True:
+            try:
+                await asyncio.to_thread(nudge_once, awareness_monitor)
+            except Exception as exc:
+                logger.warning("Calendar nudge failed: %s", exc)
+            await asyncio.sleep(60)
+
+    nudge = asyncio.create_task(_calendar_nudge_loop())
+    _background_tasks.add(nudge)
+    nudge.add_done_callback(_background_tasks.discard)
+
+    gsync = asyncio.create_task(_google_sync_loop())
+    _background_tasks.add(gsync)
+    gsync.add_done_callback(_background_tasks.discard)
+
     # Load the local TTS model off the event loop so the first spoken reply is not the slow one
     # (~5 s cold vs ~1 s warm). Nothing waits on it; speech simply loads on demand if it is
     # still running. Delayed: loading takes ~3.5 s at ~50% of the whole CPU (ONNX Runtime uses
@@ -500,6 +532,7 @@ app.include_router(models_router)
 app.include_router(confirmations_router)
 app.include_router(rag_debug_router)
 app.include_router(compare_router)
+app.include_router(google_router)
 
 
 

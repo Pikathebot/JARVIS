@@ -96,7 +96,7 @@ _ASKS_CAPABILITIES = re.compile(
     r")(?:\s+(?:here|now|right\s+now))?[\s,]*(?:jarvis|sir)?\s*[?.!]*\s*", re.I)
 _CAPABILITIES_ALL = ("read, find and save files in your folders, search the web and read pages, open and "
                      "switch apps, type and press keys for you, control volume and media, look at your screen, "
-                     "check the system's readings and running apps, set reminders, keep your notes and to-do list, and remember things you "
+                     "check the system's readings and running apps, set reminders, keep your notes, to-do list and calendar, and remember things you "
                      "tell me to")
 _FAST_PICKED_CAPABILITIES = ("You've picked the Fast model, so right now I can only talk: answer questions, "
                              "explain and write from what's in this conversation. I can't touch files, the web "
@@ -126,6 +126,8 @@ _NEEDS_A_TOOL = re.compile(
     r"|(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?)\s+(?:my|the)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?)\b"
     r"|(?:note\s+(?:that|down)|make\s+a\s+note|take\s+a\s+note|jot\s+(?:down|this|that|it))\b"
     r"|(?:tick|cross|check)\s+off\b"
+    r"|(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?|in(?:to)?)\s+(?:my|the)\s+calendar\b"
+    r"|what(?:'s|\s+is)\s+on\s+(?:my|the)\s+(?:calendar|agenda|schedule)\b"
     r")", re.I)
 _FAST_PICKED_ACTION = ("You've picked the Fast model, so right now I can only talk -- that needs a tool. "
                        "Switch the model to Main or Auto and ask again; Main can " + _CAPABILITIES_ALL + ".")
@@ -369,7 +371,7 @@ _SUBJECTLESS_CLAIM_RE = re.compile(
     r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)"
     # "I've added \"milk\" to your to-do list." with no call (device 2026-10-18); a bare "I've added"
     # would also catch code answers ("I've added error handling to the function")
-    r"|\badded\b.{0,60}?\bto\s+(?:your|the|my)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?)\b",
+    r"|\badded\b.{0,60}?\bto\s+(?:your|the|my)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?|calendar)\b",
     re.IGNORECASE,
 )
 
@@ -442,7 +444,8 @@ def changed_something(tools_used: list[Any]) -> bool:
         action = str((item.get("args") or {}).get("action") or "list").lower()
         if name == "reminders" and action == "list":
             continue
-        if (name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list"):
+        if ((name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list")
+                or (name == "calendar" and action in ("agenda", "find", "list"))):
             continue
         if name not in _READ_ONLY_TOOLS:
             return True
