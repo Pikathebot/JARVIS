@@ -107,6 +107,9 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "tasks": RiskTier.LOW_RISK,
     # The calendar: reading and adding run; moving or deleting an event asks (rule below).
     "calendar": RiskTier.LOW_RISK,
+    # Gmail: reading and drafting run (a draft only lands in Drafts; nothing can send). After mail was
+    # read, a draft -- like any write -- asks, through taint (email is a source).
+    "email": RiskTier.LOW_RISK,
 }
 
 

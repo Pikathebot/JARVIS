@@ -25,6 +25,7 @@ from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_s
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 from app.agent.tools.notes import notes, tasks
 from app.agent.tools.calendar_events import calendar
+from app.agent.tools.gmail import email
 
 logger = logging.getLogger("jarvis.agent.tools")
 
@@ -78,6 +79,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "notes": notes,
     "tasks": tasks,
     "calendar": calendar,
+    "email": email,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -132,6 +134,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     notes,
     tasks,
     calendar,
+    email,
 ]
 
 
@@ -378,6 +381,15 @@ class CalendarArgs(BaseModel):
     event: str = Field(default="", description="Its id, or some of its words (move, delete, find)")
 
 
+class EmailArgs(BaseModel):
+    action: Literal["inbox", "search", "read", "draft"] = Field(default="inbox", description="What to do")
+    query: str = Field(default="", description="Gmail search words (search), e.g. 'from:amazon'")
+    message_id: str = Field(default="", description="Which message (read), or the one to reply to (draft)")
+    to: str = Field(default="", description="Recipient (draft; empty = reply to the sender)")
+    subject: str = Field(default="", description="Subject (draft)")
+    body: str = Field(default="", description="The draft's text")
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "list_directory": ListDirectoryArgs,
@@ -425,6 +437,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "notes": NotesArgs,
     "tasks": TasksArgs,
     "calendar": CalendarArgs,
+    "email": EmailArgs,
 }
 
 

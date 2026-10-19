@@ -84,7 +84,10 @@ def gather(now: datetime) -> dict[str, Any]:
     except OSError:
         tasks = []
     iso = day.isoformat()
+    from app.agent.tools.gmail import unread_summary
+
     return {
+        "mail": unread_summary(),  # None when Gmail isn't connected or allowed
         "day": day,
         "timed": [e for e in today if not ce.is_all_day(e)],
         "all_day": [e for e in today if ce.is_all_day(e)],
@@ -130,6 +133,17 @@ def compose(persona: Any, now: datetime, day: dict[str, Any],
         spoken.append("Nothing is due today.")
     if other:
         lines.append(f"{len(other)} other open task{'s' if len(other) != 1 else ''} on the list.")
+
+    mail = day.get("mail")
+    if mail is not None:
+        count, more, senders = mail
+        if count:
+            n = f"{count}{'+' if more else ''}"
+            lines.append(f"Unread in Primary: {n}" + (f" ({', '.join(senders[:4])})" if senders else ""))
+            spoken.append(f"You have {n.replace('+', ' or more')} unread email{'s' if count != 1 or more else ''}"
+                          + (f", from {_join(senders[:3])}." if senders else "."))
+        else:
+            lines.append("No unread mail in Primary.")
 
     nxt = day["next"]
     if nxt is not None:
@@ -197,7 +211,8 @@ async def brief_if_due(monitor: Any, persona_provider: Callable[[], Any], at: da
         await asyncio.wait_for(asyncio.to_thread(refresh), timeout=20)
     except Exception as exc:  # offline or slow: brief from what's here
         logger.info("Day briefing: Google refresh skipped (%s)", exc)
-    obs = build(persona_provider(), at, monitor.active_observations())
+    # gather reads files and asks Gmail: off the event loop
+    obs = await asyncio.to_thread(build, persona_provider(), at, monitor.active_observations())
     mark_briefed(day)
     logger.info("Day briefing for %s: %s", day, obs.data)
     return monitor.emit(obs)

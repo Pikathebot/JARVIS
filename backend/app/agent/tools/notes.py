@@ -218,6 +218,11 @@ _ASKS_TASK = re.compile(
 # "Dentist" for Tuesday at 3pm.' and no call, 2 of 3.
 _ASKS_EVENT = re.compile(
     r"\b(?:add|put|schedule|book)\b.{1,80}?\b(?:to|on(?:to)?|in(?:to)?)\s+(?:my|the)\s+(?:calendar|diary|schedule)\b", re.I)
+# Eval 2026-10-19: "draft a reply to Priya saying Friday works" -> "The draft is now in your notes." (notes
+# tool) or the reply written in the chat, 2 of 3.
+_ASKS_EMAIL_DRAFT = re.compile(
+    r"\bdraft\s+(?:a|an|the|my)?\s*(?:e-?mail|reply|response)\b|\bwrite\s+(?:an?\s+)?e-?mail\b"
+    r"|\breply\s+to\s+(?:the|that|this|\w+'s)?\s*(?:e-?mail|mail|message)\b", re.I)
 # The whole request as the task's text (device 2026-10-18: tasks(add, text="add milk to my list")).
 _WHOLE_REQUEST = re.compile(r"\s*(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
                             + _ASKS_TASK.pattern + r"(?:\s+please)?[\s.!]*", re.I)
@@ -245,6 +250,10 @@ def turn_directive(user_message: str) -> str:
     if _ASKS_NOTE.search(text):
         return ("NOTES: the user asked for a note. Write it with notes(action='add', or 'append' to an "
                 "existing note); replying \"noted\" without the tool saves nothing.")
+    if _ASKS_EMAIL_DRAFT.search(text):
+        return ("EMAIL: the user asked for an email draft. If it's a reply, find the message first "
+                "(email(action='search' or 'inbox')), then email(action='draft', message_id=..., body=...); a new one "
+                "takes to=. It goes to Gmail's Drafts -- not notes, and not just text in the chat.")
     if _ASKS_EVENT.search(text):
         return ("CALENDAR: the user asked to add an event. Add it with calendar(action='add', title=..., "
                 "when=...); writing the call out as text, or replying \"added\", adds nothing.")

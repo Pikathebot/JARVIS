@@ -96,7 +96,7 @@ _ASKS_CAPABILITIES = re.compile(
     r")(?:\s+(?:here|now|right\s+now))?[\s,]*(?:jarvis|sir)?\s*[?.!]*\s*", re.I)
 _CAPABILITIES_ALL = ("read, find and save files in your folders, search the web and read pages, open and "
                      "switch apps, type and press keys for you, control volume and media, look at your screen, "
-                     "check the system's readings and running apps, set reminders, keep your notes, to-do list and calendar, and remember things you "
+                     "check the system's readings and running apps, set reminders, keep your notes, to-do list and calendar, read your email and draft replies, and remember things you "
                      "tell me to")
 _FAST_PICKED_CAPABILITIES = ("You've picked the Fast model, so right now I can only talk: answer questions, "
                              "explain and write from what's in this conversation. I can't touch files, the web "
@@ -128,6 +128,8 @@ _NEEDS_A_TOOL = re.compile(
     r"|(?:tick|cross|check)\s+off\b"
     r"|(?:add|put)\b.{1,80}?\b(?:to|on(?:to)?|in(?:to)?)\s+(?:my|the)\s+calendar\b"
     r"|what(?:'s|\s+is)\s+on\s+(?:my|the)\s+(?:calendar|agenda|schedule)\b"
+    r"|(?:check|read|open|show)\s+(?:my\s+)?(?:e-?mails?|inbox|gmail|mail)\b|any\s+(?:new\s+)?(?:e-?mails?|mail)\b"
+    r"|draft\s+(?:a|an|the)?\s*(?:e-?mail|reply)\b|write\s+(?:an?\s+)?e-?mail\b"
     r")", re.I)
 _FAST_PICKED_ACTION = ("You've picked the Fast model, so right now I can only talk -- that needs a tool. "
                        "Switch the model to Main or Auto and ask again; Main can " + _CAPABILITIES_ALL + ".")
@@ -365,7 +367,7 @@ _UNRUN_ACTION_CLAIM_RE = re.compile(
 _SUBJECTLESS_CLAIM_RE = re.compile(
     r"(?:^|[.!?\n]\s*)(?:done[,.!:\s-]+)?"
     r"(?:bumped|saved|updated|created|wrote|deleted|removed|copied|opened|launched|closed|killed|"
-    r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled|marked|ticked)\b"
+    r"muted|unmuted|paused|resumed|renamed|moved|committed|pushed|sent|scheduled|marked|ticked|drafted)\b"
     # ...or mid-sentence with a concrete target: "Action items copied to clipboard:" (2026-10-16)
     r"|\b(?:copied|saved|written|added|moved)\s+to\s+(?:your\s+|the\s+)?"
     r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)"
@@ -414,13 +416,28 @@ _LOOKUP_PROMISE_RE = re.compile(
     r"(?:fetch|check|look|pull|search|get|find|list|grab|retrieve|query)\b"
     r"|(?:^|[.!?\n]\s*)(?:fetching|checking|looking|pulling|searching|getting|retrieving|loading|querying|"
     r"adding|saving|opening|launching|creating|setting|scheduling|deleting|removing|marking|ticking|"
-    r"writing|moving|closing|muting|sending|updating|noting)\b",
+    r"writing|moving|closing|muting|sending|updating|noting|drafting)\b",
     re.IGNORECASE,
 )
 _NUDGE_UNRUN_LOOKUP = (
     "You said you were doing this, but no tool ran, so nothing happened. Call the tool now, or say "
     "plainly that you haven't done it."
 )
+
+
+# A call typed out as the reply (eval 2026-10-19: "calendar(action='add', title='Dentist appointment', ...)")
+# runs nothing. Only an offered tool's name followed by "(" and a keyword argument counts.
+_NUDGE_CALL_AS_TEXT = (
+    "You wrote the tool call as text, so it did not run. Make the call itself now (as a tool call, not text)."
+)
+
+
+def writes_a_call_as_text(content: str, tool_names: list[str]) -> bool:
+    text = content or ""
+    names = [re.escape(n) for n in tool_names if n and n != "?"]
+    if not names or len(text) > 600:
+        return False
+    return re.search(r"(?<![\w.])(?:" + "|".join(names) + r")\s*\(\s*\w+\s*=", text) is not None
 
 
 def promises_a_lookup(content: str) -> bool:
@@ -478,7 +495,8 @@ def changed_something(tools_used: list[Any]) -> bool:
         if name == "reminders" and action == "list":
             continue
         if ((name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list")
-                or (name == "calendar" and action in ("agenda", "find", "list"))):
+                or (name == "calendar" and action in ("agenda", "find", "list"))
+                or (name == "email" and action in ("inbox", "search", "read", "list"))):
             continue
         if name not in _READ_ONLY_TOOLS:
             return True
@@ -1573,6 +1591,12 @@ class AgentOrchestrator:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_LOOKUP})
                     continue
+                if tools and not claim_checked and writes_a_call_as_text(content, self._tool_names(tools)):
+                    claim_checked = True
+                    logger.info("Model '%s' wrote a tool call as text; sending it back once.", model)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_CALL_AS_TEXT})
+                    continue
 
                 logger.info("No further tool calls requested. Returning final %s response.", provider.name)
                 self.memory_store.append_message(session_id, role="assistant", content=content)
@@ -2417,6 +2441,14 @@ class AgentOrchestrator:
                     metrics.nets.append("lookup-checked")
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_LOOKUP})
+                    yield {"event": "token", "data": {"delta": "\n\n"}}
+                    continue
+                if tools and not claim_checked and writes_a_call_as_text(content, self._tool_names(tools)):
+                    claim_checked = True
+                    logger.info("Model '%s' wrote a tool call as text; sending it back once.", model)
+                    metrics.nets.append("text-call-checked")
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _NUDGE_CALL_AS_TEXT})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
 

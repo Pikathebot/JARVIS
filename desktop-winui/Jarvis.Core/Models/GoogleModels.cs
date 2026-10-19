@@ -10,6 +10,10 @@ public sealed class GoogleStatus
     public bool SignedIn { get; set; }
     public List<string> Scopes { get; set; } = new();
 
+    /// <summary>Permissions Jarvis now asks for that the last sign-in didn't grant (Gmail, added
+    /// 2026-10-19): signing in again ("Reconnect") grants them.</summary>
+    public List<string> MissingScopes { get; set; } = new();
+
     /// <summary>A browser sign-in is waiting for Google's redirect (up to five minutes).</summary>
     public bool SigningIn { get; set; }
 

@@ -636,7 +636,7 @@
                                     </StackPanel>
                                 </Border>
                                 <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,2,4,0"
-                                           Text="Jarvis keeps your calendar and to-do list in step with Google Calendar and Google Tasks, every few minutes and whenever you ask. The sign-in stays on this PC, encrypted with your Windows account. While the Google app is in Testing, Google asks you to connect again about once a week." />
+                                           Text="Jarvis keeps your calendar and to-do list in step with Google Calendar and Google Tasks, every few minutes and whenever you ask. It can read your Gmail and write drafts; it never sends. The sign-in stays on this PC, encrypted with your Windows account. While the Google app is in Testing, Google asks you to connect again about once a week." />
                             </StackPanel>
                         </StackPanel>
 

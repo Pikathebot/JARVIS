@@ -59,8 +59,8 @@ def _wait_signed_in():
 
 
 def test_not_set_up_and_not_signed_in_are_said_plainly(google, tmp_path, monkeypatch):
-    assert auth.status() == {"configured": True, "signed_in": False, "scopes": [], "signing_in": False,
-                             "last_error": ""}
+    assert auth.status() == {"configured": True, "signed_in": False, "scopes": [], "missing_scopes": [],
+                             "signing_in": False, "last_error": ""}
     with pytest.raises(auth.GoogleNotConnected, match="Not signed in"):
         auth.access_token()
     monkeypatch.setattr(auth, "CLIENT_SECRET_PATH", tmp_path / "missing.json")

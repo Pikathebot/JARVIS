@@ -8,5 +8,10 @@
     "match": "helldivers2.exe",
     "match_type": "exact",
     "label": "Helldivers 2"
+  },
+  {
+    "match": "God of War III.exe",
+    "match_type": "exact",
+    "label": "God of War III"
   }
 ]

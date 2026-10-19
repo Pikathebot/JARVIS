@@ -34,6 +34,7 @@ ACTION_SINKS: dict[str, frozenset[str]] = {
     "notes": frozenset({"add", "append"}),
     "tasks": frozenset({"add", "done", "reopen", "edit", "remove"}),
     "calendar": frozenset({"add", "move", "delete"}),
+    "email": frozenset({"draft"}),
 }
 
 
@@ -70,10 +71,16 @@ def _is_upload(resolved: Path, workspace_path: Optional[str], project_id: Option
     return resolved == root or root in resolved.parents
 
 
+# Mail is written by anyone (PLAN 4.16 phase D): reading it taints the turn; writing a draft doesn't.
+EMAIL_READS = frozenset({"inbox", "search", "read"})
+
+
 def source_of(tool: str, args: dict[str, Any], ctx: dict[str, Any]) -> Optional[str]:
     """What outside text this executed call brought in, or None."""
     if tool in SOURCES:
         return SOURCES[tool]
+    if tool == "email":
+        return "an email" if str((args or {}).get("action") or "inbox").strip().lower() in EMAIL_READS else None
     if tool in FILE_READS:
         resolved = _resolve(str(args.get("file_path") or args.get("name") or ""), ctx.get("workspace_path"))
         if resolved is None:

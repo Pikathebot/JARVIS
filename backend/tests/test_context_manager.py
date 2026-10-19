@@ -349,7 +349,9 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # persona + TOOL_PROTOCOL_RULES) 5,644; tool schemas 17,576 (Freeform) / 26,680 (Workspace). The
 # whole prefix is re-read on a cache miss and, on a 9B, every always-on line competes for attention.
 # Raise a number only on purpose, after cutting what you can (PLAN 4.15 #6).
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25500, "WORKSPACE": 35000}
+# WORKSPACE 35000 -> 36000 on 2026-10-19 for the email tool (PLAN 4.16 phase D; the user chose raising
+# the limit over merging the git tools or trimming descriptions).
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25500, "WORKSPACE": 36000}
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])

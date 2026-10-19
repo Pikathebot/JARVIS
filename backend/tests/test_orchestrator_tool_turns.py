@@ -12,7 +12,7 @@ from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
 from app.agent.orchestrator import (
     AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_TO_ANSWER, _NUDGE_UNRUN_CLAIM, _NUDGE_UNRUN_LOOKUP, _with_system_prompt,
-    TurnMetrics, changed_something, claims_unrun_action, looks_like_action, promises_a_lookup,
+    TurnMetrics, changed_something, claims_unrun_action, looks_like_action, promises_a_lookup, writes_a_call_as_text,
 )
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
@@ -417,3 +417,15 @@ async def test_an_announced_lookup_with_no_call_is_sent_back_once(tmp_path):
 
     assert events[-1]["event"] == "done" and len(provider.calls) == 3
     assert provider.calls[1]["messages"][-1] == {"role": "user", "content": _NUDGE_UNRUN_LOOKUP}
+
+
+@pytest.mark.parametrize("text,names,writes", [
+    ("calendar(action='add', title='Dentist appointment', when='next Tuesday 3pm')", ["calendar", "tasks"], True),
+    ("Sure: tasks(action=\"add\", text=\"milk\")", ["calendar", "tasks"], True),
+    ("Use calendar(action='add') to add events.", ["tasks"], False),  # not an offered tool
+    ("The function print(x) takes x.", ["calendar"], False),
+    ("Call calendar() with no arguments.", ["calendar"], False),
+    ("np.calendar(year=2026) is numpy's", ["calendar"], False),
+])
+def test_writes_a_call_as_text(text, names, writes):
+    assert writes_a_call_as_text(text, names) is writes

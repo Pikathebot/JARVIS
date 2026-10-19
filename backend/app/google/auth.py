@@ -30,7 +30,9 @@ logger = logging.getLogger("jarvis.google.auth")
 DATA_DIR = Path(os.environ.get("JARVIS_GOOGLE_DIR") or BASE_DIR.parent / "data")  # tests: a temp dir
 CLIENT_SECRET_PATH = DATA_DIR / "google_client_secret.json"
 TOKEN_PATH = DATA_DIR / "google_token.bin"
-SCOPES = ("https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/tasks")
+SCOPES = ("https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/tasks",
+          # Gmail (PLAN 4.16 phase D): read, and write drafts. No send scope is ever requested.
+          "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose")
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -109,6 +111,11 @@ def _with_expiry(resp: dict[str, Any], old: Optional[dict[str, Any]] = None) -> 
     if resp.get("scope"):
         token["scope"] = resp["scope"]
     return token
+
+
+def has_scope(scope: str) -> bool:
+    token = _load_token()
+    return bool(token and scope in token.get("scope", "").split())
 
 
 def access_token() -> str:
@@ -246,10 +253,14 @@ def sign_out() -> bool:
 def status() -> dict[str, Any]:
     token = _load_token()
     pending = _pending is not None and not _pending.done.is_set()
+    granted = (token or {}).get("scope", "").split()
+    signed_in = bool(token and token.get("refresh_token"))
     return {
         "configured": CLIENT_SECRET_PATH.is_file(),
-        "signed_in": bool(token and token.get("refresh_token")),
-        "scopes": (token or {}).get("scope", "").split(),
+        "signed_in": signed_in,
+        "scopes": granted,
+        # Asked for now but not granted at the last sign-in (Gmail added 2026-10-19): Settings offers Reconnect.
+        "missing_scopes": [s for s in SCOPES if s not in granted] if signed_in else [],
         "signing_in": pending,
         "last_error": (_pending.error if _pending is not None and not pending else ""),
     }

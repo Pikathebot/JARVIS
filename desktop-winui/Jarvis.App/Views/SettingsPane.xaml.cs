@@ -623,15 +623,17 @@ public sealed partial class SettingsPane : UserControl
     {
         if (_google is not { } g) return;
         _confirmDisconnect = false;
-        GoogleConnectButton.Content = g.SignedIn ? "Disconnect" : g.SigningIn ? "Waiting…" : "Connect";
+        var reconnect = g.SignedIn && g.MissingScopes.Count > 0;
+        GoogleConnectButton.Content = reconnect ? "Reconnect" : g.SignedIn ? "Disconnect" : g.SigningIn ? "Waiting…" : "Connect";
         GoogleConnectButton.IsEnabled = g.Configured && !g.SigningIn;
         GoogleSyncButton.IsEnabled = g.SignedIn;
         GoogleStatusText.Text =
             !g.Configured ? "Not set up: the client file data\\google_client_secret.json is missing (see docs\\GOOGLE_SETUP.md)."
             : g.SigningIn ? "Finish signing in in your browser…"
+            : reconnect ? "Connected. Reconnect to allow Gmail (read and drafts; Jarvis never sends)."
             : g.SignedIn ? "Connected"
             : string.IsNullOrEmpty(g.LastError) ? "Not connected" : $"Not connected: {g.LastError}";
-        GoogleAccessText.Text = g.SignedIn ? GoogleAccess(g.Scopes) : "Calendar events and Tasks, once connected";
+        GoogleAccessText.Text = g.SignedIn ? GoogleAccess(g.Scopes) : "Calendar events, Tasks and Gmail, once connected";
         GoogleSyncText.Text = g.SignedIn ? $"Tasks {Ago(g.TasksSyncedAt)} · Calendar {Ago(g.CalendarSyncedAt)}" : "—";
     }
 
@@ -640,7 +642,14 @@ public sealed partial class SettingsPane : UserControl
         var parts = new List<string>();
         if (scopes.Any(s => s.EndsWith("/calendar.events", StringComparison.Ordinal))) parts.Add("Calendar events");
         if (scopes.Any(s => s.EndsWith("/tasks", StringComparison.Ordinal))) parts.Add("Tasks");
-        return parts.Count == 0 ? "—" : string.Join(" and ", parts);
+        if (scopes.Any(s => s.EndsWith("/gmail.readonly", StringComparison.Ordinal)))
+            parts.Add(scopes.Any(s => s.EndsWith("/gmail.compose", StringComparison.Ordinal)) ? "Gmail (read, drafts)" : "Gmail (read)");
+        return parts.Count switch
+        {
+            0 => "—",
+            1 => parts[0],
+            _ => string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1],
+        };
     }
 
     private static string Ago(double? epochSeconds)
@@ -663,7 +672,7 @@ public sealed partial class SettingsPane : UserControl
             await RefreshGoogleAsync();
             return;
         }
-        if (_google.SignedIn)
+        if (_google.SignedIn && _google.MissingScopes.Count == 0)
         {
             if (!_confirmDisconnect)
             {
