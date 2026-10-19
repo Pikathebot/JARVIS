@@ -25,6 +25,7 @@ from app.governor.resource_governor import (
     GovernorEvent,
 )
 from app.governor.process_watcher import ProcessWatcher
+from app.governor.game_mode import command as game_mode_command, game_mode
 from app.memory.store import MemoryStore
 from app.memory.ephemeral import EphemeralMemoryStore, ephemeral_registry
 from app.memory.compactor import ContextCompactor
@@ -231,6 +232,49 @@ mcp_manager = MCPManager()
 wake_detector = WakeWordDetector()
 transcriber = AudioTranscriber()
 synthesizer = VoiceSynthesizer()
+
+
+async def release_for_game_mode() -> list[str]:
+    """Game mode on: everything of ours that holds VRAM or much RAM, stopped. The CPU Whisper and
+    Kokoro stay (small, and they answer "game mode off" by voice)."""
+    from app.agent.captioner import get_image_captioner
+    from app.rag.embedding_sidecar import get_embedding_sidecar
+    from app.voice.laya_sidecar import get_laya_sidecar
+    from app.voice.voice_mode import get_voice_mode
+
+    stopped: list[str] = []
+    voice = get_voice_mode()
+    if voice.enabled:
+        await voice.disable(load_main=False)
+        stopped.append("voice mode")
+    pm = get_runtime_process_manager()
+    if pm.is_running() or await pm.health_check(timeout=1.0):
+        await pm.stop()
+        stopped.append("the chat model")
+    laya = get_laya_sidecar()
+    if laya.is_running():
+        await asyncio.to_thread(laya.stop)
+        stopped.append("Laya")
+    if transcriber.vram_mb:
+        await asyncio.to_thread(transcriber.use_gpu, False)
+        stopped.append("Whisper (GPU)")
+    captioner = get_image_captioner()
+    if captioner.is_running():
+        await captioner.stop()
+        stopped.append("the image captioner")
+    embedder = get_embedding_sidecar()
+    if embedder.is_running():
+        await asyncio.to_thread(embedder.stop)
+        stopped.append("the embedding sidecar")
+    return stopped
+
+
+game_mode.configure(
+    pause=lambda: governor.force_pause(reason="game mode"),
+    resume=governor.force_resume,
+    release=release_for_game_mode,
+    vram_used_mb=lambda: governor.collect_metrics().vram_used_mb,
+)
 
 # Ambient awareness: notices hardware conditions worth speaking up about.
 awareness_monitor = AwarenessMonitor(
@@ -637,6 +681,7 @@ class HealthResponse(BaseModel):
     # The client grants this process the right to raise windows (AllowSetForegroundWindow);
     # without it Windows' foreground lock refuses focus_app.
     pid: int = 0
+    game_mode: bool = False
 
 
 class GovernorPauseRequest(BaseModel):
@@ -703,6 +748,7 @@ async def health_check():
         available_skills_count=len(skills),
         voice_enabled=wake_detector.is_listening,
         pid=os.getpid(),
+        game_mode=game_mode.active,
     )
 
 
@@ -774,6 +820,22 @@ async def governor_resume_override(req: Optional[GovernorResumeOverrideRequest] 
     duration = req.duration_seconds if req else None
     governor.force_resume_ignore_metrics(duration_seconds=duration)
     return {"status": "ok", "governor_status": governor.status.value, "duration_seconds": duration}
+
+
+class GameModeRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/game-mode")
+async def game_mode_status():
+    """Game mode (PLAN 4.16b): on = no model or sidecar loaded until it is turned off."""
+    return game_mode.status()
+
+
+@app.post("/api/game-mode")
+async def set_game_mode(req: GameModeRequest):
+    """Turn Game mode on (unload the model, stop the sidecars, pause the governor) or off."""
+    return await (game_mode.enter() if req.enabled else game_mode.leave())
 
 
 @app.post("/governor/clear-error")
@@ -977,6 +1039,9 @@ async def load_model_endpoint(req: Optional[LoadModelRequest] = None):
         else "main"
     )
 
+    if game_mode.active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Game mode is on, so no model loads until it is turned off.")
     async with governor.activity(ActivityType.MODEL_LOADING, label=target_model):
         pm = get_runtime_process_manager()
         success = await pm.ensure_running(target_model)
@@ -1030,8 +1095,9 @@ async def chat(request: ChatRequest):
     active_message = cleaned_query if detected and cleaned_query else request.message
     project_id = await asyncio.to_thread(resolve_turn_project_id, request)
 
-    # 1. Resource Governor Check (with adaptive queueing wait)
-    if settings.governor_enabled:
+    # 1. Resource Governor Check (with adaptive queueing wait). Game mode's own messages are
+    # answered in code (the orchestrator), never queued behind the pause it put the governor in.
+    if settings.governor_enabled and not (game_mode.active or game_mode_command(active_message)):
         is_healthy, reason = await governor.wait_until_healthy(
             timeout_seconds=settings.governor_queue_timeout_seconds
         )
@@ -1099,7 +1165,7 @@ async def chat_stream(request: ChatRequest):
     active_message = cleaned_query if detected and cleaned_query else request.message
     project_id = await asyncio.to_thread(resolve_turn_project_id, request)
 
-    if settings.governor_enabled:
+    if settings.governor_enabled and not (game_mode.active or game_mode_command(active_message)):
         is_healthy, reason = await governor.wait_until_healthy(
             timeout_seconds=settings.governor_queue_timeout_seconds
         )

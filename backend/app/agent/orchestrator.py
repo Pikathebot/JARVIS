@@ -432,6 +432,9 @@ _NUDGE_CALL_AS_TEXT = (
 )
 
 
+_GAME_MODE_ROUTE = "Answered in code: Game mode (no model is loaded while it is on)."
+
+
 def writes_a_call_as_text(content: str, tool_names: list[str]) -> bool:
     text = content or ""
     names = [re.escape(n) for n in tool_names if n and n != "?"]
@@ -928,6 +931,19 @@ class AgentOrchestrator:
             parts.append(profile)
         return "\n\n".join(parts)
 
+    async def _game_mode_reply(self, session_id: str, user_message: str, project_id: Optional[str],
+                               chat_mode: Optional[str]) -> Optional[str]:
+        """Game mode's answer in code (switching it, or saying no model is loaded), stored like
+        any turn (the session recorded in its space first); None when the turn goes to the model."""
+        from app.governor.game_mode import game_mode
+
+        reply = await game_mode.reply_for(user_message)
+        if reply is not None:
+            self._resolve_turn_scope(project_id, session_id, chat_mode)
+            self.memory_store.append_message(session_id, role="user", content=user_message)
+            self.memory_store.append_message(session_id, role="assistant", content=reply)
+        return reply
+
     def _resolve_turn_scope(
         self,
         project_id: Optional[str],
@@ -1278,6 +1294,13 @@ class AgentOrchestrator:
         voice_route: Optional[str] = None,
     ) -> OrchestratorResult:
         active_session_id = session_id or "default"
+        game_reply = await self._game_mode_reply(active_session_id, user_message, project_id, chat_mode)
+        if game_reply is not None:
+            return OrchestratorResult(
+                response=game_reply, model="none", provider="code", status="completed",
+                session_id=active_session_id, route_reason=_GAME_MODE_ROUTE, fallback_used=False,
+                compaction_performed=None, active_skills=[],
+            )
         # A token whose confirmation window lapsed does not approve anything: the action is
         # re-evaluated, comes back as confirmation_required, and the prompt says why.
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
@@ -1954,6 +1977,15 @@ class AgentOrchestrator:
         if voice_route:
             requested_model = "fast"
         active_session_id = session_id or "default"
+        game_reply = await self._game_mode_reply(active_session_id, user_message, project_id, chat_mode)
+        if game_reply is not None:
+            yield {"event": "token", "data": {"delta": game_reply}}
+            yield {"event": "done", "data": {
+                "response": game_reply, "reasoning": "", "model": "none", "provider": "code",
+                "status": "completed", "session_id": active_session_id, "route_reason": _GAME_MODE_ROUTE,
+                "fallback_used": False, "compaction_performed": None, "active_skills": [], "tools_used": [],
+            }}
+            return
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
         parked = paused_turns.take(active_session_id, approved_action_ids)

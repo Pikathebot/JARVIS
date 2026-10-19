@@ -471,11 +471,18 @@ public sealed partial class MainWindow : Window
     {
         var (word, kind) = GovernorViewModel.Status switch
         {
+            _ when GovernorViewModel.GameMode && GovernorViewModel.Status != "offline" => ("Game mode", Themes.StatusKind.Info),
             "ok" => ("Online", Themes.StatusKind.Success),
             "throttled" => ("Throttled", Themes.StatusKind.Warning),
             "degraded" => ("Degraded", Themes.StatusKind.Warning),
             _ => ("Offline", Themes.StatusKind.Error),
         };
+        if (GameModeToggle.IsOn != GovernorViewModel.GameMode)
+        {
+            _syncingGameToggle = true;
+            try { GameModeToggle.IsOn = GovernorViewModel.GameMode; }
+            finally { _syncingGameToggle = false; }
+        }
         var brush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(kind));
         var model = ShortModelName(GovernorViewModel.ConfiguredModel);
 
@@ -497,7 +504,8 @@ public sealed partial class MainWindow : Window
 
         PopoverStatusIcon.Glyph = Themes.StatusStyle.GlyphOf(kind);
         PopoverStatusIcon.Foreground = brush;
-        PopoverStatusWord.Text = word + (GovernorViewModel.Throttled ? " · high load" : "");
+        // Game mode pauses the governor, which /health reports as throttled: not a load.
+        PopoverStatusWord.Text = word + (GovernorViewModel.Throttled && !GovernorViewModel.GameMode ? " · high load" : "");
         PopoverStatusWord.Foreground = brush;
         PopoverModelName.Text = model.Length > 0 ? model : "No model";
         PopoverModelDetail.Text = string.IsNullOrEmpty(GovernorViewModel.ConfiguredModel)
@@ -618,6 +626,16 @@ public sealed partial class MainWindow : Window
         if (GovernorViewModel is null) return; // IsOn="True" in XAML fires this inside InitializeComponent
         if (GovernorToggle.IsOn) await GovernorViewModel.ResumeAsync();
         else await GovernorViewModel.PauseAsync("User requested manual pause");
+    }
+
+    private bool _syncingGameToggle;
+
+    private async void GameModeToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (GovernorViewModel is null || _syncingGameToggle) return;
+        if (GameModeToggle.IsOn == GovernorViewModel.GameMode) return;
+        try { await GovernorViewModel.SetGameModeAsync(GameModeToggle.IsOn); }
+        catch { /* the next poll puts the switch back to what the backend says */ }
     }
 
     private void RefreshActivityList()

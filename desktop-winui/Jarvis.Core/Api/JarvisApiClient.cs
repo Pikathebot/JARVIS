@@ -142,6 +142,14 @@ public sealed class JarvisApiClient
         await _http.PostAsync("/governor/resume", content: null, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Game mode on (unload the model, stop the sidecars) or off. On can take a few
+    /// seconds: the backend waits for llama-server to exit.</summary>
+    public async Task SetGameModeAsync(bool enabled, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync("/api/game-mode", new { enabled }, JarvisJson.Options, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "switch game mode").ConfigureAwait(false);
+    }
+
     public Task<GovernorTelemetry> FetchGovernorStatusAsync(CancellationToken ct = default) =>
         GetAsync<GovernorTelemetry>("/governor/status", ct);
 

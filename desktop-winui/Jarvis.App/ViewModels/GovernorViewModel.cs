@@ -35,6 +35,10 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial bool OllamaConnected { get; set; }
 
+    /// <summary>Game mode (PLAN 4.16b), as the backend last reported it.</summary>
+    [ObservableProperty]
+    public partial bool GameMode { get; set; }
+
     /// <summary>Raised on the UI thread each time the backend goes from unreachable to
     /// reachable -- first launch (the window is built before uvicorn is up) and any restart.
     /// Anything that fetches state at startup should fetch here instead, or it races the
@@ -111,7 +115,15 @@ public partial class GovernorViewModel : ObservableObject, IDisposable
         LlamaConnected = health.LlamaConnected;
         OllamaConnected = health.OllamaConnected ?? false;
         Throttled = health.GovernorThrottled;
+        GameMode = health.GameMode;
         Status = health.Status == "degraded" ? "degraded" : Throttled ? "throttled" : "ok";
+    }
+
+    /// <summary>Switch Game mode, then poll so the pill and toggles show the backend's answer.</summary>
+    public async Task SetGameModeAsync(bool enabled)
+    {
+        try { await _api.SetGameModeAsync(enabled).ConfigureAwait(false); }
+        finally { PollNow(); }
     }
 
     [RelayCommand]

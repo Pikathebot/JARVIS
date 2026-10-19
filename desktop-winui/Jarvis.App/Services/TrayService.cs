@@ -10,6 +10,7 @@ public sealed class TrayService : IDisposable
     public event Action? ShowRequested;
     public event Action? ToggleHudRequested;
     public event Action? FreeVramRequested;
+    public event Action? GameModeToggleRequested;
     public event Action? ExitRequested;
 
     public TrayService(string iconResourcePath)
@@ -27,6 +28,9 @@ public sealed class TrayService : IDisposable
         menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Show Jarvis", Command = new RelayCommand(() => ShowRequested?.Invoke()) });
         menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Toggle HUD", Command = new RelayCommand(() => ToggleHudRequested?.Invoke()) });
         menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Free VRAM", Command = new RelayCommand(() => FreeVramRequested?.Invoke()) });
+        // One fixed label: the native menu is built from the flyout once, so a label that names
+        // the current state would go stale. The tooltip says which way it is.
+        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Game mode on/off", Command = new RelayCommand(() => GameModeToggleRequested?.Invoke()) });
         menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator());
         menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Exit Jarvis", Command = new RelayCommand(() => ExitRequested?.Invoke()) });
 
@@ -43,6 +47,9 @@ public sealed class TrayService : IDisposable
         // meant for tray-only apps -- not one running a renderer and supervising the backend.
         _icon.ForceCreate(false);
     }
+
+    public void SetGameMode(bool on) =>
+        _icon.ToolTipText = on ? "Jarvis Assistant (Game mode: no model loaded)" : "Jarvis Assistant (Active)";
 
     public void Dispose() => _icon.Dispose();
 

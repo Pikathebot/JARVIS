@@ -302,7 +302,9 @@ class VoiceModeController:
                 self.busy = ""
             return self.status()
 
-    async def disable(self) -> dict[str, Any]:
+    async def disable(self, load_main: bool = True) -> dict[str, Any]:
+        """Voice mode off; ``load_main=False`` (Game mode) stops the fast model too instead of
+        swapping main back in."""
         async with self._lock:
             if not self.enabled:
                 return self.status()
@@ -317,6 +319,10 @@ class VoiceModeController:
 
                 await asyncio.to_thread(transcriber.use_gpu, False)
 
+                if not load_main:
+                    await get_runtime_process_manager().stop()
+                    logger.info("Voice mode off; no model loaded (Game mode).")
+                    return self.status()
                 async with governor.activity(ActivityType.MODEL_LOADING, label="voice mode off: main"):
                     await get_runtime_process_manager().switch_model("main")
                 logger.info("Voice mode off; main model back.")
@@ -337,6 +343,12 @@ class VoiceModeController:
                 return VoiceOutcome(spoken="Okay, I won't.")
             # anything else: drop the question and treat this as a new command
 
+        from app.governor.game_mode import game_mode
+
+        game = await game_mode.reply_for(utterance)
+        if game:  # "game mode on" unloads the model that would otherwise answer it
+            self._log(utterance, None, "game_mode")
+            return VoiceOutcome(spoken=game)
         clock = clock_answer(utterance)
         if clock:  # MiniCPM had the time in its context and still said it couldn't tell (2026-10-04)
             self._log(utterance, None, "clock")

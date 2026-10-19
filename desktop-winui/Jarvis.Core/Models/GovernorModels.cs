@@ -43,6 +43,10 @@ public sealed class HealthResponse
     /// <summary>The backend process, granted the right to raise windows (focus_app).</summary>
     public int Pid { get; set; }
 
+    /// <summary>Game mode (PLAN 4.16b): no model or sidecar loaded until it is turned off.</summary>
+    [JsonPropertyName("game_mode")]
+    public bool GameMode { get; set; }
+
     [JsonPropertyName("ollama_connected")]
     public bool? OllamaConnected { get; set; }
 

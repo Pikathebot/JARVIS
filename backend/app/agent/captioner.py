@@ -184,6 +184,10 @@ class ImageCaptioner:
                 return True
             if not self.available:
                 return False
+            from app.governor.game_mode import blocked
+
+            if blocked():
+                return False
 
             from app.agent.process_guard import tie_to_backend
             from app.agent.runtime_process_manager import PROTECTED_PIDS

@@ -353,6 +353,11 @@ class RuntimeProcessManager:
         Ensure llama-server is online with the requested model_kind.
         If unhealthy or missing, spawn the process and wait for ready state.
         """
+        from app.governor.game_mode import blocked
+
+        reason = blocked()
+        if reason:
+            raise RuntimeError(reason)
         resolved_exe = resolve_repo_path(self.server_exe)
         resolved_model, alias = self.resolve_model_path(model_kind)
 

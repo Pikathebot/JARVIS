@@ -1916,8 +1916,35 @@ stop sidecars until turned off) and/or launching games through Jarvis (`launch_a
 watchlisted target). RAM/commit charge belongs in the governor's picture, not just VRAM. The user can also grow
 the page file (the game suggests 16,384 initial / 32,768 max) -- a system setting, the user's to change.
 
+**Game mode BUILT 2026-10-19 (backend test-verified, WinUI builds; NOT seen on device).** `app/governor/game_mode.py`.
+On: the gate closes first (`blocked()`: `RuntimeProcessManager.ensure_running` raises, Laya and the captioner
+refuse to start), the governor is force-paused ("game mode"), then `release_for_game_mode` (`main.py`) stops
+voice mode *without* swapping main back (`VoiceModeController.disable(load_main=False)`), llama-server, Laya,
+Whisper's GPU model, the captioner and the embedding sidecar, and measures the VRAM freed. The embedding
+sidecar is stopped but not gated (a refused embed falls back to hashed vectors and would mix them into an
+index; it is CPU-only and starts only on use). CPU Whisper and Kokoro stay so "game mode off" works by voice.
+Off: the governor resumes; the model loads lazily on the next message. Not persisted (a restart = off).
+While on, every chat/voice message is answered in code -- the orchestrator (`_game_mode_reply`, both `run`
+and `run_stream`, stored in the session) and voice mode's `handle` -- and `/chat*` skip the governor's
+queue wait, so no 429. Switches: "game mode on/off", "turn on game mode", "I'm done gaming" (short messages
+only, never a question; `game_mode.command`); `GET/POST /api/game-mode`; `/health` has `game_mode`. Client:
+a Game mode switch in the status popover (under Governor), the pill reads "Game mode" (Info), the tray has
+"Game mode on/off" and its tooltip says which. Tests: `test_game_mode.py` (20). `/models/load` answers 409
+while it is on. **Live backend check 2026-10-19** (isolated backend on :8010, temp DB/notes/Google, real
+Defiant 9B): on frees 5,107 MiB in 1.8 s (6,772 -> 1,675 MiB used, llama-server gone); a chat while on is
+answered in code at once with no model start; "Jarvis, game mode off please" turns it off and the next
+message reloads the model (21 s) and answers; "turn on game mode" by chat works too. The app's switch,
+pill and tray item are build-verified only.
+**Not built (next, with the user):** `launch_app` entering Game mode for a watchlisted game (the model is
+mid-turn when the tool runs -- it must switch after the turn ends); the rule for unlisted games (card
+>= ~90% and external growth >= ~256 MiB); RAM/commit in the governor's picture. Measure on device first:
+RAM and commit charge with Jarvis open in Game mode (the WinUI app + backend stay resident).
+**Found while building:** the popover's existing "Governor" switch, turned *off*, calls `/governor/pause`,
+which makes every chat wait and then fail with 429 -- the opposite of its label ("Unloads the model when
+another app needs the GPU"). Off should probably be `/governor/resume-override` (ignore load). Not changed.
+
 **State 2026-10-19 afternoon:** phase D (Gmail) + the email-draft cue + the tool-call-as-text retry + the
-watchlist entry + this section. Full suite 1117 pass (the two governor API tests fail only while an eval holds
+watchlist entry + this section, COMMITTED ab07422 (not pushed). Game mode (above) built after it, uncommitted. Full suite 1117 pass (the two governor API tests fail only while an eval holds
 the GPU; 33/33 with it idle); WinUI solution builds. Eval `--only notes,calendar,email --repeats 3` (Defiant):
 25/27 -- email 6/6, notes 14/15, calendar 5/6 (results in `scripts/eval_results/2026-10-19-gmail/`). Both
 misses are seed 0 only: `todo-add` answers "Added." with no call and, nudged, apologises and claims again;

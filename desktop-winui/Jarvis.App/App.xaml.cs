@@ -177,6 +177,16 @@ public partial class App : Application
         {
             try { await _api.UnloadModelsAsync(); } catch { /* best-effort */ }
         };
+        var governor = _mainWindow.GovernorViewModel;
+        _tray.GameModeToggleRequested += () => DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { await governor.SetGameModeAsync(!governor.GameMode); } catch { /* the next poll shows the truth */ }
+        });
+        _tray.SetGameMode(governor.GameMode);
+        governor.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(governor.GameMode)) _tray?.SetGameMode(governor.GameMode);
+        };
         _tray.ExitRequested += () => DispatcherQueue.TryEnqueue(ExitApp);
     }
 
