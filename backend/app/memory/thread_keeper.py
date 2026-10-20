@@ -123,6 +123,16 @@ def _sentence(text: str) -> str:
     return text if text.endswith((".", "!", "?")) else text + "."
 
 
+def _record_vector(record: dict[str, str]) -> Optional[str]:
+    from app.agent.tools.recall import record_vector  # tools load after memory: imported late
+
+    try:
+        return record_vector(record)
+    except Exception as e:
+        logger.info("Episode record vector skipped: %s", e)
+        return None
+
+
 def fold_note_from(record: dict[str, str]) -> str:
     parts = [f"[Earlier in this episode (folded): {_sentence(record['summary'])}"]
     if record.get("decisions"):
@@ -179,7 +189,8 @@ class ThreadKeeper:
                 record = await write_record(provider, rows, prior_note=ep.get("fold_note"))
                 if record is None:
                     return done
-                self.store.update_episode(ep["id"], record_status="done", **record)
+                vector = await asyncio.to_thread(_record_vector, record)  # None if the sidecar can't serve
+                self.store.update_episode(ep["id"], record_status="done", embedding=vector, **record)
                 done.append(f"recorded {ep['id']}: {record['title']}")
 
             if open_ep is None:

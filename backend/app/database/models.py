@@ -64,6 +64,8 @@ class Episode(SQLModel, table=True):
     open_items: Optional[str] = None
     # open -> pending (closed, record not written yet) -> done
     record_status: str = Field(default="open")
+    # The record's vector (JSON list), written with it, for recall's semantic match (phase 3).
+    embedding: Optional[str] = None
 
 
 class CompactionEvent(SQLModel, table=True):

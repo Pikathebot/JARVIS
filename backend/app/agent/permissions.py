@@ -101,6 +101,8 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     # Memory: the model's own notes, shown to the user as a tool card; ephemeral turns refuse.
     "remember": RiskTier.LOW_RISK,
     "forget": RiskTier.LOW_RISK,
+    # Reading earlier conversations (PLAN 4.18): read-only, scoped in the tool itself.
+    "recall": RiskTier.LOW_RISK,
     # The user's notes and to-do list (PLAN 4.16): reading, adding and ticking off run -- the user
     # asked in words, and a line is as easy to undo by hand; removing a task asks (rule below).
     "notes": RiskTier.LOW_RISK,

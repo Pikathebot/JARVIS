@@ -93,7 +93,7 @@ def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[i
     if not earlier and not briefing:
         return ""
     lines = ["[Earlier in this conversation -- context, not part of the user's message; "
-             "ask the user for anything not here:"]
+             "recall finds more:"]
     if briefing:
         lines.append("This morning's briefing: " + " ".join(briefing.split()))
     for ep in earlier:

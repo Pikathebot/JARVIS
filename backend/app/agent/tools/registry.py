@@ -24,6 +24,7 @@ from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 from app.agent.tools.notes import notes, tasks
+from app.agent.tools.recall import recall
 from app.agent.tools.calendar_events import calendar
 from app.agent.tools.gmail import email
 
@@ -75,6 +76,8 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # Long-term memory the model keeps for itself
     "remember": remember,
     "forget": forget,
+    # Earlier conversations: thread episodes + project chats (PLAN 4.18)
+    "recall": recall,
     # The user's notes and to-do list as Markdown (PLAN 4.16)
     "notes": notes,
     "tasks": tasks,
@@ -130,6 +133,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Memory
     remember,
     forget,
+    recall,
     # Notes + tasks
     notes,
     tasks,
@@ -359,6 +363,11 @@ class ForgetArgs(BaseModel):
     memory_id: str = Field(..., description="Id of the memory to delete, as shown in the memory list")
 
 
+class RecallArgs(BaseModel):
+    query: str = Field(default="", description="Words to look for; empty lists what was discussed in 'when'")
+    when: str = Field(default="", description="Past span: 'yesterday', 'last week', 'monday', '2026-10-18'")
+
+
 class NotesArgs(BaseModel):
     action: Literal["add", "append", "find", "read", "list"] = Field(default="list", description="What to do")
     title: str = Field(default="", description="The note's title (add, append, read)")
@@ -434,6 +443,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "git_pull": GitRemoteArgs,
     "remember": RememberArgs,
     "forget": ForgetArgs,
+    "recall": RecallArgs,
     "notes": NotesArgs,
     "tasks": TasksArgs,
     "calendar": CalendarArgs,
@@ -446,7 +456,10 @@ def get_tool_schema(tool_name: str) -> Optional[type[BaseModel]]:
     return TOOL_SCHEMAS.get(tool_name)
 
 
-RUNTIME_ONLY_PARAMS = frozenset({"user_message", "allow_outside"})
+# Never taken from the model's arguments, only injected from the turn's context. The scope ones were
+# added 2026-10-20 with recall: a call carrying project_id="" from a project chat would have widened
+# recall to every chat, and a model-supplied workspace_path moved the root file tools resolve against.
+RUNTIME_ONLY_PARAMS = frozenset({"user_message", "allow_outside", "workspace_path", "project_id", "session_id"})
 
 
 def execute_tool(

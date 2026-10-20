@@ -2229,6 +2229,29 @@ correct forced call in 14 s, specific and accurate ("Discord launch, Epic force-
 "None noted." for an empty field (now normalised to '') and a doubled period in the fold note (fixed).
 Not yet seen: the keeper running inside the app (nothing writes to `jarvis-thread` until phase 4).
 Tests: `backend/tests/test_thread_keeper.py`.
+**Phase 3 BUILT 2026-10-20 (backend; all 1176 tests pass; checked live on Ornith).**
+`recall(query, when)` (`app/agent/tools/recall.py`; registry + `RecallArgs` + LOW_RISK; offered in both spaces):
+keyword search over messages through an FTS5 index (`app/database/message_index.py`, external content on
+`messages`, kept in step by triggers; Alembic 008 creates + backfills it, 0.3 s on a copy of the live DB) and,
+over thread episode records, keyword + meaning (the keeper stores each record's sidecar vector in
+`episodes.embedding`; the query is embedded at call time; never the hash fallback). `when` = a past span parsed
+in code (today, yesterday, this/last week/month, N days ago, (last) weekday, '18 oct', 'Sunday 18 Oct', ISO).
+With no query it lists what was discussed then. Results: up to 4 conversations, an episode's record + up to 3
+excerpts with dates, duplicates dropped. Scope: from Freeform the thread + every real project's chats (not
+`default-workspace`, not old Freeform sessions); from a project, only its own; the open episode is skipped.
+**Security fix found on the way:** `execute_tool` injected `project_id`/`session_id`/`workspace_path` only when the
+model hadn't passed them -- a call with `project_id=""` would have widened recall to every chat, and a model-
+supplied `workspace_path` moved the file tools' root. All three are now in `RUNTIME_ONLY_PARAMS` (never taken from
+the model; no tool schema exposed them).
+Live: (1) recall on a migrated copy of the live DB found the right project chats for "Black Myth Wukong mod" (and
+showed the same question 3x and "Session session_" titles -- both fixed); (2) Ornith with the real head and the
+Freeform tools, 8 prompts: called recall for all 4 refer-back prompts ("fan curve last week", "that command
+yesterday", "what did we talk about on sunday", "Ooty hotel options") and not for the 4 others (answered Canberra,
+`get_system_status`, `launch_app`, `calendar`); it sent when='Sunday 18 Oct', which the parser now reads;
+(3) bench_tool_chain with recall offered: 5/5, same chains and tokens (wall time 2x: NVIDIA Whisper Mode was on --
+llama-bench 31.7 vs ~53 tok/s).
+The WORKSPACE head prefix is 36,518 chars with recall; **the user chose raising its cap 36,000 -> 37,000**
+(2026-10-20, as for email on 10-19) over trimming other tools.
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):
