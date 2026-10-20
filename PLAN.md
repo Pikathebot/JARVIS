@@ -2359,6 +2359,22 @@ are, possibly asking more often on remote turns; the laptop must be awake (plugg
 wake-on-LAN); voice from the phone later, on top of option 1. It should land in the one Freeform thread (4.18:
 voice, HUD and briefing already do). Not started; to discuss when it comes up in the queue.
 
+**Decided with the user, 2026-10-20:** Tailscale; **Android phone and iPad** both; remote turns ask more (anything
+risky needs an Allow tap from the phone even where the desktop wouldn't ask); first version's scope left to Claude.
+**Shape:** a web app (PWA) served by the backend itself (static files under `/m/`), reached through `tailscale serve`
+(https on the tailnet name, proxying to 127.0.0.1:8000 -- the backend keeps listening on localhost only). https
+matters: installable to the home screen, mic and web push need a secure context (iPad: push only once installed,
+iPadOS 16.4+). Remote = a request that came through serve (its `Tailscale-User-Login` header), decided by the
+server, never by a client flag; plus a pairing token (a QR shown in desktop Settings). One layout that is a phone
+column on Android and uses the iPad's width (sidebar of episodes, like the desktop) -- CSS glass from the design
+system's tokens (the D3D renderer is desktop-only), so the design system gets a "Mobile" spec first.
+**Phases:** (1) chat in the Freeform thread: streaming, tool steps, approval cards as Allow/Deny, the stricter
+remote gate, pairing; plus the status strip (model, VRAM) and Game mode / Governor -- cheap, the endpoints exist.
+(2) Notifications: ambient remarks and routine reminders as web push (VAPID; service worker). (3) Voice from the
+phone's mic into the existing `/api/voice/listen` path. Later: wake-on-LAN for a sleeping laptop.
+**User's part before phase 1 can be tried:** install Tailscale on the laptop, the Android phone and the iPad, signed
+in to one account; enable HTTPS certificates for the tailnet (admin console, DNS page).
+
 ### 4.20 UI scaling across window sizes (raised by the user 2026-10-20) -- PLANNED, NOT BUILT
 The user: "the ui is not scaled properly for different variety of sizes". Snapshot 2026-10-20 19:32 (window
 2560x1528 px at 150%, Freeform thread open): the reading column and composer are fixed at 720 DIP, so on a wide
