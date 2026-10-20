@@ -298,6 +298,8 @@ class ContextManager:
         vision: bool = False,
         turn_context: Optional[str] = None,
         turn_directive: Optional[str] = None,
+        history_rows: Optional[list[dict[str, Any]]] = None,
+        history_preamble: Optional[str] = None,
     ) -> ContextPackage:
         """
         Main entrypoint: Assembles strict tier-budgeted context package.
@@ -318,6 +320,12 @@ class ContextManager:
         - Tier 3 (Dynamic): Retrieved RAG chunks
         - Tier 4 (Dynamic): Recent message history
         - Tier 5 (Fallback): Compaction rolling summary if history overflows
+
+        ``history_rows`` replaces the session's sliding window with exactly these stored rows (the
+        Freeform thread's open episode, PLAN 4.18: no message cap, no compaction summary), and
+        ``history_preamble`` (the episode's digest / fold note) rides after the user's words on the
+        first user message of that history -- or on the current message when there is none yet --
+        so it is byte-identical on every turn of the episode.
         """
         # 1. Budget Resolution (Amendment 2: Model context window resolution)
         total_window = max_context_tokens or settings.llama_ctx_size_main
@@ -409,18 +417,32 @@ class ContextManager:
         history_messages: list[dict[str, Any]] = []
         tier4_tokens = 0
         summary_included = False
+        preamble_text = (history_preamble or "").strip()
+        preamble_on_current = bool(preamble_text)
 
         if session_id:
             try:
                 # Fetch recent messages
-                stored_messages = _recent_rows(
-                    self.memory_store.get_messages(session_id),
-                    settings.context_tier4_max_messages,
-                )
-                
+                if history_rows is not None:
+                    stored_messages = [
+                        {k: v for k, v in row.items() if k not in ("id", "created_at")} for row in history_rows
+                    ]
+                else:
+                    stored_messages = _recent_rows(
+                        self.memory_store.get_messages(session_id),
+                        settings.context_tier4_max_messages,
+                    )
+                if preamble_text:
+                    for i, row in enumerate(stored_messages):
+                        if row.get("role") == "user":
+                            stored_messages[i] = {**row, "content": (row.get("content") or "").rstrip()
+                                                  + "\n\n" + preamble_text}
+                            preamble_on_current = False
+                            break
+
                 # Check for rolling compaction summary
                 compaction_summary = None
-                if settings.context_include_summary:
+                if settings.context_include_summary and history_rows is None:
                     try:
                         compactions = self.memory_store.get_compaction_events(session_id)
                         if compactions:
@@ -507,6 +529,8 @@ class ContextManager:
         # thinking off the 9B answered "why?" with "I am unable to determine the context",
         # while this order matched a no-context baseline exactly. Sent, never stored: the
         # history keeps the user's own words.
+        if preamble_on_current and tier2_full_user_text:
+            tier2_full_user_text = tier2_full_user_text.rstrip() + "\n\n" + preamble_text
         if trailing_parts:
             tier2_full_user_text = (
                 (tier2_full_user_text or "").rstrip()

@@ -14,6 +14,7 @@ from app.database.models import (
     AgentRun,
     Session as DBSession,
     Message,
+    Episode,
     CompactionEvent,
     ToolCallAudit,
     ReliabilityEvent,
@@ -25,6 +26,25 @@ DEFAULT_PROJECT_ID = "default-workspace"
 FREEFORM_CHAT_MODE = "FREEFORM"
 
 logger = logging.getLogger("jarvis.memory.store")
+
+
+def _message_dict(row: Message, meta: bool = False) -> dict[str, Any]:
+    msg: dict[str, Any] = {"role": row.role, "content": row.content or ""}
+    if meta:
+        msg["id"] = row.id
+        msg["created_at"] = row.created_at
+    if row.reasoning_content:
+        msg["reasoning_content"] = row.reasoning_content
+    if row.name:
+        msg["name"] = row.name
+    if row.tool_calls_json:
+        try:
+            msg["tool_calls"] = json.loads(row.tool_calls_json)
+        except Exception:
+            pass
+    if row.is_summary:
+        msg["is_summary"] = bool(row.is_summary)
+    return msg
 
 
 class MemoryStore:
@@ -277,28 +297,77 @@ class MemoryStore:
                     rows = session.exec(statement).all()
 
 
-                messages = []
-                for row in rows:
-                    msg: dict[str, Any] = {
-                        "role": row.role,
-                        "content": row.content or ""
-                    }
-                    if row.reasoning_content:
-                        msg["reasoning_content"] = row.reasoning_content
-                    if row.name:
-                        msg["name"] = row.name
-                    if row.tool_calls_json:
-                        try:
-                            msg["tool_calls"] = json.loads(row.tool_calls_json)
-                        except Exception:
-                            pass
-                    if row.is_summary:
-                        msg["is_summary"] = bool(row.is_summary)
-                    messages.append(msg)
-                return messages
+                return [_message_dict(row) for row in rows]
             except Exception:
                 session.rollback()
                 raise
+
+    # ---- The one continuing Freeform thread (PLAN 4.18) -------------------------------------
+
+    def get_message_rows(self, session_id: str, after_id: int = 0) -> list[dict[str, Any]]:
+        """Messages with an id above ``after_id``, oldest first, each with its ``id`` and
+        ``created_at`` (which ``get_messages`` leaves out)."""
+        with self._get_session() as session:
+            rows = session.exec(
+                select(Message)
+                .where(Message.session_id == session_id, col(Message.id) > after_id)
+                .order_by(col(Message.id).asc())
+            ).all()
+            return [_message_dict(row, meta=True) for row in rows]
+
+    def last_message_meta(self, session_id: str) -> Optional[dict[str, Any]]:
+        """``{"id", "created_at"}`` of the session's newest message, or None."""
+        with self._get_session() as session:
+            row = session.exec(
+                select(Message).where(Message.session_id == session_id).order_by(col(Message.id).desc()).limit(1)
+            ).first()
+            return {"id": row.id, "created_at": row.created_at} if row else None
+
+    def open_episode(self, session_id: str) -> Optional[dict[str, Any]]:
+        with self._get_session() as session:
+            row = session.exec(
+                select(Episode)
+                .where(Episode.session_id == session_id, Episode.record_status == "open")
+                .order_by(col(Episode.id).desc()).limit(1)
+            ).first()
+            return row.model_dump() if row else None
+
+    def create_episode(self, session_id: str, started_at: float, start_after_message_id: int,
+                       digest: Optional[str]) -> dict[str, Any]:
+        self.get_or_create_session(session_id, chat_mode=None)
+        with self._get_session() as session:
+            try:
+                row = Episode(session_id=session_id, started_at=started_at,
+                              start_after_message_id=start_after_message_id, digest=digest or None)
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+                return row.model_dump()
+            except Exception:
+                session.rollback()
+                raise
+
+    def update_episode(self, episode_id: int, **fields: Any) -> None:
+        with self._get_session() as session:
+            try:
+                row = session.get(Episode, episode_id)
+                if row is None:
+                    return
+                for key, value in fields.items():
+                    setattr(row, key, value)
+                session.add(row)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def list_episodes(self, session_id: str, limit: Optional[int] = None) -> list[dict[str, Any]]:
+        """Newest first."""
+        with self._get_session() as session:
+            statement = select(Episode).where(Episode.session_id == session_id).order_by(col(Episode.id).desc())
+            if limit:
+                statement = statement.limit(limit)
+            return [row.model_dump() for row in session.exec(statement).all()]
 
     def append_message(
         self,

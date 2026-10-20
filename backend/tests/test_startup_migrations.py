@@ -54,4 +54,4 @@ def test_a_database_behind_head_still_gets_migrated(temp_db):
         columns = {row[1] for row in db.execute("PRAGMA table_info(messages)")}
         stamped = db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert "reasoning_content" in columns
-    assert stamped == "006"
+    assert stamped == "007"  # head (007: episodes, PLAN 4.18)

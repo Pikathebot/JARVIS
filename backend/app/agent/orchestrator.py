@@ -42,6 +42,7 @@ from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
 from app.memory.ephemeral import EphemeralMemoryStore, build_profile_context, build_project_memory_context
 from app.memory.compactor import ContextCompactor
+from app.memory.thread import ThreadEpisodes, is_thread, split_new_topic
 from app.skills.loader import SkillsLoader, Skill
 from app.mcp.manager import MCPManager
 
@@ -131,6 +132,8 @@ _NEEDS_A_TOOL = re.compile(
     r"|(?:check|read|open|show)\s+(?:my\s+)?(?:e-?mails?|inbox|gmail|mail)\b|any\s+(?:new\s+)?(?:e-?mails?|mail)\b"
     r"|draft\s+(?:a|an|the)?\s*(?:e-?mail|reply)\b|write\s+(?:an?\s+)?e-?mail\b"
     r")", re.I)
+# "New topic" on its own in the Freeform thread (PLAN 4.18): the cut is made in code.
+_NEW_TOPIC_REPLY = "New topic, sir. Go ahead."
 _FAST_PICKED_ACTION = ("You've picked the Fast model, so right now I can only talk -- that needs a tool. "
                        "Switch the model to Main or Auto and ask again; Main can " + _CAPABILITIES_ALL + ".")
 
@@ -1972,6 +1975,7 @@ class AgentOrchestrator:
         chat_mode: Optional[str] = "WORKSPACE",
         attachments: Optional[list[dict[str, Any]]] = None,
         voice_route: Optional[str] = None,
+        new_topic: bool = False,
     ):
         """
         Asynchronously streams chat tokens, tool execution events, and metadata.
@@ -2018,6 +2022,31 @@ class AgentOrchestrator:
             ):
                 yield ev
             return
+
+        # The one continuing Freeform thread (PLAN 4.18): the model sees only this turn's episode.
+        thread_ctx = None
+        if is_thread(active_session_id) and not self.is_ephemeral:
+            cut, rest = split_new_topic(user_message)
+            episodes = ThreadEpisodes(self.memory_store, self.context_manager.token_counter)
+            if cut and not rest:
+                # "New topic" on its own only opens the episode: nothing is stored, so the new
+                # episode's first message is the user's next real one.
+                episode, _ = episodes.current(active_session_id, new_topic=True)
+                yield {"event": "episode", "data": {"id": episode["id"], "opened": True, "folded": False}}
+                yield {"event": "token", "data": {"delta": _NEW_TOPIC_REPLY}}
+                yield {"event": "done", "data": {
+                    "response": _NEW_TOPIC_REPLY, "reasoning": "", "model": "none", "provider": "code",
+                    "status": "completed", "session_id": active_session_id,
+                    "route_reason": "Answered in code: a new topic in the thread.", "fallback_used": False,
+                    "compaction_performed": None, "active_skills": [], "tools_used": [],
+                }}
+                return
+            if cut:
+                user_message = rest
+            thread_ctx = episodes.context(active_session_id, new_topic=new_topic or cut)
+            if thread_ctx.opened or thread_ctx.folded_now:
+                yield {"event": "episode", "data": {"id": thread_ctx.episode["id"], "opened": thread_ctx.opened,
+                                                   "folded": thread_ctx.folded_now}}
 
         resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
             self._resolve_turn_scope(project_id, active_session_id, chat_mode)
@@ -2161,6 +2190,8 @@ class AgentOrchestrator:
             chat_mode=effective_mode_str,
             max_context_tokens=resolved_ctx_tokens,
             vision=vision,
+            history_rows=thread_ctx.rows if thread_ctx else None,
+            history_preamble=thread_ctx.preamble if thread_ctx else None,
         )
 
         # 5. Emit retrieval_context SSE event for UI observability

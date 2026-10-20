@@ -247,6 +247,10 @@ class Settings(BaseSettings):
     context_tier2_max_attachment_tokens: int = Field(default=8000, alias="CONTEXT_TIER2_MAX_ATTACHMENT_TOKENS")
     context_tier3_max_chunks: int = Field(default=5, alias="CONTEXT_TIER3_MAX_CHUNKS")
     context_tier4_max_messages: int = Field(default=20, alias="CONTEXT_TIER4_MAX_MESSAGES")
+    # The one continuing Freeform thread (PLAN 4.18, app/memory/thread.py): a gap this long opens
+    # a new episode; an episode's history past this many tokens folds its oldest half once.
+    thread_episode_gap_hours: float = Field(default=3.0, alias="THREAD_EPISODE_GAP_HOURS")
+    thread_episode_budget_tokens: int = Field(default=16000, alias="THREAD_EPISODE_BUDGET_TOKENS")
     context_include_summary: bool = Field(default=True, alias="CONTEXT_INCLUDE_SUMMARY")
 
     # Backward compatibility properties

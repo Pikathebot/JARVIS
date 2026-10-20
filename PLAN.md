@@ -2200,6 +2200,20 @@ first digest); (3) `recall` tool (FTS5 over messages + records, embeddings, date
 schema + risk tier); (4) WinUI: sidebar table of contents, dividers/markers, digest card, New topic, lazy
 scroll-back, voice/HUD/briefing into the thread; (5) archive-and-clear, per-episode delete, "forget". Note: the
 sliding-window re-prefill also hits long project chats -- append+fold could serve them later.
+**Phase 1 BUILT 2026-10-20 (backend; 1160 tests pass; not run live -- nothing in the app uses it until phase 4).**
+The thread is the fixed session `jarvis-thread` (`app/memory/thread.py`, like the HUD's `jarvis-hud`). `episodes`
+table (model + Alembic 007; applied cleanly to a copy of the live DB). Per streamed turn in that session
+(`run_stream`; the non-streaming `run()` is not threaded): `ThreadEpisodes.context` opens an episode after a
+3 h gap (`THREAD_EPISODE_GAP_HOURS`) or on "new topic" (the phrase, alone or as a lead-in, or the request's
+`new_topic` flag); "new topic" alone is answered in code and stores nothing. `build_context(history_rows=,
+history_preamble=)` sends exactly the episode's rows (no 20-message cap, no old compaction summary); the
+preamble (digest + fold note) rides after the words of the episode's first visible user message (on the current
+message on its first turn), so the prefix is byte-identical within the episode. Past `THREAD_EPISODE_BUDGET_TOKENS`
+(16000) the oldest rows fold once at a user-message boundary, keeping ~half; the fold point is stored. The
+closing episode is marked `pending` (record for phase 2). The digest lists the last 5 closed episodes (title, or
+"untitled (summary pending)" with the time span), the previous one's summary/decisions, open items. An `episode`
+SSE event ({id, opened, folded}) goes out when one opens or folds (the client ignores it for now).
+`GET /api/thread/episodes`. Tests: `backend/tests/test_thread.py`.
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):

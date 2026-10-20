@@ -40,6 +40,32 @@ class Message(SQLModel, table=True):
     created_at: Optional[float] = None
 
 
+class Episode(SQLModel, table=True):
+    """A stretch of the one continuing Freeform thread (PLAN 4.18): it opens on the first message
+    after a 3-hour gap or a "new topic", and the model only ever sees the open episode's messages.
+    ``digest`` (earlier episodes, fixed when the episode opens) and ``fold_note`` ride on the
+    episode's first visible message, so the prompt prefix stays byte-identical within it."""
+    __tablename__ = "episodes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(foreign_key="sessions.session_id", index=True)
+    started_at: float
+    ended_at: Optional[float] = None
+    # Messages with an id above this belong to the episode (the last id before it opened).
+    start_after_message_id: int = Field(default=0)
+    # Folded away: messages up to and including this id are summarised in ``fold_note``.
+    fold_upto_message_id: Optional[int] = None
+    fold_note: Optional[str] = None
+    digest: Optional[str] = None
+    # The record, written when the episode closes (phase 2): title, summary, decisions, open items.
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    decisions: Optional[str] = None
+    open_items: Optional[str] = None
+    # open -> pending (closed, record not written yet) -> done
+    record_status: str = Field(default="open")
+
+
 class CompactionEvent(SQLModel, table=True):
     __tablename__ = "compaction_events"
 

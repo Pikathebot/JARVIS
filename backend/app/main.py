@@ -50,6 +50,7 @@ from app.routers import (
     compare_router,
 )
 from app.routers.google import router as google_router
+from app.routers.thread import router as thread_router
 from app.awareness.monitor import AwarenessMonitor
 from app.persona import persona_manager
 from app.routines.scheduler import RoutineScheduler
@@ -582,6 +583,7 @@ app.include_router(routines_router)
 app.include_router(models_router)
 app.include_router(confirmations_router)
 app.include_router(rag_debug_router)
+app.include_router(thread_router)
 app.include_router(compare_router)
 app.include_router(google_router)
 
@@ -637,6 +639,11 @@ class ChatRequest(BaseModel):
         default=None,
         description="Set by voice mode (/api/voice/listen's voice_route): the turn runs on the fast "
                     "model, 'chat' to talk, 'act' with tools; replies are short enough to speak"
+    )
+    new_topic: bool = Field(
+        default=False,
+        description="The Freeform thread (session 'jarvis-thread', PLAN 4.18): start a new episode with "
+                    "this message (the client's New topic button)"
     )
 
 
@@ -1223,6 +1230,7 @@ async def chat_stream(request: ChatRequest):
                     chat_mode=request.chat_mode,
                     attachments=request.attachments,
                     voice_route=request.voice_route,
+                    new_topic=request.new_topic,
                 ):
 
                     event_type = event.get("event", "message")
