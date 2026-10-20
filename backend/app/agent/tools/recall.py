@@ -60,6 +60,8 @@ def parse_past(when: str, now: Optional[datetime] = None) -> Optional[tuple[floa
     '2026-10-18', '18 oct' / 'oct 18'."""
     now = now or datetime.now()
     t = " ".join(re.sub(r"\b(?:on|in|the|during|earlier)\b", " ", str(when or "").lower().replace(",", " ")).split())
+    # Clock times ("Mon 19 Oct 14:02-15:30", copied from a digest line): the day is the span.
+    t = " ".join(re.sub(r"\b\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\b", " ", t).split())
     # "Sunday 18 Oct" (what Ornith sent on the first live probe): with a date there, the weekday adds nothing.
     dated = re.sub(r"\b(?:" + "|".join(_WEEKDAYS) + r"|" + "|".join(d[:3] for d in _WEEKDAYS) + r")\b", " ", t)
     if re.search(r"\d", dated):
@@ -166,13 +168,26 @@ def _excerpt(content: str, terms: list[str]) -> str:
 
 
 def recall(query: str = "", when: str = "", session_id: Optional[str] = None,
-           project_id: Optional[str] = None) -> str:
+           project_id: Optional[str] = None, user_message: Optional[str] = None) -> str:
     """Search earlier conversations for what was said, decided or left open, when the user refers to something you don't have in front of you.
 
     Args:
         query: Words to look for; empty to list what was discussed in ``when``.
         when: A past time span: 'today', 'yesterday', 'last week', 'monday', '2026-10-18'; empty for any time.
     """
+    found = _recall(query, when, project_id)
+    # "Forget what we said about X": the model tends to look it up first (live probe 2026-10-20,
+    # 3 of 4). Finding it is not forgetting it -- say what deletes it, here rather than in the prompt.
+    if session_id == THREAD_SESSION_ID and not found.startswith(("Error", "Nothing", "No ")):
+        from app.agent.tools.memory import asks_to_forget
+
+        if asks_to_forget(user_message or ""):
+            found += ("\n\nThe user asked to forget this. Looking it up doesn't delete it: call "
+                      "forget_conversation(about=..., when=...) -- the user approves which conversations go.")
+    return found
+
+
+def _recall(query: str, when: str, project_id: Optional[str]) -> str:
     span = None
     if str(when or "").strip():
         span = parse_past(when)

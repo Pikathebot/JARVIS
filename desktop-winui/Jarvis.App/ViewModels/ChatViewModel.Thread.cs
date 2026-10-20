@@ -202,6 +202,50 @@ public partial class ChatViewModel
         return false;
     }
 
+    /// <summary>The sidebar's "Delete topic": gone for good on the backend, then the thread (if it
+    /// is open) and the table of contents are reloaded without it.</summary>
+    public async Task<bool> DeleteEpisodeAsync(long episodeId)
+    {
+        bool ok;
+        try
+        {
+            ok = await _api.DeleteThreadEpisodeAsync(episodeId).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Post(() => Error = ex.Message);
+            return false;
+        }
+        if (!ok)
+        {
+            Post(() => Error = "That topic couldn't be deleted.");
+            return false;
+        }
+        await AfterThreadForgotAsync().ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>Topics were deleted (the sidebar, or the forget_conversation tool): what is on
+    /// screen may still show them, so reload.</summary>
+    private async Task AfterThreadForgotAsync()
+    {
+        if (await OnUiAsync(() => IsThread && !IsLoading).ConfigureAwait(false)) await LoadThreadAsync().ConfigureAwait(false);
+        else await RefreshEpisodesAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>After a reply: the episode list now, and again once the backend has had time to
+    /// name the topic (it asks the model in the background, ~1 s, more while a turn queues).</summary>
+    private async Task RefreshEpisodesAfterTurnAsync()
+    {
+        await RefreshEpisodesAsync().ConfigureAwait(false);
+        foreach (var wait in new[] { 2500, 6000 })
+        {
+            await Task.Delay(wait).ConfigureAwait(false);
+            if (!await OnUiAsync(() => IsThread).ConfigureAwait(false)) return;
+            await RefreshEpisodesAsync().ConfigureAwait(false);
+        }
+    }
+
     private async Task RefreshEpisodesAsync()
     {
         try

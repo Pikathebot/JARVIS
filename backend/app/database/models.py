@@ -59,6 +59,9 @@ class Episode(SQLModel, table=True):
     digest: Optional[str] = None
     # The record, written when the episode closes (phase 2): title, summary, decisions, open items.
     title: Optional[str] = None
+    # The open episode is named by the model after its first reply and renamed as it goes on
+    # (thread_titles.py); this is the last message the current title was written from.
+    title_upto_message_id: Optional[int] = None
     summary: Optional[str] = None
     decisions: Optional[str] = None
     open_items: Optional[str] = None

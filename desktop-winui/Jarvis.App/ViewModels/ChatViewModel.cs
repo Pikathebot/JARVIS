@@ -637,7 +637,12 @@ public partial class ChatViewModel : ObservableObject
 
     private void HandleDone(SseDoneEvent e)
     {
-        if (IsThread) _ = RefreshEpisodesAsync();
+        // A turn that forgot earlier topics: the transcript still shows them, so reload it (the
+        // reply is stored before "done" is sent). Otherwise only the episode titles may have moved.
+        var forgot = IsThread && _streamingMessage?.ToolSteps.Any(s => s.Tool == "forget_conversation"
+            && s.Status == ToolStatus.Success && (s.Result?.ToString() ?? "").StartsWith("Forgotten", StringComparison.Ordinal)) == true;
+        if (forgot) _ = LoadThreadAsync();
+        else if (IsThread) _ = RefreshEpisodesAfterTurnAsync();
         if (_streamingMessage is null) return;
         _streamingMessage.IsStreaming = false;
         _streamingMessage.Model = e.Model;

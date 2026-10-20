@@ -69,7 +69,8 @@ def _clock(ts: Optional[float]) -> str:
     return datetime.fromtimestamp(ts).strftime("%a %d %b %H:%M") if ts else "?"
 
 
-def todays_briefing(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None) -> str:
+def todays_briefing(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None,
+                    before: Optional[float] = None) -> str:
     """The day's briefing text when this is the first episode since the day began (4 AM), else ''.
     The briefing itself is composed and emitted by ``app.awareness.day_briefing``; the first
     episode of the day carries it so the model knows what the user was told this morning."""
@@ -78,18 +79,24 @@ def todays_briefing(store: Any, session_id: str, now: float, exclude_id: Optiona
     at = datetime.fromtimestamp(now)
     day = day_briefing.briefing_day(at)
     day_start = (datetime.combine(day, datetime.min.time()) + day_briefing.DAY_STARTS_AT).timestamp()
-    if any(e["started_at"] >= day_start and e["id"] != exclude_id for e in store.list_episodes(session_id, limit=3)):
+    pool = store.list_episodes(session_id) if before is not None else store.list_episodes(session_id, limit=3)
+    if any(e["started_at"] >= day_start and e["id"] != exclude_id and (before is None or e["started_at"] < before)
+           for e in pool):
         return ""
     return day_briefing.briefing_text(day)
 
 
-def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None) -> str:
+def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None,
+                 before: Optional[float] = None) -> str:
     """Earlier episodes, newest first, as the new episode's opening context. Uses each episode's
     record where one exists; otherwise its time span. The first episode of a day also carries the
-    morning briefing. Empty when there is neither."""
-    briefing = todays_briefing(store, session_id, now, exclude_id)
-    earlier = [e for e in store.list_episodes(session_id, limit=DIGEST_EPISODES + 1)
-               if e["record_status"] != "open" and e["id"] != exclude_id][:DIGEST_EPISODES]
+    morning briefing. Empty when there is neither. ``before`` rebuilds an existing episode's digest
+    as it was when it opened (only episodes that started earlier), after one was forgotten."""
+    briefing = todays_briefing(store, session_id, now, exclude_id, before)
+    pool = (store.list_episodes(session_id) if before is not None
+            else store.list_episodes(session_id, limit=DIGEST_EPISODES + 1))
+    earlier = [e for e in pool if e["record_status"] != "open" and e["id"] != exclude_id
+               and (before is None or e["started_at"] < before)][:DIGEST_EPISODES]
     if not earlier and not briefing:
         return ""
     lines = ["[Earlier in this conversation -- context, not part of the user's message; "
@@ -108,6 +115,37 @@ def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[i
     if open_items:
         lines.append("Open items: " + " | ".join(open_items))
     return "\n".join(lines) + "]"
+
+
+def _digest_line_start(ep: dict[str, Any]) -> str:
+    """How a digest's list names an episode: the line starts with its start time."""
+    return f"- {_clock(ep['started_at'])}"
+
+
+def forget_episodes(store: Any, episode_ids: list[int], session_id: str = THREAD_SESSION_ID) -> dict[str, int]:
+    """Deletes episodes for good (PLAN 4.18 phase 5): their messages (the search index follows by
+    trigger), their rows -- record, fold note, vector -- and every later digest that listed them
+    is rebuilt without them, so nothing of a forgotten episode is left to recall or to read."""
+    wanted = set(episode_ids)
+    episodes = sorted(store.list_episodes(session_id), key=lambda e: (e["start_after_message_id"], e["id"]))
+    targets = [e for e in episodes if e["id"] in wanted]
+    messages = 0
+    for ep in targets:
+        later = [e["start_after_message_id"] for e in episodes
+                 if (e["start_after_message_id"], e["id"]) > (ep["start_after_message_id"], ep["id"])]
+        # An episode holds the messages after its start_after id, up to the next one's.
+        messages += store.delete_message_span(session_id, ep["start_after_message_id"], min(later) if later else None)
+        store.delete_episode(ep["id"])
+    if targets:
+        named = [_digest_line_start(t) for t in targets]
+        first = min(t["started_at"] for t in targets)
+        for ep in store.list_episodes(session_id):
+            digest = ep.get("digest") or ""
+            if ep["started_at"] > first and any(n in digest for n in named):
+                fresh = build_digest(store, session_id, now=ep["started_at"], exclude_id=ep["id"],
+                                     before=ep["started_at"])
+                store.update_episode(ep["id"], digest=fresh or None)
+    return {"episodes": len(targets), "messages": messages}
 
 
 class ThreadEpisodes:

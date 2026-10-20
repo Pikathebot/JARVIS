@@ -106,6 +106,13 @@ public sealed class JarvisApiClient
         return response.IsSuccessStatusCode;
     }
 
+    /// <summary>Deletes a thread episode for good: its messages, record and search entries.</summary>
+    public async Task<bool> DeleteThreadEpisodeAsync(long episodeId, CancellationToken ct = default)
+    {
+        var response = await _http.DeleteAsync($"/api/thread/episodes/{episodeId}", ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode;
+    }
+
     public Task<UnloadResponse> UnloadModelsAsync(CancellationToken ct = default) =>
         PostAsync<object?, UnloadResponse>("/models/unload", null, ct);
 

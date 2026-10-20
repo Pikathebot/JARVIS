@@ -2294,6 +2294,14 @@ class AgentOrchestrator:
                     ev["data"]["compare_id"] = compare.start(
                         target_provider, decision.model, active_session_id, user_message,
                         _with_system_prompt(context_pkg.system_prompt, context_pkg.messages), answer or "")
+                # The open topic gets its name from the model after its first reply, and a new
+                # one every few turns (PLAN 4.18): the turn's own context, so the cache holds.
+                if thread_ctx is not None and decision.provider == "llama_cpp" and not is_fast:
+                    from app.memory import thread_titles
+                    thread_titles.schedule(
+                        target_provider, decision.model,
+                        _with_system_prompt(context_pkg.system_prompt, context_pkg.messages), answer or "",
+                        combined_tools, self.memory_store, active_session_id, thread_ctx.episode["id"])
             yield ev
 
         if rag_trace_record is not None:

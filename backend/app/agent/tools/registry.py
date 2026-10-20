@@ -25,6 +25,7 @@ from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_s
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
 from app.agent.tools.notes import notes, tasks
 from app.agent.tools.recall import recall
+from app.agent.tools.forget_conversation import forget_conversation
 from app.agent.tools.calendar_events import calendar
 from app.agent.tools.gmail import email
 
@@ -78,6 +79,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "forget": forget,
     # Earlier conversations: thread episodes + project chats (PLAN 4.18)
     "recall": recall,
+    "forget_conversation": forget_conversation,
     # The user's notes and to-do list as Markdown (PLAN 4.16)
     "notes": notes,
     "tasks": tasks,
@@ -134,6 +136,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     remember,
     forget,
     recall,
+    forget_conversation,
     # Notes + tasks
     notes,
     tasks,
@@ -368,6 +371,11 @@ class RecallArgs(BaseModel):
     when: str = Field(default="", description="Past span: 'yesterday', 'last week', 'monday', '2026-10-18'")
 
 
+class ForgetConversationArgs(BaseModel):
+    about: str = Field(default="", description="What it was about")
+    when: str = Field(default="", description="Past span, as for recall")
+
+
 class NotesArgs(BaseModel):
     action: Literal["add", "append", "find", "read", "list"] = Field(default="list", description="What to do")
     title: str = Field(default="", description="The note's title (add, append, read)")
@@ -444,6 +452,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "remember": RememberArgs,
     "forget": ForgetArgs,
     "recall": RecallArgs,
+    "forget_conversation": ForgetConversationArgs,
     "notes": NotesArgs,
     "tasks": TasksArgs,
     "calendar": CalendarArgs,
@@ -540,6 +549,11 @@ WORKSPACE_BOUND_TOOLS = frozenset({
 })
 
 
+# Offered only in Freeform: they work on its one continuing thread, which a workspace has none of
+# (and leaving them out keeps the workspace head under its budget).
+FREEFORM_ONLY_TOOLS = frozenset({"forget_conversation"})
+
+
 def tools_for_space(chat_mode: str = "WORKSPACE") -> list[Callable[..., Any]]:
     """
     The tools offered on every turn in a space -- the same list, in the same order, from the
@@ -552,4 +566,4 @@ def tools_for_space(chat_mode: str = "WORKSPACE") -> list[Callable[..., Any]]:
     """
     if (chat_mode or "").upper() == FREEFORM_MODE:
         return [t for t in AVAILABLE_TOOLS if t.__name__ not in WORKSPACE_BOUND_TOOLS]
-    return list(AVAILABLE_TOOLS)
+    return [t for t in AVAILABLE_TOOLS if t.__name__ not in FREEFORM_ONLY_TOOLS]

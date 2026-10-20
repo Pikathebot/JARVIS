@@ -387,6 +387,36 @@ class MemoryStore:
                 session.rollback()
                 raise
 
+    def delete_message_span(self, session_id: str, after_id: int, upto_id: Optional[int] = None) -> int:
+        """Deletes a session's messages with ``after_id < id <= upto_id`` (no upper end when None);
+        returns how many. The FTS index follows by trigger."""
+        from sqlalchemy import delete as sa_delete
+
+        with self._get_session() as session:
+            try:
+                stmt = sa_delete(Message).where(Message.session_id == session_id, col(Message.id) > after_id)
+                if upto_id is not None:
+                    stmt = stmt.where(col(Message.id) <= upto_id)
+                result = session.exec(stmt)
+                session.commit()
+                return int(result.rowcount or 0)
+            except Exception:
+                session.rollback()
+                raise
+
+    def delete_episode(self, episode_id: int) -> bool:
+        with self._get_session() as session:
+            try:
+                row = session.get(Episode, episode_id)
+                if row is None:
+                    return False
+                session.delete(row)
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                raise
+
     def list_episodes(self, session_id: str, limit: Optional[int] = None) -> list[dict[str, Any]]:
         """Newest first."""
         with self._get_session() as session:

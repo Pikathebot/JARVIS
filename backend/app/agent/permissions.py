@@ -103,6 +103,8 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "forget": RiskTier.LOW_RISK,
     # Reading earlier conversations (PLAN 4.18): read-only, scoped in the tool itself.
     "recall": RiskTier.LOW_RISK,
+    # Deletes conversations for good: always asks, and the card names which (evaluate_tool_permission).
+    "forget_conversation": RiskTier.CONFIRMATION_REQUIRED,
     # The user's notes and to-do list (PLAN 4.16): reading, adding and ticking off run -- the user
     # asked in words, and a line is as easy to undo by hand; removing a task asks (rule below).
     "notes": RiskTier.LOW_RISK,
@@ -542,7 +544,7 @@ def _describe_pending_action(pending: dict[str, Any]) -> str:
     """A short, speakable description of one pending action, e.g. 'run a command: git push'."""
     tool = str(pending.get("tool", "")).replace("_", " ").strip() or "an action"
     args = pending.get("args") or {}
-    for key in ("command", "cmd", "file_path", "path", "url", "pid_or_name", "process_name", "name", "message", "target"):
+    for key in ("command", "cmd", "file_path", "path", "url", "pid_or_name", "process_name", "name", "message", "target", "about"):
         value = args.get(key) if isinstance(args, dict) else None
         if value:
             return f"{tool}: {value}"
@@ -774,6 +776,16 @@ def evaluate_tool_permission(
         else:
             to = str(arguments.get("when") or "").strip()
             custom_reason = f"Moves {which} on your calendar" + (f" to {to}." if to else ".")
+    elif tool_name == "forget_conversation":
+        from app.agent.tools.forget_conversation import describe_matches
+        from app.agent.tools.memory import asks_to_forget
+
+        count, card = describe_matches(str(arguments.get("about") or ""), str(arguments.get("when") or ""))
+        if count == 0 or (user_message is not None and not asks_to_forget(user_message)):
+            # Nothing would be deleted (no match, or the tool refuses unasked): nothing to approve.
+            effective_tier = RiskTier.LOW_RISK
+        else:
+            custom_reason = card
     elif tool_name in _GIT_CARD_TEXT:
         custom_reason = _GIT_CARD_TEXT[tool_name].format(
             file=arguments.get("file_path") or "", branch=arguments.get("branch") or "",

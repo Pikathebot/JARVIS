@@ -2270,7 +2270,37 @@ To check on device: the scroll-back keeps its place while pages insert (relies o
 jumping to an old episode loads pages until it is there; markers retitle once the keeper writes a record; the
 Workspace part of the sidebar is unchanged. Briefing/voice into the thread: the briefing already rides in the
 day's first digest; main-window voice turns use the active session, i.e. the thread when it is open.
-Next: phase 5 (archive-and-clear of the test history, per-episode delete, "forget").
+Committed d6d459b (pushed).
+**Phase 5 BUILT 2026-10-20 (1186 tests pass, WinUI builds; NOT seen on device; the clear NOT run yet).**
+(1) `forget_episodes` (`app/memory/thread.py`): an episode's messages (after its `start_after_message_id`, up to
+the next one's), its row (record, fold note, vector) and search entries (FTS trigger) go; every later digest that
+listed it (its line starts with its start time) is rebuilt as of its own start (`build_digest(before=)`), so
+nothing of it survives in a digest card or the open episode's prefix. (2) Sidebar: episode rows get "..." ->
+Delete, which confirms on a flyout ("Deletes this topic's messages and summary for good...") -> `DELETE
+/api/thread/episodes/{id}`; the thread reloads. (3) `forget_conversation(about, when)` -- **Freeform only**
+(`FREEFORM_ONLY_TOOLS`, so the workspace head is unchanged; the Freeform head had to be trimmed to fit 25,500):
+matches closed episodes by record keywords + message FTS hits + meaning; CONFIRMATION_REQUIRED with a card naming
+each conversation that would go (LOW when nothing matches or the user didn't ask, then it refuses); never the open
+episode; refuses unless the user's message asks to forget (`asks_to_forget`). Live probe on Ornith: 2 of 4
+"forget what we said about X" went straight to it, 2 called `recall` first -- recall now appends "Looking it up
+doesn't delete it: call forget_conversation" when the user asked to forget (in the tool result, not the prompt),
+and with that both went on to forget_conversation; "what did we say about ooty?" never deleted. `parse_past` now
+drops clock times ("Mon 19 Oct 14:02-15:30", copied from a digest line). (4) `scripts/archive_and_clear_history.py`:
+dry run by default; `--yes` copies the whole DB + a JSON dump of the conversations to `data/history-archive/<stamp>/`,
+then deletes sessions, messages, episodes, compaction events, attachment rows (memories/artifacts keep, unlinked;
+projects untouched), rebuilds the FTS index, VACUUMs; refuses while the backend listens on :8000. Tested on a copy of
+the live DB (748 sessions / 3173 messages -> 0; 6 projects, 4 memories kept). **To run by the user, Jarvis closed.**
+Uploaded attachment files on disk are left in place.
+**Topic names from the model (user, 2026-10-20: "named by the AI itself ... at first based on the first prompt, then
+... based on the summary").** `app/memory/thread_titles.py`: after a thread reply (main model, not voice/fast), when
+the open episode has no name and the user has said >= 4 words in it (a greeting alone isn't named: the live probe
+called "hey jarvis" "Good evening, sir"), or every 4 user turns after the last name, a background request with the
+turn's own context (same head, tools, history) + the reply + "name this topic in 3-6 words" -- the cached prefix
+holds, ~0.8 s live ("GPU temps and Game mode", "Ooty trip itinerary", "Mutex vs semaphore"); one slot, so a
+message sent meanwhile waits that long. `episodes.title_upto_message_id` (Alembic 009) tracks the rename point;
+the record's title replaces it when the topic closes. The client refreshes episodes 2.5 s and 6 s after a reply.
+To check on device: names appear on the marker and sidebar row shortly after the first real reply; delete topic
+from the sidebar; "forget what we said about X" -> card listing the topic -> gone from the sidebar and recall.
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):

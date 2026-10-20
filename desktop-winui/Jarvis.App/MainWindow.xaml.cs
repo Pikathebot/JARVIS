@@ -1114,9 +1114,9 @@ public sealed partial class MainWindow : Window
         if (row.Children[2] is Button more)
         {
             more.Opacity = 0;
-            // The thread and its episodes have no "..." menu yet (per-episode delete is phase 5).
-            more.Visibility = session.SessionId.StartsWith(ViewModels.ChatViewModel.ThreadId, StringComparison.Ordinal)
-                ? Visibility.Collapsed : Visibility.Visible;
+            // The thread row has no "..." menu (the whole conversation isn't deleted from here);
+            // an episode's deletes that topic (PLAN 4.18 phase 5).
+            more.Visibility = session.SessionId == ViewModels.ChatViewModel.ThreadId ? Visibility.Collapsed : Visibility.Visible;
         }
     }
 
@@ -1158,11 +1158,51 @@ public sealed partial class MainWindow : Window
 
     private async void DeleteSession_Click(object sender, RoutedEventArgs e)
     {
+        if (sender is FrameworkElement { Tag: Session topic } && SessionGroup.EpisodeOf(topic) is long episodeId)
+        {
+            ConfirmDeleteTopic(topic, episodeId);
+            return;
+        }
         if (sender is FrameworkElement { Tag: Session session })
         {
             await SessionsViewModel.DeleteAsync(session);
         }
     }
+
+    /// <summary>A topic is deleted for good (messages, summary, what recall finds), so it asks
+    /// once more, on a small flyout under the row's "..." button.</summary>
+    private void ConfirmDeleteTopic(Session topic, long episodeId)
+    {
+        var anchor = FindSessionRowMoreButton(topic);
+        var flyout = new Flyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        var delete = new Button { Content = "Delete topic" };
+        delete.Resources["ButtonForeground"] = Themes.JarvisTheme.Brush("StatusError");
+        delete.Resources["ButtonForegroundPointerOver"] = Themes.JarvisTheme.Brush("StatusError");
+        var cancel = new Button { Content = "Cancel" };
+        cancel.Click += (_, _) => flyout.Hide();
+        delete.Click += async (_, _) =>
+        {
+            flyout.Hide();
+            await ChatViewModel.DeleteEpisodeAsync(episodeId);
+        };
+        flyout.Content = new StackPanel
+        {
+            Spacing = 10, MaxWidth = 280,
+            Children =
+            {
+                new TextBlock { Text = SessionRowLabel(topic.SessionId, topic.LastMessage), Style = (Style)Application.Current.Resources["HeadlineText"], TextWrapping = TextWrapping.Wrap },
+                new TextBlock { Text = "Deletes this topic's messages and summary for good. Jarvis won't be able to recall it.",
+                                Style = (Style)Application.Current.Resources["SecondaryFootnoteText"], TextWrapping = TextWrapping.Wrap },
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, delete } },
+            },
+        };
+        if (anchor is not null) flyout.ShowAt(anchor);
+        else flyout.ShowAt(SessionsList);
+    }
+
+    private Button? FindSessionRowMoreButton(Session session) =>
+        SessionsList.ContainerFromItem(session) is ListViewItem { ContentTemplateRoot: Grid row } && row.Children[2] is Button more
+            ? more : null;
 
     private async void FreeVram_Click(object sender, RoutedEventArgs e)
     {

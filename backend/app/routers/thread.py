@@ -2,9 +2,9 @@
 sidebar table of contents lists -- and its messages a page at a time for the scroll-back."""
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.memory.thread import THREAD_SESSION_ID
+from app.memory.thread import THREAD_SESSION_ID, forget_episodes
 
 router = APIRouter(prefix="/api/thread", tags=["thread"])
 
@@ -40,3 +40,13 @@ def list_messages(before_id: Optional[int] = Query(default=None, ge=1),
                     row["episode_start"] = episode_id  # the newest such episode wins (empty ones skipped)
             prev = row["id"]
     return {"session_id": THREAD_SESSION_ID, "messages": messages, "has_more": more}
+
+
+@router.delete("/episodes/{episode_id}")
+def delete_episode(episode_id: int) -> dict[str, Any]:
+    """The sidebar's "Delete topic": the episode's messages, record and search entries go for good,
+    and later digests that listed it are rebuilt without it (PLAN 4.18 phase 5)."""
+    store = _store()
+    if not any(e["id"] == episode_id for e in store.list_episodes(THREAD_SESSION_ID)):
+        raise HTTPException(status_code=404, detail=f"No topic {episode_id} in the conversation.")
+    return {"deleted": True, "episode_id": episode_id, **forget_episodes(store, [episode_id])}
