@@ -318,6 +318,7 @@ public sealed partial class MainWindow : Window
         }
 
         RootGrid.SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
+        SurfaceContent.SizeChanged += (_, _) => UpdateChatClip();
         // The caption row's controls move with the layout (sidebar hidden, inspector docked,
         // the status text shed), and each move changes which strips of the top edge drag.
         TitleBarRow.LayoutUpdated += (_, _) => UpdateTitleBarRegions();
@@ -393,8 +394,14 @@ public sealed partial class MainWindow : Window
         var available = width - BodyGrid.Padding.Left - BodyGrid.Padding.Right;
         var panelOpen = RightPanelViewModel.IsOpen;
 
-        // Sidebar docks if the chat still fits beside it, unless hidden from the toolbar.
-        var sidebarDocked = !_sidebarHidden && available - (SidebarWidth + SidebarGap) >= MinChatWidth;
+        // Sidebar docks if the chat still fits beside it, unless hidden from the toolbar -- and an
+        // open inspector outranks it: when both won't fit beside the chat but the inspector alone
+        // would, the sidebar goes compact so the inspector can dock (4.20: at 1280 px the inspector
+        // floated over the chat instead, with the transcript printing through it).
+        var panelFitsAlone = available - (PanelWidth + PanelGap) >= MinChatWidth;
+        var panelFitsWithSidebar = available - (SidebarWidth + SidebarGap) - (PanelWidth + PanelGap) >= MinChatWidth;
+        var sidebarDocked = !_sidebarHidden && available - (SidebarWidth + SidebarGap) >= MinChatWidth
+                            && !(panelOpen && !panelFitsWithSidebar && panelFitsAlone);
         var compact = !sidebarDocked;
         if (compact != _compactSidebar)
         {
@@ -458,6 +465,29 @@ public sealed partial class MainWindow : Window
         var chatWidth = available - usedBySidebar - (panelDocked && panelOpen ? PanelWidth + PanelGap : 0);
         StatusVramText.Visibility = chatWidth >= 560 ? Visibility.Visible : Visibility.Collapsed;
         SetStatusPopoverOpen(false);
+        _panelFloating = panelOpen && !panelDocked;
+        UpdateChatClip();
+    }
+
+    private bool _panelFloating;
+
+    /// <summary>A panel floating over the chat (the compact sidebar opened, or an inspector too
+    /// wide to dock) is glass, and glass can't cover XAML: the transcript would print through it.
+    /// So the chat's content is clipped to the part no floating panel covers.</summary>
+    private void UpdateChatClip()
+    {
+        var left = _compactSidebar && _sidebarOverlayOpen ? SidebarWidth + SidebarGap : 0;
+        var right = _panelFloating ? RightPanel.Width + PanelGap : 0;
+        var width = SurfaceContent.ActualWidth;
+        if ((left == 0 && right == 0) || width <= 0)
+        {
+            SurfaceContent.Clip = null;
+            return;
+        }
+        SurfaceContent.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+        {
+            Rect = new Windows.Foundation.Rect(left, 0, Math.Max(0, width - left - right), SurfaceContent.ActualHeight),
+        };
     }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
@@ -472,6 +502,7 @@ public sealed partial class MainWindow : Window
         }
         _sidebarOverlayOpen = !_sidebarOverlayOpen;
         SidebarSlab.Visibility = _sidebarOverlayOpen ? Visibility.Visible : Visibility.Collapsed;
+        UpdateChatClip();
     }
 
     /// <summary>In compact mode the floating sidebar closes once a session is picked.</summary>
@@ -481,6 +512,7 @@ public sealed partial class MainWindow : Window
         {
             _sidebarOverlayOpen = false;
             SidebarSlab.Visibility = Visibility.Collapsed;
+            UpdateChatClip();
         }
     }
 

@@ -2385,3 +2385,20 @@ jarvis-app.log -- read it after the next start to confirm the list and the compo
 **Seen fixed on device 2026-10-20 19:48** (user: "it looks correct now"; log: list and composer both at x 24, width
 515 at the startup size). Same restart: the "actively refused" error is gone too -- Freeform's first thread load
 ran before the backend listened (phase 4 regression); it now logs quietly and `OnBackendCameOnline` reloads it.
+**Pass 1, 2026-10-20 ~21:00 (main window; display at 150%, so 960-2240 px = 640-1493 DIP; changing the scale is a
+system setting, left to the user).** `size_sweep.ps1` (scratch) resized the window to 960x640, 1280x800, 1600x960,
+1920x1080, 2240x1360, snapshotted each, and restored it. Fine at >= 1600: sidebar, chat, inspector side by side,
+the column centred over the composer. Broken: (1) 1280: sidebar docked + inspector *floating* over the chat, the
+transcript printing through its glass (XAML is always above the glass); (2) 960: sidebar compact (correct) but the
+same floating-inspector bleed; (3) every size: the awareness toast (VRAM high) sat over the reply's last lines.
+Fixes (built, NOT seen on device): an open inspector outranks the docked sidebar -- when both don't fit beside the
+chat but the inspector alone does, the sidebar goes compact and the inspector docks; anything still floating over
+the chat (compact sidebar opened, inspector at very narrow widths) clips the chat's content beneath it
+(`UpdateChatClip`, SurfaceContent.Clip); the transcript gets bottom padding the toast's height while one shows, so
+it ends above the toast. Still to sweep: Settings window, sheets (New workspace), the tray popup, the HUD; and
+other DPI scales (100/125/175%) by the user.
+**Pass 2 (after restart, inspector open): fixed, seen in the app's own snapshots.** 1280: sidebar compact, inspector
+docked, chat ~440 DIP, nothing overlapping; 960: inspector floats (no room) and the chat is clipped cleanly at its
+edge; 1600+: unchanged (all docked). The toast padding wasn't exercised (no toast showed). Open question for the
+user: the toolbar band between the capsules is transparent, so the window behind shows through *unblurred* (Discord's
+"THALAPATHY_27's server" and its icons sat between the capsules at every width) -- keep, or give the band glass/frost?

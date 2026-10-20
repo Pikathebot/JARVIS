@@ -50,6 +50,11 @@ public sealed partial class MainWindow
         _chatScroller.RegisterPropertyChangedCallback(ScrollViewer.ViewportWidthProperty, (_, _) => PlaceChatColumn());
         MessageList.SizeChanged += (_, _) => LogChatColumnOnce();
         PlaceChatColumn();
+        // The awareness tray floats over the transcript's bottom right: while it shows, the
+        // transcript ends above it rather than under it (4.20: a VRAM toast covered the last line).
+        _chatBottomPadding = _chatScroller.Padding.Bottom;
+        AwarenessTrayHost.SizeChanged += (_, _) => ReserveRoomForTray();
+        ReserveRoomForTray();
 
         // Content growing (a streamed token, a tool row expanding, a markdown re-render) shows up
         // as a larger ScrollableHeight; follow it if we are holding the end.
@@ -109,6 +114,19 @@ public sealed partial class MainWindow
             MessageList.UpdateLayout();
             element.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0.0, VerticalOffset = -12, AnimationDesired = true });
         }
+    }
+
+    private double _chatBottomPadding;
+
+    private void ReserveRoomForTray()
+    {
+        if (_chatScroller is null) return;
+        var tray = AwarenessTrayHost.Visibility == Visibility.Visible ? AwarenessTrayHost.ActualHeight : 0;
+        var bottom = _chatBottomPadding + (tray > 0 ? tray + AwarenessTrayHost.Margin.Bottom : 0);
+        var p = _chatScroller.Padding;
+        if (Math.Abs(p.Bottom - bottom) < 0.5) return;
+        _chatScroller.Padding = new Thickness(p.Left, p.Top, p.Right, bottom);
+        if (_chatFollow) QueueChatScrollToEnd();
     }
 
     /// <summary>The transcript's reading width, the same as the composer's (MainWindow.xaml).</summary>
