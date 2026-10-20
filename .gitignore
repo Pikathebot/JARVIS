@@ -64,3 +64,6 @@ backend/projects/
 /MagicMock/
 backend/files/
 /files/
+
+# Claude Code project guidance stays local (2026-10-20)
+/CLAUDE.md

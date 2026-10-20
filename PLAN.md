@@ -1319,7 +1319,7 @@ resumes the taint the paused turn parked (120 s). Voice mode's direct plans pass
 refusals) -> 9 (metrics footer) -> 4 (recent objects) -> 6 (taint gate) -> 7 (research) -> 8 (review page, then
 in-app compare) -> 2 (sealed set, as new requests come in) -> 12 (notes/tasks, calendar, email) -> 10 (fine-tune).
 
-### 4.14 Text unreadable over a white background (raised by the user 2026-10-18; after 4.13 and the model work)
+### 4.14 Text unreadable over a white background (raised by the user 2026-10-18) -- DONE 2026-10-18 (8cfb80b), seen working on device by the user 2026-10-20
 
 The user: with a white background, the text isn't readable. Queued until the harness and model work
 (4.13, the fast-slot switch to Ternary Bonsai 2 9B) is finished.
@@ -2110,7 +2110,7 @@ Unverified on device. To watch: turn latency (thinks more), searching vs answeri
 tool calls written as text. Not tried: Ornith's recommended presence_penalty 1.5 for general use. Small
 follow-up: Defiant's `imatrix.gguf` is listed in the model catalogue as a model named "imatrix".
 
-### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- TO DISCUSS, NOT DECIDED
+### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- Freeform thread DESIGNED 2026-10-20 (not built); Workspace still to discuss
 
 **The question (user):** is Freeform better as one long chat (or many, as now)? The same for Workspace, made
 like Projects in Claude. How to handle the context of a long chat is a second discussion, after deciding
@@ -2156,6 +2156,51 @@ continuous thread (beyond off-the-record)? For projects: what do you miss compar
 **Leaning:** Freeform = one continuing thread with episodes + recall (design the context handling next);
 Workspace = many chats per project, close to today; the missing piece is still to be named.
 
+**Design of the long Freeform thread (started 2026-10-20, one decision at a time):**
+Found in the code first: history is a sliding window of the last 20 rows (`context_tier4_max_messages`), so in
+a long chat every turn drops the oldest row, shifts the history and re-prefills all of it -- one endless thread
+would pay that every turn. Compaction (`context_compactor.py`, ~12k-token threshold, fast-model summary) has
+fired once ever (12760 -> 70 tokens: far too lossy). No cross-chat recall beyond 4 `remember` memories.
+Proposed shape: one thread on screen (day dividers; voice/HUD/briefing post into it; "new chat" and
+off-the-record stay); the model sees only the current **episode**, append-only (cache-friendly), and an
+over-long episode folds its oldest half into a summary once instead of sliding; a closed episode gets a record
+(title, summary, decisions, open items, time span), indexed for search; recall = a digest at the start of each
+episode + a `recall` tool over past episodes/messages.
+1. **Episode boundary -- decided 2026-10-20: a 3-hour gap, plus the user cutting early** ("new topic", typed,
+   spoken or a button). No model-detected topic changes (a 9B would split at random-feeling places).
+2. **What a new episode starts with -- decided 2026-10-20: titles + times of the last 5 episodes, open items, and
+   the previous episode's summary** (~300-400 tokens), as the episode's first message (fixed for the episode,
+   so the cache holds). The first episode of the day merges this with the morning briefing (calendar, tasks,
+   unread mail) into one opening message.
+3. **An over-long episode -- decided 2026-10-20: fold once, then keep appending.** At its history budget (~15-18k
+   of the 32k) the oldest half becomes an "earlier in this conversation" note and the recent half stays verbatim:
+   one re-prefill (~5-10 s on that turn), then the cache holds again. Not auto-closing (cuts mid-task).
+   **Summaries (episode records, fold notes, digests) are written by the main model in the background** (after a
+   reply / when idle, never blocking a turn); if main is unloaded (Game mode, freed VRAM) when an episode closes,
+   the record is written the next time main loads. Not the fast 2B (12760 -> 70 tokens).
+4. **`recall` -- decided 2026-10-20: episode records AND raw messages**, keyword (SQLite FTS) + semantic
+   (embedding sidecar) search, date words ("yesterday", "last week"); returns the episode summary plus the exact
+   excerpts with dates. **Scope one way round:** from Freeform it searches the thread and every project's chats;
+   from a project chat, only that project's chats (personal material never leaks into a project). Off-the-record
+   chats are never stored; today's test history is not included (the thread starts empty).
+5. **UI -- decided 2026-10-20: the Freeform sidebar becomes the thread's table of contents** (episodes by day,
+   titled from their records; click jumps there), side chats listed below. In the scroll: day dividers, a quiet
+   episode marker (titled once its record exists), the opening digest/briefing as a compact card collapsed by
+   default, a **New topic** button by the composer; older history loads on scroll-up.
+6. **Deleting and today's history -- decided 2026-10-20:** delete per episode (sidebar right-click: messages,
+   record and index entries go, so it can't be recalled) and by asking ("forget what we said about X" -> matching
+   episodes, confirmed through the approval card); no single-message delete at first (it would leave a summary
+   describing missing messages). **All existing sessions are testing, project chats included: archive to a dated
+   file under `data/`, then clear the DB** (52 Freeform + 695 Workspace sessions, 3165 messages on 2026-10-20).
+   Projects themselves (folders, files, instructions, memories) stay.
+**Build phases (proposed):** (1) backend thread + episodes: Alembic table, boundary (3 h / New topic),
+append-only episode context replacing the sliding window for the thread, digest as the episode's first message,
+fold at budget; (2) background summarizer on main (records, fold notes, digest; briefing merged into the day's
+first digest); (3) `recall` tool (FTS5 over messages + records, embeddings, dates, scope rules; registry +
+schema + risk tier); (4) WinUI: sidebar table of contents, dividers/markers, digest card, New topic, lazy
+scroll-back, voice/HUD/briefing into the thread; (5) archive-and-clear, per-episode delete, "forget". Note: the
+sliding-window re-prefill also hits long project chats -- append+fold could serve them later.
+
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):
 | | Claude Code on D:\JARVIS | Jarvis on a Workspace project |
@@ -2168,3 +2213,24 @@ work on a project and how jarvis work on a project"; first pass 2026-10-19, to d
 First guess at the missing piece: **a living project state** the agent reads at the start of every chat and
 updates as work lands (Jarvis's PLAN.md + memory), plus a visible plan for multi-step work. To check with the
 user against how a Claude Project feels.
+
+### 4.19 Remote control: Jarvis from the phone (raised by the user 2026-10-18) -- PLANNED, NOT BUILT
+
+Asked in the 10-18 session ("like how we are doing for claude"); the user said "add that remote control to plan",
+but the entry never landed (the API connection was failing at the time) -- recovered 2026-10-20 from that
+session's transcript. **Why it's easy-ish:** all of Jarvis sits behind one HTTP API (`/chat/stream` on :8000); the
+WinUI app is just one client. Remote control = a second client, on the phone, reaching that API safely.
+**Options (the 10-18 recommendation was 1):**
+1. **Tailscale + a small phone web page.** Tailscale is a free private network between the user's own devices:
+   phone and laptop see each other anywhere, end-to-end encrypted, nothing exposed to the internet, no server in
+   the middle reading messages (fits local-first). Jarvis serves a simple chat page the phone opens in the browser
+   (and pins to the home screen like an app); replies stream as on the desktop; approval cards are Yes/No buttons.
+   Effort: a moderate milestone, mostly the page plus sign-in protection.
+2. A Telegram/Discord bot: quickest, phone notifications (reminders) for free, but every message passes through
+   their servers -- breaks the privacy idea.
+3. Our own relay server like Claude's Remote Control: means renting and running a server; option 1 gets the
+   same result without one.
+**Whichever way:** a login token (Jarvis can type, run commands and open apps); the approval rules stay as they
+are, possibly asking more often on remote turns; the laptop must be awake (plugged in with sleep off, later
+wake-on-LAN); voice from the phone later, on top of option 1. It should land in the one Freeform thread (4.18:
+voice, HUD and briefing already do). Not started; to discuss when it comes up in the queue.
