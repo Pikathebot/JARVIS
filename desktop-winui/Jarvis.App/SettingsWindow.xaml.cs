@@ -39,12 +39,10 @@ public sealed partial class SettingsWindow : Window
         Pane = new SettingsPane(api, governor, persona, routines, models, voice);
         Host.Children.Add(Pane);
 
-        RestoreBounds();
-        if (_appWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.PreferredMinimumWidth = 760;
-            presenter.PreferredMinimumHeight = 520;
-        }
+        RestoreBounds(hwnd);
+        // In DIPs: below 760 the page's rows (a 320-wide segmented switch beside its label, a
+        // shortcut's key caps) no longer fit beside the 232 section list.
+        WindowSizing.SetMinimum(this, _appWindow, MinWidthDip, MinHeightDip);
 
         // Title bar first (as MainWindow does), so the glass sizes itself to the final client area.
         Pane.AttachWindow(this, _appWindow);
@@ -69,14 +67,17 @@ public sealed partial class SettingsWindow : Window
         Activate();
     }
 
-    private void RestoreBounds()
+    private const double MinWidthDip = 760, MinHeightDip = 520;
+
+    private void RestoreBounds(IntPtr hwnd)
     {
+        var min = WindowSizing.ToPixels(hwnd, MinWidthDip, MinHeightDip);
         try
         {
             if (Windows.Storage.ApplicationData.Current.LocalSettings.Values[BoundsKey] is string saved)
             {
                 var parts = saved.Split(',').Select(int.Parse).ToArray();
-                if (parts.Length == 4 && parts[2] >= 760 && parts[3] >= 520 && IsOnScreen(parts[0], parts[1], parts[2]))
+                if (parts.Length == 4 && parts[2] >= min.Width && parts[3] >= min.Height && IsOnScreen(parts[0], parts[1], parts[2]))
                 {
                     _appWindow.MoveAndResize(new Windows.Graphics.RectInt32(parts[0], parts[1], parts[2], parts[3]));
                     return;
@@ -87,7 +88,7 @@ public sealed partial class SettingsWindow : Window
         {
             // no saved bounds (or unpackaged): the default below
         }
-        _appWindow.Resize(new Windows.Graphics.SizeInt32(1000, 720));
+        _appWindow.Resize(WindowSizing.DefaultSize(hwnd, _appWindow, 1000, 720));
     }
 
     /// <summary>A saved position on a monitor that has since been unplugged would open the

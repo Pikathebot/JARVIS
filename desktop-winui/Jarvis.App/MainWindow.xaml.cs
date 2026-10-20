@@ -313,14 +313,11 @@ public sealed partial class MainWindow : Window
             appWindow.TitleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
         }
 
-        appWindow.Resize(new Windows.Graphics.SizeInt32(1280, 800));
+        appWindow.Resize(WindowSizing.DefaultSize(hwnd, appWindow, 1280, 800));
         // Below this the composer and one message column stop being usable; the layout adapts
-        // down to here and the window refuses to go smaller.
-        if (appWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.PreferredMinimumWidth = 420;
-            presenter.PreferredMinimumHeight = 480;
-        }
+        // down to here and the window refuses to go smaller. DIPs (the chat's own floor is 360
+        // plus the gutters), scaled to the monitor -- AppWindow sizes are physical pixels.
+        WindowSizing.SetMinimum(this, appWindow, 420, 480);
 
         RootGrid.SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
         SurfaceContent.SizeChanged += (_, _) => UpdateChatClip();
