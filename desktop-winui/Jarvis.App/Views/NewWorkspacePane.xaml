@@ -14,7 +14,7 @@
     -->
     <Grid Background="{ThemeResource ScrimBrush}" Tapped="Scrim_Tapped">
         <glass:GlassSlab x:Name="Sheet" Material="Thick" SlabCornerRadius="{StaticResource RadiusSheet}" TintAmount="0.62" Frost="36"
-                         Width="460" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+                         MaxWidth="460" MaxHeight="620" Margin="16,56,16,16" HorizontalAlignment="Stretch" VerticalAlignment="Center"
                          Background="Transparent" Tapped="Sheet_Tapped">
             <Grid Padding="24,20,24,24">
                 <Grid.RowDefinitions>
@@ -29,7 +29,7 @@
                 </Grid>
 
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" glass:GlassScroll.Immediate="True">
-                    <StackPanel Spacing="14" MinWidth="380">
+                    <StackPanel Spacing="14">
 
                         <StackPanel Spacing="4">
                             <TextBlock Text="Name" Style="{StaticResource SecondaryFootnoteText}" />

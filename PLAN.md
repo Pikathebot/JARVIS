@@ -2416,4 +2416,11 @@ user's 150% Settings' 760x520 minimum was 507x347 DIPs: the Theme segmented spil
 (Jarvis.App) scales DIP sizes by the window's DPI and re-applies the minimum when the window lands on a monitor with
 another scale; first-open sizes are capped at 90% of the work area. Snapshot-verified: Settings opens 1500x1080, stops
 at 1140x780 and General fits there. Other Settings pages at the minimum, and the main window's minimum, not looked at.
-The HUD (460x108) and tray popup still size in pixels -- next in this pass. Design system AppLayout v18.
+Design system AppLayout v18.
+Tray popup: already DPI-scaled (320 DIPs wide, content height); snapshot at 150% fine. HUD left as is (user: no use
+case for it right now; still sized 460x108 *pixels*).
+**New workspace sheet** (snapshots 10-20): a fixed `Width="460"` (+ content `MinWidth="380"`) in a window that may
+now be 420 DIPs wide -- at the minimum it ran edge to edge, labels clipped on the left ("nstructions"), its close
+button under the traffic lights, Create cut off. Now `MaxWidth="460"`, stretched, `Margin="16,56,16,16"` (clear of
+the caption row). Build-verified, unseen. The alert text faintly visible through a sheet is the deliberate 8%
+backdrop fade, not a bug. Design system v19.
