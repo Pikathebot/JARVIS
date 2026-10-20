@@ -250,6 +250,23 @@
             </glass:GlassSlab>
 
             <!-- Chat column: the toolbar in the caption row, then the reading surface. -->
+            <!--
+                The toolbar band: a frosted strip behind the capsules, from the sidebar's edge to the
+                window's. Without it the caption row was clear, and the window behind showed through
+                sharp between the capsules (4.20: another app's title and icons sat beside the model
+                pill). Behind everything here, and it takes no clicks; the capsules float over it
+                one layer up (GlassLayers.ToolbarCapsule).
+            -->
+            <glass:GlassSlab
+                x:Name="ToolbarBand"
+                Grid.Column="1"
+                Grid.ColumnSpan="2"
+                Height="40"
+                VerticalAlignment="Top"
+                IsHitTestVisible="False"
+                Material="Regular"
+                SlabCornerRadius="20" />
+
             <Grid x:Name="ChatColumn" Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="40" />

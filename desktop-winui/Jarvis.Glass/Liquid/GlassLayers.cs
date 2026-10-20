@@ -21,7 +21,9 @@ namespace Jarvis_Glass;
 /// <code>
 ///   0  the live desktop capture (the renderer's own base; nothing publishes here)
 ///   1  panels: every GlassSlab that doesn't say otherwise -- sidebar, chat, composer, bubbles
-///   2  the controls inside those panels: GlassButton, GlassSegmented, GlassTextField, GlassToggle
+///   1  also the toolbar band behind the main window's capsules
+///   2  the controls inside those panels: GlassButton, GlassSegmented, GlassTextField, GlassToggle;
+///      and the toolbar capsules, over the band
 ///      (GlassSlab.BaseLayerFor = nearest ancestor slab's Layer + 1)
 ///   3  those controls' moving parts: a lifted toggle thumb, a slider thumb, a segmented puck
 ///   3  the workspace dropdown, which floats over the panels  (4-5 for its own rows and puck)
@@ -34,6 +36,10 @@ public static class GlassLayers
 {
     /// <summary>A top-level panel. Also <see cref="GlassSlab"/>'s default, so panels say nothing.</summary>
     public const int Panel = 1;
+
+    /// <summary>The main window's toolbar capsules, which float over the toolbar band (a Panel-layer
+    /// slab): one above it, so they refract and frost the band rather than share its layer.</summary>
+    public const int ToolbarCapsule = 2;
 
     /// <summary>A popover over the panels: the workspace dropdown. Its rows and puck take 4 and 5.</summary>
     public const int Popover = 3;

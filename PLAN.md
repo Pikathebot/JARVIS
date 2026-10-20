@@ -2402,3 +2402,7 @@ docked, chat ~440 DIP, nothing overlapping; 960: inspector floats (no room) and 
 edge; 1600+: unchanged (all docked). The toast padding wasn't exercised (no toast showed). Open question for the
 user: the toolbar band between the capsules is transparent, so the window behind shows through *unblurred* (Discord's
 "THALAPATHY_27's server" and its icons sat between the capsules at every width) -- keep, or give the band glass/frost?
+**Toolbar band (user chose "give the band glass", 2026-10-20; built, NOT seen yet).** `ToolbarBand`: a Regular-glass
+strip, 40 px, radius 20, from the sidebar's edge to the window's, behind the capsules, no hit-testing; the capsules
+move one layer up (`GlassLayers.ToolbarCapsule = 2`) so they refract the band instead of sharing its layer.
+Design system AppLayout amended (band + width rules), v17.

@@ -254,6 +254,11 @@ public sealed partial class MainWindow : Window
         ExtendTitleBar();
         SetUpChatFollow();
         SetUpComposerWatch();
+        // The toolbar capsules float over the frosted toolbar band, one layer up (4.20).
+        foreach (var capsule in new[] { SidebarCapsule, StatusCapsule, ToolsCapsule })
+        {
+            capsule.Layer = Jarvis_Glass.GlassLayers.ToolbarCapsule;
+        }
         // Liquid glass under this window's XAML tree.
         Glass = new Jarvis_Glass.GlassHost(this);
 
