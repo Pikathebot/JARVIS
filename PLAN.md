@@ -2408,7 +2408,7 @@ strip, 40 px, radius 20, from the sidebar's edge to the window's, behind the cap
 move one layer up (`GlassLayers.ToolbarCapsule = 2`) so they refract the band instead of sharing its layer.
 Design system AppLayout amended (band + width rules), v17.
 It showed during the startup card (user, 10-20): it wasn't in `StartupPanels`; now it materialises with the panels
-(build-verified, unseen).
+(user confirmed gone, 10-20).
 
 **Window sizes are DIPs (2026-10-20).** `AppWindow.Resize` / `PreferredMinimumWidth` take *physical* pixels, so at the
 user's 150% Settings' 760x520 minimum was 507x347 DIPs: the Theme segmented spilled out of its card, labels clipped
@@ -2422,5 +2422,5 @@ case for it right now; still sized 460x108 *pixels*).
 **New workspace sheet** (snapshots 10-20): a fixed `Width="460"` (+ content `MinWidth="380"`) in a window that may
 now be 420 DIPs wide -- at the minimum it ran edge to edge, labels clipped on the left ("nstructions"), its close
 button under the traffic lights, Create cut off. Now `MaxWidth="460"`, stretched, `Margin="16,56,16,16"` (clear of
-the caption row). Build-verified, unseen. The alert text faintly visible through a sheet is the deliberate 8%
+the caption row). Snapshot-verified at 630, 960 and 1920 px. The alert text faintly visible through a sheet is the deliberate 8%
 backdrop fade, not a bug. Design system v19.
