@@ -2,16 +2,14 @@ using H.NotifyIcon;
 
 namespace Jarvis_App.Services;
 
-/// <summary>Replaces the retired pywebview launcher's pystray icon: Show/Hide, Toggle HUD, Free VRAM, Exit.</summary>
+/// <summary>The tray icon: a click shows Jarvis; a right-click asks for the tray popup
+/// (<see cref="TrayPopupWindow"/>), which replaced the native menu on 2026-10-20.</summary>
 public sealed class TrayService : IDisposable
 {
     private readonly TaskbarIcon _icon;
 
     public event Action? ShowRequested;
-    public event Action? ToggleHudRequested;
-    public event Action? FreeVramRequested;
-    public event Action? GameModeToggleRequested;
-    public event Action? ExitRequested;
+    public event Action? PopupRequested;
 
     public TrayService(string iconResourcePath)
     {
@@ -21,20 +19,9 @@ public sealed class TrayService : IDisposable
             IconSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(iconResourcePath)),
         };
 
-        var menu = new Microsoft.UI.Xaml.Controls.MenuFlyout();
-
-        // Menu items carry a Command, not a Click handler: in the default PopupMenu mode the
-        // flyout is rebuilt as a native menu and only each item's Command is carried over.
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Show Jarvis", Command = new RelayCommand(() => ShowRequested?.Invoke()) });
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Toggle HUD", Command = new RelayCommand(() => ToggleHudRequested?.Invoke()) });
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Free VRAM", Command = new RelayCommand(() => FreeVramRequested?.Invoke()) });
-        // One fixed label: the native menu is built from the flyout once, so a label that names
-        // the current state would go stale. The tooltip says which way it is.
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Game mode on/off", Command = new RelayCommand(() => GameModeToggleRequested?.Invoke()) });
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutSeparator());
-        menu.Items.Add(new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Exit Jarvis", Command = new RelayCommand(() => ExitRequested?.Invoke()) });
-
-        _icon.ContextFlyout = menu;
+        // The popup is its own window, not a ContextFlyout: H.NotifyIcon turns a flyout into a
+        // native menu built once, so its labels could never follow the state.
+        _icon.RightClickCommand = new RelayCommand(() => PopupRequested?.Invoke());
         // Single AND double click both show the window. A double-click goes only to
         // DoubleClickCommand -- with just a LeftClickCommand the usual double-click on a tray
         // icon did nothing at all. NoLeftClickDelay: a single click shows at once instead of

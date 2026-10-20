@@ -82,12 +82,7 @@ public static class MarkdownRenderer
 
         if (remainder.Length > 0)
         {
-            var document = Markdown.Parse(remainder, Pipeline);
-            foreach (var block in document)
-            {
-                var element = RenderBlock(block);
-                if (element is not null) root.Children.Add(element);
-            }
+            RenderBlocks(Markdown.Parse(remainder, Pipeline), root);
         }
 
         return root;
@@ -126,64 +121,122 @@ public static class MarkdownRenderer
         return expander;
     }
 
-    private static FrameworkElement? RenderBlock(Markdig.Syntax.Block block)
+    /// <summary>Gap (DIPs) above a paragraph, and above a list item after a list's first.</summary>
+    private const double ParagraphGap = 6;
+    private const double ListItemGap = 2;
+
+    /// <summary>
+    /// Where rendered blocks land. Consecutive prose -- paragraphs, headings, list items -- goes
+    /// into ONE RichTextBlock as Paragraphs, so a drag can select across the whole answer and
+    /// Ctrl+C copies it. With one TextBlock per block (until 2026-10-20) a selection stopped at
+    /// the edge of its line or bullet. Anything that is not text (a code block, a table, a
+    /// quote's bar, a rule) closes the current RichTextBlock and the next prose opens a new one.
+    /// </summary>
+    private sealed class BlockSink(Panel panel)
+    {
+        private RichTextBlock? _prose;
+
+        public void AddParagraph(Paragraph paragraph, double gapAbove)
+        {
+            if (_prose is null)
+            {
+                // MessageText (Typography.xaml) -- a TextBlock style, which a RichTextBlock can't take.
+                _prose = new RichTextBlock
+                {
+                    FontFamily = (FontFamily)Application.Current.Resources["TextFontFamily"],
+                    FontSize = 15,
+                    LineHeight = 22,
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    TextLineBounds = TextLineBounds.Full,
+                    Foreground = Themes.JarvisTheme.Brush("Label"),
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true,
+                };
+                panel.Children.Add(_prose);
+                gapAbove = 0; // the panel's spacing separates it from whatever came before
+            }
+            var m = paragraph.Margin;
+            paragraph.Margin = new Thickness(m.Left, m.Top + gapAbove, m.Right, m.Bottom);
+            _prose.Blocks.Add(paragraph);
+        }
+
+        public void AddElement(FrameworkElement element, double indent)
+        {
+            _prose = null;
+            if (indent > 0)
+            {
+                var m = element.Margin;
+                element.Margin = new Thickness(m.Left + indent, m.Top, m.Right, m.Bottom);
+            }
+            panel.Children.Add(element);
+        }
+    }
+
+    private static void RenderBlocks(IEnumerable<Markdig.Syntax.Block> blocks, Panel panel)
+    {
+        var sink = new BlockSink(panel);
+        foreach (var block in blocks) RenderBlock(block, sink, 0);
+    }
+
+    private static void RenderBlock(Markdig.Syntax.Block block, BlockSink sink, double indent)
     {
         switch (block)
         {
             case HeadingBlock heading:
-                return RenderHeading(heading);
-            case ParagraphBlock paragraph:
-                return RenderParagraphBlock(paragraph);
+                if (heading.Inline is not null)
+                    sink.AddParagraph(HeadingParagraph(heading, indent), (heading.Level <= 2 ? 8 : 4) + ParagraphGap);
+                break;
             case Markdig.Syntax.FencedCodeBlock fenced:
-                return RenderCodeBlock(fenced);
+                sink.AddElement(RenderCodeBlock(fenced), indent);
+                break;
             case Markdig.Syntax.CodeBlock code:
-                return RenderCodeBlock(code, language: "");
+                sink.AddElement(RenderCodeBlock(code, language: ""), indent);
+                break;
             case ListBlock list:
-                return RenderList(list);
+                RenderList(list, sink, indent);
+                break;
             case QuoteBlock quote:
-                return RenderQuote(quote);
+                sink.AddElement(RenderQuote(quote), indent);
+                break;
             case ThematicBreakBlock:
-                return new Border { Height = 1, Background = Themes.JarvisTheme.Brush("Separator"), Margin = new Thickness(0, 8, 0, 8) };
+                sink.AddElement(new Border { Height = 1, Background = Themes.JarvisTheme.Brush("Separator"), Margin = new Thickness(0, 8, 0, 8) }, indent);
+                break;
             case Table table:
-                return RenderTable(table);
+                sink.AddElement(RenderTable(table), indent);
+                break;
             default:
+                // ParagraphBlock, and any other leaf that carries text.
                 if (block is LeafBlock leaf && leaf.Inline is not null)
-                {
-                    return TextBlockFromInlines(leaf.Inline, "MessageText");
-                }
-                return null;
+                    sink.AddParagraph(TextParagraph(leaf.Inline, indent), ParagraphGap);
+                break;
         }
     }
 
-    private static TextBlock RenderHeading(HeadingBlock heading)
+    private static Paragraph TextParagraph(ContainerInline inlines, double indent)
     {
-        var tb = heading.Inline is not null ? TextBlockFromInlines(heading.Inline, HeadingStyle(heading.Level)) : new TextBlock();
-        tb.Margin = new Thickness(0, heading.Level <= 2 ? 8 : 4, 0, 4);
-        return tb;
+        var paragraph = new Paragraph { Margin = new Thickness(indent, 0, 0, 0) };
+        AppendInlines(paragraph.Inlines, inlines);
+        return paragraph;
     }
 
-    /// <summary>Design system: # title-1, ## title-2, ### title-3, #### and deeper headline.</summary>
-    private static string HeadingStyle(int level) => level switch
+    /// <summary>Design system: # title-1, ## title-2, ### title-3, #### and deeper headline --
+    /// the values of those TextBlock styles in Typography.xaml.</summary>
+    private static Paragraph HeadingParagraph(HeadingBlock heading, double indent)
     {
-        1 => "Title1Text",
-        2 => "Title2Text",
-        3 => "Title3Text",
-        _ => "HeadlineText",
-    };
-
-    private static TextBlock? RenderParagraphBlock(ParagraphBlock paragraph) =>
-        paragraph.Inline is null ? null : TextBlockFromInlines(paragraph.Inline, "MessageText");
-
-    private static TextBlock TextBlockFromInlines(ContainerInline inlines, string style)
-    {
-        var tb = new TextBlock
+        var (display, size, lineHeight) = heading.Level switch
         {
-            Style = Themes.JarvisTheme.Style(style),
-            TextWrapping = TextWrapping.Wrap,
-            IsTextSelectionEnabled = true,
+            1 => (true, 22.0, 28.0),
+            2 => (true, 20.0, 25.0),
+            3 => (false, 17.0, 22.0),
+            _ => (false, 15.0, 20.0),
         };
-        AppendInlines(tb.Inlines, inlines);
-        return tb;
+        var paragraph = TextParagraph(heading.Inline!, indent);
+        if (display) paragraph.FontFamily = (FontFamily)Application.Current.Resources["DisplayFontFamily"];
+        paragraph.FontSize = size;
+        paragraph.LineHeight = lineHeight;
+        paragraph.FontWeight = FontWeights.SemiBold;
+        paragraph.Margin = new Thickness(indent, 0, 0, 4);
+        return paragraph;
     }
 
     private static void AppendInlines(InlineCollection target, ContainerInline container)
@@ -318,48 +371,77 @@ public static class MarkdownRenderer
         return container;
     }
 
-    private static FrameworkElement RenderList(ListBlock list)
+    /// <summary>
+    /// A list item is a Paragraph with a hanging indent: the marker sits in the first line's
+    /// negative indent and wrapped lines line up after it. The marker is real text, so a copied
+    /// list keeps its bullets and numbers.
+    /// </summary>
+    private static void RenderList(ListBlock list, BlockSink sink, double indent)
     {
-        var panel = new StackPanel { Spacing = 2, Margin = new Thickness(4, 2, 0, 2) };
-        var index = list.OrderedStart is not null ? int.Parse(list.OrderedStart) : 1;
+        const double MarkerWidth = 20;
+        var itemIndent = indent + 4 + MarkerWidth;
+        var index = list.OrderedStart is not null && int.TryParse(list.OrderedStart, out var start) ? start : 1;
+        var first = true;
 
         foreach (var itemBlock in list)
         {
             if (itemBlock is not ListItemBlock item) continue;
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            var bullet = new TextBlock
-            {
-                Text = list.IsOrdered ? $"{index}." : "•",
-                Style = Themes.JarvisTheme.Style("MessageText"),
-                Foreground = Themes.JarvisTheme.Brush("LabelSecondary"),
-                MinWidth = 18,
-            };
-            row.Children.Add(bullet);
-
-            var content = new StackPanel { Spacing = 2 };
+            var marked = false;
             foreach (var child in item)
             {
-                var element = RenderBlock(child);
-                if (element is not null) content.Children.Add(element);
+                if (!marked && child is ParagraphBlock { Inline: not null } para)
+                {
+                    var paragraph = TextParagraph(para.Inline, itemIndent);
+                    paragraph.TextIndent = -MarkerWidth;
+                    paragraph.Inlines.Insert(0, MarkerRun(list.IsOrdered ? $"{index}." : "•", MarkerWidth));
+                    sink.AddParagraph(paragraph, first ? ParagraphGap : ListItemGap);
+                    marked = true;
+                }
+                else
+                {
+                    RenderBlock(child, sink, itemIndent);
+                }
+                first = false;
             }
-            row.Children.Add(content);
-
-            panel.Children.Add(row);
             index++;
         }
+    }
 
-        return panel;
+    private static double _thinSpaceWidth;
+
+    /// <summary>
+    /// The marker padded with thin spaces out to <paramref name="width"/>, so the text after it
+    /// starts where wrapped lines do (a RichTextBlock has no tab stops). Widths are measured with
+    /// a loose TextBlock, which measures without being in the tree.
+    /// </summary>
+    private static Run MarkerRun(string marker, double width)
+    {
+        static double Measure(string text)
+        {
+            var probe = new TextBlock
+            {
+                Text = text,
+                FontSize = 15,
+                FontFamily = (FontFamily)Application.Current.Resources["TextFontFamily"],
+            };
+            probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            return probe.DesiredSize.Width;
+        }
+
+        if (_thinSpaceWidth <= 0) _thinSpaceWidth = Math.Max(1, Measure("    ") / 4);
+        var pad = Math.Max(1, (int)Math.Round((width - Measure(marker)) / _thinSpaceWidth));
+        return new Run
+        {
+            Text = marker + new string(' ', pad),
+            Foreground = Themes.JarvisTheme.Brush("LabelSecondary"),
+        };
     }
 
     private static FrameworkElement RenderQuote(QuoteBlock quote)
     {
         var inner = new StackPanel { Spacing = 4 };
-        foreach (var child in quote)
-        {
-            var element = RenderBlock(child);
-            if (element is not null) inner.Children.Add(element);
-        }
+        RenderBlocks(quote, inner);
 
         return new Border
         {
@@ -397,11 +479,7 @@ public static class MarkdownRenderer
             {
                 if (cellObj is not TableCell cell) continue;
                 var cellPanel = new StackPanel();
-                foreach (var child in cell)
-                {
-                    var element = RenderBlock(child);
-                    if (element is not null) cellPanel.Children.Add(element);
-                }
+                RenderBlocks(cell, cellPanel);
 
                 var border = new Border
                 {

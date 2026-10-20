@@ -41,7 +41,11 @@ class WakeWordDetector:
 
     def _compile_patterns(self) -> None:
         patterns = [re.escape(w) for w in self.wake_words]
-        self._regex = re.compile(rf"\b({'|'.join(patterns)})\b", re.IGNORECASE)
+        # Only at the very start of the utterance (after any punctuation Whisper puts there):
+        # "Jarvis, open Steam" wakes; "draft an email about the JARVIS app" does not. Matching
+        # anywhere sent "app" as a command while the user read their typed message aloud, and
+        # the client wiped the composer to send it (device 2026-10-20).
+        self._regex = re.compile(rf"^[\W_]*({'|'.join(patterns)})\b", re.IGNORECASE)
         aliases = sorted({a for a in WAKE_WORD_ALIASES if a != "jarvis"}, key=len, reverse=True)
         self._alias_regex = re.compile(
             rf"\b({'|'.join(re.escape(a) for a in aliases)})\b", re.IGNORECASE

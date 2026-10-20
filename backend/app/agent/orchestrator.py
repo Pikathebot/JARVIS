@@ -373,7 +373,11 @@ _SUBJECTLESS_CLAIM_RE = re.compile(
     r"(?:clipboard\b|[\w./\\-]+\.[a-z0-9]{1,5}\b)"
     # "I've added \"milk\" to your to-do list." with no call (device 2026-10-18); a bare "I've added"
     # would also catch code answers ("I've added error handling to the function")
-    r"|\badded\b.{0,60}?\bto\s+(?:your|the|my)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?|calendar)\b",
+    r"|\badded\b.{0,60}?\bto\s+(?:your|the|my)\s+(?:to-?do(?:\s+list)?|list|tasks?|notes?|calendar)\b"
+    # Passive: "\"File Explorer\" has been launched." after launch_app had failed (device 2026-10-20)
+    r"|\b(?:has|have)\s+been\s+(?:opened|launched|started|closed|killed|muted|unmuted|paused|saved|deleted|"
+    r"created|sent|drafted|moved|renamed|copied)\b"
+    r"|\bis\s+now\s+(?:open|running|launched|muted|unmuted|paused|playing|closed)\b",
     re.IGNORECASE,
 )
 

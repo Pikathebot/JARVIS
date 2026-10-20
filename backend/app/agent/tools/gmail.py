@@ -188,7 +188,25 @@ def email(action: str = "inbox", query: str = "", message_id: str = "", to: str 
         return f"Error: couldn't reach Gmail ({exc.__class__.__name__}); try again when online."
 
 
+_HEADER_LINE = re.compile(r"(?i)^\s*(subject|to)\s*:\s*(.*)$")
+
+
+def _strip_header_lines(body: str, subject: str) -> tuple[str, str]:
+    """The model sometimes starts the body with the headers it already passed ("Subject: ...",
+    "To: ..."), which then shows as the email's first line (seen 2026-10-20). Drop leading
+    header lines; a Subject there fills an empty subject."""
+    lines = body.splitlines()
+    while lines and (m := _HEADER_LINE.match(lines[0])):
+        if m.group(1).lower() == "subject" and not subject:
+            subject = m.group(2).strip()
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return "\n".join(lines).strip(), subject
+
+
 def _draft(to: str, subject: str, body: str, reply_to: str) -> str:
+    body, subject = _strip_header_lines(body, subject)
     if not body:
         return "Error: draft needs body (the text to write)."
     msg = EmailMessage()

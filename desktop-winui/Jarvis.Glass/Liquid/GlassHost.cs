@@ -48,6 +48,8 @@ public sealed class GlassHost : IDisposable
     private int _insideChecked = -1;
     private int _confirmedInsideChanges;
     private bool _disposed;
+    private bool _presentFailureLogged;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     public GlassScene Scene { get; } = new();
 
@@ -72,6 +74,8 @@ public sealed class GlassHost : IDisposable
         _d3d = new D3D11Context(width, height);
         _swapChain2 = _d3d.SwapChain.QueryInterface<IDXGISwapChain2>();
         _capture = new LiveCaptureSource(_d3d);
+        _capture.ItemClosed += OnCaptureItemClosed;
+        _dispatcher = window.DispatcherQueue;
         _renderer = new GlassRenderer(_d3d.Device, _d3d.ImmediateContext, Path.Combine(AppContext.BaseDirectory, "Shaders"));
         _detector = new CaptureChangeDetector(_d3d.Device, _d3d.ImmediateContext, Path.Combine(AppContext.BaseDirectory, "Shaders"));
 
@@ -194,9 +198,60 @@ public sealed class GlassHost : IDisposable
         {
             _capture.RetargetIfDisplayChanged(WindowHandleValue);
             RecomputeUvRect();
+            ScheduleCaptureRebuild("display changed");
+        }
+        else if (msg == WM_POWERBROADCAST && wParam.Value == PBT_APMPOWERSTATUSCHANGE && !_disposed)
+        {
+            // AC <-> battery: the panel's refresh rate (and on some laptops the GPU driving it)
+            // changes a moment later, sometimes without a WM_DISPLAYCHANGE reaching this window.
+            ScheduleCaptureRebuild("power source changed");
         }
         return PInvoke.DefSubclassProc(hwnd, msg, wParam, lParam);
     }
+
+    private const uint WM_POWERBROADCAST = 0x0218;
+    private const nuint PBT_APMPOWERSTATUSCHANGE = 0x000A;
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _rebuildTimer;
+    private int _rebuildsLeft;
+    private string _rebuildReason = "";
+
+    /// <summary>
+    /// Rebuilds the capture session after a display or power change, twice: once the change has
+    /// had a second to land, and again a few seconds later, because a mode switch can come in
+    /// stages (a refresh-rate drop, then the GPU handing the panel over) and a session started
+    /// mid-way goes stale too. Repeated calls restart the sequence rather than stacking.
+    /// </summary>
+    private void ScheduleCaptureRebuild(string reason)
+    {
+        if (!_captureReady) return;
+        _rebuildReason = reason;
+        _rebuildsLeft = 2;
+        if (_rebuildTimer is null)
+        {
+            _rebuildTimer = _dispatcher.CreateTimer();
+            _rebuildTimer.IsRepeating = false;
+            _rebuildTimer.Tick += (_, _) => RunCaptureRebuild();
+        }
+        _rebuildTimer.Interval = TimeSpan.FromSeconds(1);
+        _rebuildTimer.Start();
+    }
+
+    private void RunCaptureRebuild()
+    {
+        if (_disposed || !_captureReady) return;
+        _capture.Rebuild(WindowHandleValue, _rebuildReason);
+        RecomputeUvRect();
+        _lastRendered = (-1, -1, default, 0, 0); // render the new session's first frame
+        if (--_rebuildsLeft > 0 && _rebuildTimer is not null)
+        {
+            _rebuildTimer.Interval = TimeSpan.FromSeconds(3);
+            _rebuildTimer.Start();
+        }
+    }
+
+    private void OnCaptureItemClosed() =>
+        _dispatcher.TryEnqueue(() => ScheduleCaptureRebuild("capture item closed"));
 
     /// <summary>Client rect of the WinUI window in screen pixels -- the glass covers exactly what
     /// XAML draws into, not the frame.</summary>
@@ -357,7 +412,15 @@ public sealed class GlassHost : IDisposable
                 layer: 0, tintColor: Vector3.One, tintAmount: 0f);
             scene.AsSpan(0, shapes.Length - 1).CopyTo(shapes.AsSpan(1));
             _renderer.Draw(_d3d.RenderTargetView, srv, captureVersion, _uvRect, _d3d.Width, _d3d.Height, shapes, Scene.SnapshotTexts());
-            _d3d.Present();
+            var presented = _d3d.Present();
+            if (presented.Failure && !_presentFailureLogged)
+            {
+                // Logged once: a lost device (a GPU switch, a driver reset) fails every Present
+                // after it, and nothing but this line would say why the glass went dark.
+                _presentFailureLogged = true;
+                GlassLog.Write($"Present failed: 0x{presented.Code:X8}; device removed reason 0x{_d3d.Device.DeviceRemovedReason.Code:X8}");
+            }
+            else if (presented.Success) _presentFailureLogged = false;
         }
         finally
         {
@@ -374,6 +437,8 @@ public sealed class GlassHost : IDisposable
         // exception thrown from a XAML event handler is a native crash (0xc000027b), not a
         // managed one. Unhook everything and detach the swapchain before releasing it.
         CompositionTarget.Rendering -= OnRendering;
+        _rebuildTimer?.Stop();
+        _capture.ItemClosed -= OnCaptureItemClosed;
         _appWindow.Changed -= OnAppWindowChanged;
         _panel.CompositionScaleChanged -= OnPanelScaleChanged;
         _panel.SizeChanged -= OnPanelSizeChanged;
@@ -497,5 +562,12 @@ internal sealed partial class TransparentBackdrop : Microsoft.UI.Xaml.Media.Syst
     {
         disconnectedTarget.SystemBackdrop = null;
         base.OnTargetDisconnected(disconnectedTarget);
+    }
+
+    /// <summary>A clear brush has no theme or activation state to follow. The base handler, run
+    /// on every theme/focus change, threw "The parameter is incorrect" against the system brush
+    /// (six times per launch in jarvis-app-crash.log), so it is not called.</summary>
+    protected override void OnDefaultSystemBackdropConfigurationChanged(Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop target, XamlRoot xamlRoot)
+    {
     }
 }

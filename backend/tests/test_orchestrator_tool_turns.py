@@ -196,6 +196,10 @@ async def test_reasoning_only_twice_falls_back_to_prose(tmp_path):
     ("Added.", True),
     ("Done, sir.", True),
     ("Added in Python 3.12, the flag controls the JIT.", False),
+    # passive claims after a launch_app that had failed (device 2026-10-20)
+    ("“File Explorer” has been launched.", True),
+    ("File Explorer is now open.", True),
+    ("Python has been around since 1991.", False),
     # offers, questions and plain facts are not claims
     ("I'll open it if you want.", False),
     ("Want me to set a reminder? I'll remind you whenever you say.", False),

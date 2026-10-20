@@ -345,7 +345,7 @@ public sealed partial class MainWindow
     private List<UIElement> SpacePages()
     {
         var pages = new List<UIElement>(2);
-        if (MessageList.ItemsPanelRoot is { } messages) pages.Add(messages);
+        pages.Add(MessageList); // an ItemsRepeater is its own panel
         if (SessionsList.ItemsPanelRoot is { } sessions) pages.Add(sessions);
         return pages;
     }

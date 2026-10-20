@@ -247,7 +247,9 @@ def launch_app(name_or_path: str) -> str:
         if candidates:
             listed = ", ".join(f"'{c}'" for c in candidates)
             return (
-                f"No app is called exactly '{name_or_path}'. Installed apps that could be meant: "
+                # "Error:" so the turn counts it as a failure: the model once answered "File
+                # Explorer has been launched" off this text alone (device 2026-10-20).
+                f"Error: nothing launched -- no app is called exactly '{name_or_path}'. Installed apps that could be meant: "
                 f"{listed}. If one is clearly what the user asked for, call launch_app with that "
                 "exact name; otherwise ask the user which one."
             )

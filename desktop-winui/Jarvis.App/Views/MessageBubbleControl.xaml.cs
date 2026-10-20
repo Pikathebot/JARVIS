@@ -14,7 +14,7 @@ namespace Jarvis_App.Views;
 /// Native port of MessageBubble.tsx. Renders whichever of the three variants (system/user/
 /// assistant) the bound ChatMessage.Role calls for, re-rendering markdown content as it
 /// changes via MarkdownRenderer, coalesced while streaming (see _renderThrottle). Relies on classic
-/// Binding/DataContext propagation from the hosting ListView's DataTemplate — see the note on
+/// Binding/DataContext propagation from the hosting ItemsRepeater's DataTemplate — see the note on
 /// MainWindow.xaml's MessageList template.
 /// </summary>
 public sealed partial class MessageBubbleControl : UserControl

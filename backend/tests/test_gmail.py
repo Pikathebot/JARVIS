@@ -103,6 +103,17 @@ def test_a_reply_draft_is_threaded_and_never_sent(mail):
     assert gmail.email("draft", to="a@b.example").startswith("Error: draft needs body")
 
 
+def test_header_lines_the_model_repeats_are_dropped_from_the_body(mail):
+    # Seen 2026-10-20: the body began "Subject: <the subject>", which showed as the email's first line.
+    gmail.email("draft", to="a@b.example", subject="About Jarvis", body="Subject: About Jarvis\n\nGood morning.\n\nSubject: lines inside stay.")
+    raw = stdlib_email.message_from_bytes(base64.urlsafe_b64decode(mail.drafts[0]["message"]["raw"]))
+    assert raw["Subject"] == "About Jarvis"
+    assert raw.get_payload().strip() == "Good morning.\n\nSubject: lines inside stay."
+    gmail.email("draft", to="a@b.example", body="To: a@b.example\nSubject: Hello\nHi there.")
+    raw = stdlib_email.message_from_bytes(base64.urlsafe_b64decode(mail.drafts[1]["message"]["raw"]))
+    assert raw["Subject"] == "Hello" and raw.get_payload().strip() == "Hi there."
+
+
 def test_refusals_when_not_connected_or_not_allowed(mail, monkeypatch):
     monkeypatch.setattr(auth, "_load_token", lambda: {"refresh_token": "r", "scope": " ".join(auth.SCOPES[:2])})
     assert "Reconnect" in gmail.email("inbox")

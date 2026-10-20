@@ -385,4 +385,10 @@ internal sealed partial class TransparentBackdrop : SystemBackdrop
         disconnectedTarget.SystemBackdrop = null;
         base.OnTargetDisconnected(disconnectedTarget);
     }
+
+    /// <summary>Not called: the base handler throws against the clear system brush (see the
+    /// app's copy in GlassHost.cs).</summary>
+    protected override void OnDefaultSystemBackdropConfigurationChanged(Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop target, XamlRoot xamlRoot)
+    {
+    }
 }

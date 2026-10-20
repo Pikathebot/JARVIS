@@ -172,23 +172,29 @@ public partial class App : Application
         // same path throws ERROR_INVALID_PARAMETER since that API is not a general file opener.
         _tray = new TrayService("ms-appx:///Assets/AppIcon.ico");
         _tray.ShowRequested += () => DispatcherQueue.TryEnqueue(() => _mainWindow.ShowFromBackground());
-        _tray.ToggleHudRequested += () => DispatcherQueue.TryEnqueue(() => _hudWindow.ToggleVisible());
-        _tray.FreeVramRequested += async () =>
-        {
-            try { await _api.UnloadModelsAsync(); } catch { /* best-effort */ }
-        };
         var governor = _mainWindow.GovernorViewModel;
-        _tray.GameModeToggleRequested += () => DispatcherQueue.TryEnqueue(async () =>
-        {
-            try { await governor.SetGameModeAsync(!governor.GameMode); } catch { /* the next poll shows the truth */ }
-        });
         _tray.SetGameMode(governor.GameMode);
         governor.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(governor.GameMode)) _tray?.SetGameMode(governor.GameMode);
         };
-        _tray.ExitRequested += () => DispatcherQueue.TryEnqueue(ExitApp);
+
+        // Right-click: the popup (built on first use, then shown and hidden).
+        _tray.PopupRequested += () => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_trayPopup is null)
+            {
+                _trayPopup = new TrayPopupWindow(_api, governor);
+                _trayPopup.OpenRequested += () => _mainWindow.ShowFromBackground();
+                _trayPopup.HudRequested += () => _hudWindow.ToggleVisible();
+                _trayPopup.SettingsRequested += () => _mainWindow.OpenSettings(null);
+                _trayPopup.QuitRequested += ExitApp;
+            }
+            _trayPopup.ShowAtCursor();
+        });
     }
+
+    private TrayPopupWindow? _trayPopup;
 
     private bool _exiting;
 
@@ -206,6 +212,7 @@ public partial class App : Application
         // (tray-quit crash, PLAN 4.11). Each step is logged so a crash here names its step.
         Step("snapshots", () => _snapshots?.Dispose());
         Step("tray", () => _tray?.Dispose());
+        Step("tray popup", () => _trayPopup?.CloseForExit());
         Step("hud window", () => _hudWindow.Close());
         Step("main window", () => _mainWindow.Close()); // its Closed closes Settings too; ExitApp re-entry is a no-op
         Step("backend", () => _backendHost.Dispose());

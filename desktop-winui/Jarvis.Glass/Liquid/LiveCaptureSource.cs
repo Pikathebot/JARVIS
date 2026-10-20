@@ -344,6 +344,50 @@ internal sealed class LiveCaptureSource : IDisposable
         }
     }
 
+    /// <summary>Raised, on a capture thread, when Windows closes the capture item -- which it
+    /// does when the display it captures is reconfigured. No frame arrives after that, so the
+    /// glass would keep its last one (black, mid-transition) until the session is rebuilt.</summary>
+    public event Action? ItemClosed;
+
+    /// <summary>
+    /// Tears the session down and starts a new one on the display the window is on now, even if
+    /// that is the same display. A display that changes mode under the capture -- the panel
+    /// dropping from 240 Hz to 60 Hz, or the display moving between the GPUs, when the laptop
+    /// goes onto battery -- left the old session delivering nothing or black frames, and the
+    /// glass went black until the app restarted (device 2026-10-20). Retargeting only on a new
+    /// display id never noticed: the id stays the same.
+    /// </summary>
+    public void Rebuild(nint hwndValue, string reason)
+    {
+        if (_direct3DDevice is null || _currentDisplayIdValue is null) return;
+        var displayId = _currentDisplayIdValue.Value;
+        try
+        {
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwndValue);
+            var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+                windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+            if (area is not null) displayId = area.DisplayId.Value;
+        }
+        catch { /* keep the last display */ }
+
+        GlassLog.Write($"capture: rebuilding the session ({reason})");
+        TeardownSessionOnly();
+        try
+        {
+            CreateSessionForDisplay(displayId);
+        }
+        catch (Exception ex)
+        {
+            GlassLog.Write($"capture: rebuild failed: {ex.Message}");
+        }
+    }
+
+    private void OnItemClosed(GraphicsCaptureItem sender, object args)
+    {
+        if (!ReferenceEquals(sender, _item)) return; // an item already replaced
+        ItemClosed?.Invoke();
+    }
+
     private void CreateSessionForDisplay(ulong displayIdValue)
     {
         _currentDisplayIdValue = displayIdValue;
@@ -352,6 +396,7 @@ internal sealed class LiveCaptureSource : IDisposable
         _item = GraphicsCaptureItem.TryCreateFromDisplayId(displayId)
             ?? throw new InvalidOperationException("Windows.Graphics.Capture is unavailable for this display.");
         ItemSize = _item.Size;
+        _item.Closed += OnItemClosed;
 
         _framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
             _direct3DDevice!,
@@ -386,7 +431,11 @@ internal sealed class LiveCaptureSource : IDisposable
             _framePool = null;
         }
 
-        _item = null;
+        if (_item is not null)
+        {
+            try { _item.Closed -= OnItemClosed; } catch { /* best-effort */ }
+            _item = null;
+        }
     }
 
     /// <summary>Set to receive a line for every dropped/failed frame - not wired to per-frame

@@ -228,6 +228,8 @@ public sealed partial class MainWindow : Window
 
         RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(RootGrid_PointerPressedForDropdown), handledEventsToo: true);
         ExtendTitleBar();
+        SetUpChatFollow();
+        SetUpComposerWatch();
         // Liquid glass under this window's XAML tree.
         Glass = new Jarvis_Glass.GlassHost(this);
 
@@ -318,7 +320,15 @@ public sealed partial class MainWindow : Window
                 (int)Math.Round(b.X * scale), (int)Math.Round(b.Y * scale),
                 (int)Math.Round(b.Width * scale), (int)Math.Round(b.Height * scale)));
         }
-        var source = InputNonClientPointerSource.GetForWindowId(_appWindow?.Id ?? Win32Interop.GetWindowIdFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)));
+        InputNonClientPointerSource source;
+        try
+        {
+            source = InputNonClientPointerSource.GetForWindowId(_appWindow?.Id ?? Win32Interop.GetWindowIdFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)));
+        }
+        catch (ArgumentException)
+        {
+            return; // the window is closing: a last layout pass runs after its id is gone
+        }
         UpdateControlRegions(source, scale);
         // The caption (drag) strip stops where the traffic-light buttons start.
         var captionWidth = (int)Math.Round(WindowControlsLeft * scale);
@@ -1221,7 +1231,12 @@ public sealed partial class MainWindow : Window
 
     private async Task HandleVoiceCommandAsync(string query, string? voiceRoute = null)
     {
-        ComposerBox.Text = "";
+        // See MainWindow.ComposerWatch.cs: never wipe a message being typed.
+        if (IsTypingInComposer())
+        {
+            App.Log($"voice: ignored a command heard while typing (\"{query}\")");
+            return;
+        }
         await ChatViewModel.SendMessageAsync(query, voiceRoute: voiceRoute);
     }
 

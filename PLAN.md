@@ -2003,6 +2003,63 @@ tuning controls (`SettingsPane.xaml`, PLAN 4.8d).
 - Not in scope: log levels set from the UI, the `LLAMA_PAYLOAD_DUMP_DIR` payload replay (could be a later
   "dump next request" button).
 
+### 4.17b Device test 2026-10-20 and its fixes -- BUILT 2026-10-20, UNCOMMITTED; seen working on device 10-20 pm (user: "everything works smoothly") except the start-only wake word and the typing guard, built after
+
+**Seen working on device (user, 10-20 morning):** the Governor switch (off = chat still works), Logs in Settings ->
+Developer, the morning briefing with the unread-mail line, Game mode by chat ("game mode off" -> model reloads),
+Gmail inbox and a draft landing in Drafts.
+**Found, and fixed (backend test-verified: 1152 pass; WinUI builds; none seen on device yet):**
+- **Tray popup (Steam-style)** -- design canvas https://claude.ai/artifact/VrNh1yiVVpivWqrFVxKgqD, approved by the
+  user. `TrayPopupWindow` (borderless, always on top, system acrylic -- not glass: a glass window must be
+  capturable and renders every frame): header with live status (Ready / Game mode / Offline + model), VRAM and RAM
+  meters (awareness snapshot, every 2 s while open), Game mode and Governor switches that name their state, Open
+  Jarvis, Show HUD, Free VRAM (off in Game mode), Settings, Quit. Right-click on the tray icon opens it above the
+  cursor; it closes on losing focus or Esc. The native menu (built once, so "Game mode on/off") is gone.
+  Unverified: placement on a high-DPI screen, that a click elsewhere closes it (foreground rights from the tray
+  click), the two Fluent glyphs (E950 Free VRAM, EA18 Governor).
+- **Chat didn't follow its end** once a conversation outgrew the window (nothing scrolled to new rows).
+  `MainWindow.ChatScroll.cs`: follows the bottom while there; scrolling up lets go; sending / opening a session
+  takes hold again.
+- **Couldn't select or copy text in chat** (sent or received). The transcript was a ListView; a ListViewItem takes
+  the pointer press, so drag-selection never started. Now a ScrollViewer + ItemsRepeater (same template, 720 px
+  column). Right-click "Copy message" kept.
+- **Email draft** began with "Subject: ..." in the body -- `gmail._strip_header_lines` drops leading Subject/To
+  lines (a Subject there fills an empty subject).
+- **False "File Explorer has been launched"** after launch_app found no exact match: that result now starts
+  "Error: nothing launched -- ..." (counts as a failure), and the claim check knows passive claims ("has been
+  launched", "is now open").
+- **Crash-log noise:** `TransparentBackdrop.OnDefaultSystemBackdropConfigurationChanged` threw "The parameter is
+  incorrect" on theme/focus changes (6 per launch) -- now a no-op (app + GlassLab copies); `UpdateTitleBarRegions`
+  threw while the window closed -- guarded. Backend log: no errors on 10-20; the visible tracebacks were a 10-19
+  `--reload` of a half-saved orchestrator.py. Model log warnings are llama-server's own (deprecated `--mmap` /
+  `--chat-template-kwargs`, CORS) -- harmless; moving to `--load-mode` / `--reasoning` needs checking against the
+  PrismML fork first.
+**Second device pass (10-20 afternoon):** tray popup works as intended; chat follows but sometimes jitters; copying
+a message with bullets only got one line; the glass background went pitch black when the laptop went onto battery.
+Fixed (WinUI builds; none seen on device yet):
+- **Copy across a whole answer:** `MarkdownRenderer` put every paragraph and bullet in its own TextBlock, and a
+  selection can't cross TextBlocks. Consecutive prose (paragraphs, headings, list items with hanging-indent markers
+  as real text) now goes into ONE RichTextBlock; code blocks, tables, quotes and rules still break it.
+- **Follow jitter:** the follow was a queued `ChangeView` after each layout, a frame behind every token. The
+  ScrollViewer now has `VerticalAnchorRatio="1"` (keeps the end in the same layout pass); the queued scroll settles
+  layout first and only moves when actually off the end.
+- **Black glass on battery:** the display runs on the RTX at 240 Hz; AC <-> battery changes its mode, which can
+  close or stall the Windows.Graphics.Capture session, and the host only rebuilt capture when the display *id*
+  changed. Now `GlassHost` rebuilds the session (1 s and again 3 s later) on WM_DISPLAYCHANGE, on
+  WM_POWERBROADCAST power-status change and when Windows closes the capture item, and logs a failed Present with
+  the device-removed reason to `jarvis-glass.log` (a lost D3D device is NOT recovered yet -- if that line appears,
+  device recreation is the next step). Unverified: whether a rebuild alone brings the glass back.
+- **Typed messages sent as just "app":** the user typed (and said aloud) "send a draft email to ...@gmail about
+  JARVIS app"; the mic's wake-word path heard "Jarvis", sent "app" as a voice command (backend.log "Wake word
+  'Jarvis' detected. Extracted query: 'app'", reproduced 14:52), and `HandleVoiceCommandAsync` cleared the composer
+  first. Now a voice command arriving within 10 s of a keystroke in a non-empty composer is ignored (logged to
+  jarvis-app.log) and voice never clears the composer (`MainWindow.ComposerWatch.cs`). And, the user's call, the
+  wake word now counts only at the START of an utterance ("Jarvis, open Steam"; `wake_word.py`, pinned by
+  `test_wake_word_only_at_the_start`) -- talking *about* Jarvis no longer wakes it.
+**Seen in the session, not fixed:** (a stray word in the composer?
+ask); Jarvis invented governor "power limits" when asked about limits; the draft was written about Jarvis in the
+third person and said "Good afternoon" at 10:52 (the time is in the per-turn context; model quality).
+
 ### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- TO DISCUSS, NOT DECIDED
 
 **The question (user):** is Freeform better as one long chat (or many, as now)? The same for Workspace, made

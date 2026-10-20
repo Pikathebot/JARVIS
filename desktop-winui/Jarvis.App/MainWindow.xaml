@@ -331,29 +331,26 @@
                             MaxWidth="720"
                             Margin="16,12,16,0"
                             CornerRadius="10" />
-                        <!-- A 720 px reading column, centred; the scroll bar stays at the surface's edge. -->
-                        <ListView
-                            x:Name="MessageList"
+                        <!-- A 720 px reading column, centred; the scroll bar stays at the surface's edge.
+                             An ItemsRepeater, not a ListView: a ListViewItem takes the pointer press
+                             for its own press/drag handling, so text in a message could not be
+                             drag-selected or copied (device 2026-10-20). -->
+                        <ScrollViewer
+                            x:Name="MessageScroll"
                             Grid.Row="1"
+                            VerticalAnchorRatio="1"
                             Padding="24,16,24,8"
-                            SelectionMode="None"
-                            IsSwipeEnabled="False"
+                            HorizontalScrollMode="Disabled"
+                            HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Auto">
+                        <ItemsRepeater
+                            x:Name="MessageList"
+                            MaxWidth="720"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
-                            <!-- No theme transitions: the default entrance slid each row's XAML
-                                 on the compositor while any glass sat still. -->
-                            <ListView.ItemContainerTransitions>
-                                <TransitionCollection />
-                            </ListView.ItemContainerTransitions>
-                            <ListView.ItemContainerStyle>
-                                <Style TargetType="ListViewItem">
-                                    <Setter Property="HorizontalAlignment" Value="Center" />
-                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                    <Setter Property="MaxWidth" Value="720" />
-                                    <Setter Property="Width" Value="720" />
-                                    <Setter Property="Padding" Value="0" />
-                                </Style>
-                            </ListView.ItemContainerStyle>
-                            <ListView.ItemTemplate>
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Vertical" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
                                 <!--
                                     No x:DataType/x:Bind here deliberately: MessageBubbleControl
                                     renders via classic Binding/DataContext (see its code-behind),
@@ -363,8 +360,9 @@
                                 <DataTemplate>
                                     <views:MessageBubbleControl HorizontalAlignment="Stretch" Loaded="MessageBubble_Loaded" />
                                 </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        </ScrollViewer>
 
                         <!-- Composer: one capsule. The glass field is the capsule; attach, mic and
                              send sit over its ends (InputPadding keeps the text clear of them). -->

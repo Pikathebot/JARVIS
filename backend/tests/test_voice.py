@@ -34,6 +34,19 @@ def test_wake_word_detector():
     assert detected3 is False
 
 
+def test_wake_word_only_at_the_start():
+    # Device 2026-10-20: reading "send a draft email ... about JARVIS app" aloud while typing it
+    # fired "app" as a command. The name only wakes Jarvis at the start of what was said.
+    detector = WakeWordDetector()
+    assert detector.detect_in_text("send a draft email to me about JARVIS app")[0] is False
+    assert detector.detect_in_text("I think Jarvis is slow today")[0] is False
+    detected, _, query = detector.detect_in_text("... Jarvis, open Steam.")
+    assert detected is True and query == "open Steam."
+    assert detector.detect_in_text("Okay Jarvis mute the volume")[2] == "mute the volume"
+    # A misheard name at the start still counts (aliases are rewritten first).
+    assert detector.detect_in_text("Jervis what's the time")[0] is True
+
+
 def test_voice_synthesizer_sanitization():
     synth = VoiceSynthesizer()
     raw_markdown = (

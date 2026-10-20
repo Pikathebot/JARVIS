@@ -134,9 +134,11 @@ internal sealed class D3D11Context : IDisposable
         SwapChain.Present(1, PresentFlags.None);
     }
 
-    public void Present()
+    /// <summary>Presents and returns DXGI's result (ignored until 2026-10-20, so a lost device
+    /// failed silently): DXGI_ERROR_DEVICE_REMOVED/RESET means this device is gone.</summary>
+    public SharpGen.Runtime.Result Present()
     {
-        SwapChain.Present(1, PresentFlags.None);
+        return SwapChain.Present(1, PresentFlags.None);
     }
 
     /// <summary>
