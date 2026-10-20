@@ -32,7 +32,9 @@ DIGEST_EPISODES = 5
 
 # The whole message ("new topic", "Jarvis, new topic.") or a lead-in ("new topic: what's ...").
 _NEW_TOPIC = re.compile(
-    r"^\s*(?:(?:hey|ok|okay)\s+)?(?:jarvis[\s,]+)?(?:let'?s\s+)?(?:start\s+a\s+)?new\s+topic\b[\s.!:,;-]*",
+    # "so lets start a new topic about unreal engine" (device 2026-10-20) has a filler word in front.
+    r"^\s*(?:(?:so|ok|okay|alright|right|well|now|hey)[\s,]+)*(?:jarvis[\s,]+)?(?:let'?s\s+)?"
+    r"(?:start\s+a\s+)?new\s+topic\b[\s.!:,;-]*",
     re.IGNORECASE,
 )
 
@@ -99,8 +101,11 @@ def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[i
                and (before is None or e["started_at"] < before)][:DIGEST_EPISODES]
     if not earlier and not briefing:
         return ""
-    lines = ["[Earlier in this conversation -- context, not part of the user's message; "
-             "recall finds more:"]
+    # "Background only ... unless the user does": with "Last time" and "Open items" in front of it,
+    # Ornith answered "lets talk about our normal day to day topic" with "back to Unreal Engine",
+    # twice (device 2026-10-20).
+    lines = ["[Earlier in this conversation -- background only, not part of the user's message; don't "
+             "go back to these unless the user does; recall finds more:"]
     if briefing:
         lines.append("This morning's briefing: " + " ".join(briefing.split()))
     for ep in earlier:

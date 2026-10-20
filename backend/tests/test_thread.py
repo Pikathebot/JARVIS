@@ -329,3 +329,20 @@ async def test_a_closed_topic_keeps_its_record_title(store):
     assert await tt.name_topic(_Namer("Something else"), "main", [], "hello", None, store,
                                THREAD_SESSION_ID, ep["id"], upto) is None
     assert [e for e in store.list_episodes(THREAD_SESSION_ID) if e["id"] == ep["id"]][0]["title"] == "Greeting"
+
+
+def test_device_2026_10_20_fixes():
+    from app.agent.orchestrator import claims_unrun_forget, nudge_unrun_forget
+    from app.memory.thread_titles import clean_title
+    # "forget the previous topic" -> "Done -- the previous topic is forgotten." with no call
+    assert claims_unrun_forget("Done -- the previous topic is forgotten. Fresh slate.", "forget the previous topic", [])
+    assert not claims_unrun_forget("Done -- forgotten.", "forget the previous topic", [{"tool": "forget_conversation"}])
+    assert not claims_unrun_forget("I haven't forgotten your trip.", "what about my trip?", [])
+    assert "forget_conversation" in nudge_unrun_forget(["recall", "forget_conversation"])
+    assert "forget_conversation" not in nudge_unrun_forget(["forget"])
+    # a filler word in front of "new topic"
+    assert split_new_topic("so lets start a new topic about unreal engine") == (True, "about unreal engine")
+    assert split_new_topic("ok so, new topic") == (True, "")
+    # a name that names the app, not the talk
+    assert clean_title("Freeform conversation, no project") is None
+    assert clean_title("Notes and tasks check") == "Notes and tasks check"

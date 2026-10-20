@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # environment by llama-server, so a .env entry alone would never reach it -- pydantic-settings
     # reads .env into Settings, it does not export anything into os.environ.
     llama_chat_template_kwargs: Optional[str] = Field(default=None, alias="LLAMA_CHAT_TEMPLATE_KWARGS")
+    # The main model reasons on every turn, including the ones the router calls quick. Off, a "fast"
+    # verdict served on main switched thinking off for that request (19.3 s -> 0.4 s on Qwen3.5 9B);
+    # with Ornith (a reasoning model) those quick turns were the careless ones -- "forget the previous
+    # topic" answered "forgotten" with no call (device 2026-10-20) -- so the user chose thinking always.
+    main_thinking_every_turn: bool = Field(default=True, alias="MAIN_THINKING_EVERY_TURN")
     # Per-slot override: the fast (4B) slot rambles more in its thinking block than the main (9B)
     # one does at the same setting, so it defaults to thinking off while main keeps it on. Falls
     # back to llama_chat_template_kwargs if unset.

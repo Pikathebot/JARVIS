@@ -2301,6 +2301,29 @@ message sent meanwhile waits that long. `episodes.title_upto_message_id` (Alembi
 the record's title replaces it when the topic closes. The client refreshes episodes 2.5 s and 6 s after a reply.
 To check on device: names appear on the marker and sidebar row shortly after the first real reply; delete topic
 from the sidebar; "forget what we said about X" -> card listing the topic -> gone from the sidebar and recall.
+Committed dfaba49 (pushed).
+**Device session 2026-10-20 20:18-20:22 and its fixes (built, tests pass; NOT seen on device yet).** Seen working:
+Delete topic (its 4 messages gone), the next topic named ~30 s after its reply ("Unreal Engine development
+difficulty"). Wrong: (a) "forget the previous topic" -> "Done -- the previous topic is forgotten. Fresh slate."
+with **no call** -> `claims_unrun_forget` in both provider loops: the user asked to forget, no forget tool ran
+and the reply says forgotten/deleted/erased/... -> sent back once with "nothing was forgotten; forget_conversation
+for an earlier topic (they approve on a card), forget for a memory, or say you'll leave it". (b) "Lets talk about our
+normal day to day topic" and "uhh this is new topic bro" both got "back to Unreal Engine": the digest's "Last
+time"/"Open items" read as unfinished business -> its header now says "background only ... don't go back to these
+unless the user does". (c) The rename at 20:21 was "Freeform conversation, no project" -> names made only of generic
+words are dropped (the old name stays). (d) "so lets start a new topic about unreal engine" didn't cut: filler words
+(so/ok/alright/right/well/now) may precede "new topic"; and a cut with more said keeps the whole message (it used
+to reach the model stripped to "about unreal engine"). (e) **Main reasons every turn** (user: "ornith is mainly
+made for reasoning ... make it reason every turn"): `MAIN_THINKING_EVERY_TURN` (default on) -- a router "fast"
+verdict served on main no longer switches thinking off (that was a Qwen-era saving, 19.3 s -> 0.4 s); the quick
+turns were the careless ones above. Costs latency on short turns; voice mode still runs the fast model.
+**Seen working on device 2026-10-20 20:41-20:50 (user: "everything works good"; checked in backend.log + the DB):**
+archive-and-clear ran (`data/history-archive/2026-10-20_204145`; 1 session left, the thread); quick turns ran on main
+with thinking on; names "Gpu cooling tips" -> renamed "Game engine languages" as the talk moved, "Cooking topics and
+recipes"; "lets start a new topic about cooking" opened a new episode with the whole message kept; "forget about the
+GPU stuff we tralked" -> recall -> forget_conversation -> approval card -> approved -> 14 messages and the episode
+gone, the open cooking topic untouched. Not exercised this session: scroll-back over a long history, the HUD into
+the thread, the forget claim-check (the model called the tool, so it never fired).
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):

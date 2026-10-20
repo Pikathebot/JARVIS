@@ -481,6 +481,30 @@ _ASKS_REMINDER = re.compile(r"\b(?:remind|reminder|timer|alarm|wake me)\b", re.I
 _KEEP_IN_MIND = re.compile(r"\bI(?:'ll| will)\s+(?:keep\s+(?:that|this|it)\s+in\s+mind|remember)\b", re.IGNORECASE)
 
 
+# "forget the previous topic" -> "Done -- the previous topic is forgotten. Fresh slate." with no call at all
+# (device 2026-10-20): the user can't tell moving on from deleting. Only when they asked to forget.
+_FORGOT_CLAIM_RE = re.compile(r"\b(?:forgotten|forgot|erased|wiped|deleted|cleared|gone)\b", re.IGNORECASE)
+_FORGET_TOOLS = ("forget", "forget_conversation")
+
+
+def claims_unrun_forget(content: str, user_message: Optional[str], tools_used: list[Any]) -> bool:
+    from app.agent.tools.memory import asks_to_forget
+
+    if not asks_to_forget(user_message or ""):
+        return False
+    if any(isinstance(t, dict) and t.get("tool") in _FORGET_TOOLS for t in tools_used or []):
+        return False
+    return bool(_FORGOT_CLAIM_RE.search(content or ""))
+
+
+def nudge_unrun_forget(tool_names: list[str]) -> str:
+    topic = ("If they meant an earlier topic of this chat, call forget_conversation now (they approve on a "
+             "card what goes); for a saved memory, call forget. " if "forget_conversation" in tool_names
+             else "For a saved memory, call forget now. ")
+    return ("No forget tool ran in this turn, so nothing was forgotten or deleted. " + topic +
+            "If they only want to move on, say you'll leave it -- without saying it is forgotten or deleted.")
+
+
 def claims_without_tools(content: str, user_message: Optional[str]) -> bool:
     """A reply on a turn with no tools (the fast model) that says it did, or will do, something
     only a tool could."""
@@ -1191,15 +1215,17 @@ class AgentOrchestrator:
         acting = looks_like_action(user_message)
         if loaded in ("fast", "unknown") and not acting:
             return decision, is_fast, None
+        thinks = bool(getattr(settings, "main_thinking_every_turn", True))
+        how = "thinking on (main reasons every turn)" if thinks else "thinking off"
         if loaded == "fast":
             logger.info("Fast verdict for a request to act; answering on main (no tools on the fast model).")
-            reason = " Served on main with thinking off: a request to act, and the fast model has no tools."
+            reason = f" Served on main with {how}: a request to act, and the fast model has no tools."
         else:
-            logger.info("Fast verdict while '%s' is loaded; answering on main with thinking off instead of swapping.", loaded or "nothing")
-            reason = " Served on main with thinking off (no model swap for a quick turn)."
+            logger.info("Fast verdict while '%s' is loaded; answering on main (%s) instead of swapping.", loaded or "nothing", how)
+            reason = f" Served on main with {how} (no model swap for a quick turn)."
         decision.model = "main"
         decision.reason = (decision.reason or "") + reason
-        return decision, False, False
+        return decision, False, (None if thinks else False)
 
     async def _run_tool(self, name: str, args: dict[str, Any], tool_ctx: Optional[dict[str, Any]]):
         """
@@ -1643,6 +1669,12 @@ class AgentOrchestrator:
                     content = synth_response.get("message", {}).get("content", "") or ""
 
                 # As in the streaming loop: a claimed action with no tool run gets one retry.
+                if tools and not claim_checked and claims_unrun_forget(content, tool_ctx.get("user_message"), tools_used):
+                    claim_checked = True
+                    logger.info("Model '%s' said something was forgotten with no forget call; sending it back once.", model)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": nudge_unrun_forget(self._tool_names(tools))})
+                    continue
                 if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
                     claim_checked = True
                     logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
@@ -2075,8 +2107,8 @@ class AgentOrchestrator:
                     "compaction_performed": None, "active_skills": [], "tools_used": [],
                 }}
                 return
-            if cut:
-                user_message = rest
+            # A cut with more said ("so lets start a new topic about unreal engine") keeps the whole
+            # message: stripped, it reached the model as "about unreal engine".
             thread_ctx = episodes.context(active_session_id, new_topic=new_topic or cut)
             if thread_ctx.opened or thread_ctx.folded_now:
                 yield {"event": "episode", "data": {"id": thread_ctx.episode["id"], "opened": thread_ctx.opened,
@@ -2536,6 +2568,14 @@ class AgentOrchestrator:
                 # Said it acted, but nothing ran this turn: once, send it back with the tools
                 # still offered. The claim has already streamed, so the retry follows it after a
                 # paragraph break; only the retry's text is kept in history.
+                if tools and not claim_checked and claims_unrun_forget(content, tool_ctx.get("user_message"), tools_used):
+                    claim_checked = True
+                    logger.info("Model '%s' said something was forgotten with no forget call; sending it back once.", model)
+                    metrics.nets.append("forget-checked")
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": nudge_unrun_forget(self._tool_names(tools))})
+                    yield {"event": "token", "data": {"delta": "\n\n"}}
+                    continue
                 if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
                     claim_checked = True
                     logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)

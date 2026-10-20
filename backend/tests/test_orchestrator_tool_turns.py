@@ -70,9 +70,22 @@ def test_with_system_prompt_sends_the_prompt_once():
     assert [m["role"] for m in _with_system_prompt("p", convo[1:])] == ["system", "user"]
 
 
+def test_main_reasons_every_turn_by_default(monkeypatch):
+    """A quick turn served on main keeps thinking on (the user's choice for Ornith, 2026-10-20)."""
+    import app.agent.runtime_process_manager as rpm
+    orch = _orchestrator()
+    monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("main"))
+    decision = RoutingDecision(mode="normal", provider="llama_cpp", model="fast", reason="short turn")
+    decision, is_fast, thinking = orch._prefer_loaded_slot(decision, True, None, "forget the previous topic")
+    assert (decision.model, is_fast, thinking) == ("main", False, None)
+    assert "thinking on" in decision.reason
+
+
 def test_requests_to_act_never_run_on_the_toolless_fast_model(monkeypatch):
     """The "delete probe.txt" regression, after tools stopped being keyword-picked (2026-10-01):
     the fast model has no tools, so a request to act goes to main even when fast is loaded."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "main_thinking_every_turn", False)
     import app.agent.runtime_process_manager as rpm
     orch = _orchestrator()
     monkeypatch.setattr(rpm, "get_runtime_process_manager", lambda: _Runtime("fast"))
@@ -344,6 +357,8 @@ class _Runtime:
 
 def test_fast_verdict_stays_on_loaded_main_with_thinking_off(monkeypatch):
     import app.agent.runtime_process_manager as rpm
+    from app.config import settings
+    monkeypatch.setattr(settings, "main_thinking_every_turn", False)  # the pre-Ornith behaviour
     orch = _orchestrator()
 
     def fast():

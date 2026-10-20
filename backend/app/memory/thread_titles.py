@@ -62,7 +62,15 @@ def clean_title(text: str) -> Optional[str]:
     words = line.split()
     if not 1 <= len(words) <= 8 or len(line) > TITLE_MAX_CHARS:
         return None
+    # Named after the app rather than the talk: "Freeform conversation, no project" (device 2026-10-20).
+    if {w.strip(",.-:;").lower() for w in words} <= _GENERIC:
+        return None
     return line[0].upper() + line[1:]
+
+
+_GENERIC = {"freeform", "conversation", "chat", "topic", "new", "general", "no", "project", "discussion",
+            "misc", "miscellaneous", "various", "casual", "talk", "and", "a", "the", "with", "jarvis",
+            "assistant", "user", "greeting", "greetings", "small", "random", "day", "to", "daily", ""}
 
 
 async def name_topic(provider: Any, model: str, messages: list[dict[str, Any]], answer: str,
