@@ -48,7 +48,25 @@ public sealed partial class MainWindow : Window
         }
         Activate();
     }
-    public HudWindow? Hud { get; set; }
+    public HudWindow? Hud
+    {
+        get => _hud;
+        set
+        {
+            if (_hud is not null) _hud.ThreadTurnCompleted -= OnHudThreadTurn;
+            _hud = value;
+            if (_hud is not null) _hud.ThreadTurnCompleted += OnHudThreadTurn;
+        }
+    }
+
+    private HudWindow? _hud;
+
+    /// <summary>The HUD talks into the Freeform thread; show its turn if the thread is open
+    /// here and idle (a reply streaming here is left alone, and picks it up on the next load).</summary>
+    private void OnHudThreadTurn() => DispatcherQueue.TryEnqueue(async () =>
+    {
+        if (ChatViewModel.IsThread && !ChatViewModel.IsLoading) await ChatViewModel.LoadThreadAsync();
+    });
 
     /// <summary>
     /// Drives every glass panel's rendering tier from live telemetry. Owned here rather than in
@@ -203,9 +221,15 @@ public sealed partial class MainWindow : Window
             }
         });
         SessionsViewModel.Sessions.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RebuildSessionGroups);
+        ChatViewModel.EpisodesChanged += () => DispatcherQueue.TryEnqueue(RebuildSessionGroups);
         ChatViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModels.ChatViewModel.ActiveSessionId)) DispatcherQueue.TryEnqueue(UpdateSessionHighlight);
+            if (args.PropertyName is nameof(ViewModels.ChatViewModel.ActiveSessionId) or nameof(ViewModels.ChatViewModel.IsEphemeral)
+                or nameof(ViewModels.ChatViewModel.NewTopicPending))
+            {
+                DispatcherQueue.TryEnqueue(UpdateNewTopicButton);
+            }
         };
 
         // Initial state is fetched when the backend is reachable, not now: the window is built
@@ -1038,6 +1062,15 @@ public sealed partial class MainWindow : Window
     {
         if (sender is FrameworkElement { Tag: Session session })
         {
+            if (SessionGroup.EpisodeOf(session) is long episodeId)
+            {
+                // A table-of-contents row: scroll the thread to that episode (opening it first).
+                CloseSidebarOverlay();
+                ShowPagesIfIdle();
+                await ChatViewModel.JumpToEpisodeAsync(episodeId);
+                UpdateSessionHighlight();
+                return;
+            }
             await SessionsViewModel.SelectAsync(session);
             UpdateSessionHighlight();
         }
@@ -1046,7 +1079,9 @@ public sealed partial class MainWindow : Window
     /// <summary>x:Bind target for the session rows (the template can't call the view model's
     /// instance-free helper with the whole item).</summary>
     public static string SessionRowLabel(string sessionId, string? lastMessage) =>
-        SessionsViewModel.DisplayLabel(new Session { SessionId = sessionId, LastMessage = lastMessage });
+        sessionId.StartsWith(ViewModels.ChatViewModel.ThreadId, StringComparison.Ordinal)
+            ? lastMessage ?? "" // the thread and its episodes: the label is already the line to show
+            : SessionsViewModel.DisplayLabel(new Session { SessionId = sessionId, LastMessage = lastMessage });
 
     /// <summary>The active session's row sits on fill-secondary with its icon in accent;
     /// called whenever the active session or the list changes, and per realised container.</summary>
@@ -1068,12 +1103,21 @@ public sealed partial class MainWindow : Window
     private void ApplySessionHighlight(Grid row, Session session)
     {
         var active = session.SessionId == ChatViewModel.ActiveSessionId;
+        var episode = SessionGroup.EpisodeOf(session) is not null;
         row.Background = active ? Themes.JarvisTheme.Brush("FillSecondary") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent);
         if (row.Children[0] is FontIcon icon)
         {
             icon.Foreground = Themes.JarvisTheme.Brush(active ? "Accent" : "LabelSecondary");
+            // The thread: chat bubbles; its episodes: the clock (a place in time); side chats: one bubble.
+            icon.Glyph = session.SessionId == ViewModels.ChatViewModel.ThreadId ? "" : episode ? "" : "";
         }
-        if (row.Children[2] is Button more) more.Opacity = 0;
+        if (row.Children[2] is Button more)
+        {
+            more.Opacity = 0;
+            // The thread and its episodes have no "..." menu yet (per-episode delete is phase 5).
+            more.Visibility = session.SessionId.StartsWith(ViewModels.ChatViewModel.ThreadId, StringComparison.Ordinal)
+                ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
 
     /// <summary>Hover: a faint fill (unless it is the active row) and the "..." button.</summary>
@@ -1100,7 +1144,9 @@ public sealed partial class MainWindow : Window
     /// the groups through a CollectionViewSource.</summary>
     private void RebuildSessionGroups()
     {
-        _sessionGroups = SessionGroup.Build(SessionsViewModel.Sessions, SessionSearch.Text, DateTime.Now);
+        _sessionGroups = SessionsViewModel.Space == ViewModels.ChatSpace.Freeform
+            ? SessionGroup.BuildThread(ChatViewModel.Episodes, SessionsViewModel.Sessions, SessionSearch.Text, DateTime.Now)
+            : SessionGroup.Build(SessionsViewModel.Sessions, SessionSearch.Text, DateTime.Now);
         SessionsList.ItemsSource = new Microsoft.UI.Xaml.Data.CollectionViewSource
         {
             Source = _sessionGroups,
@@ -1151,6 +1197,22 @@ public sealed partial class MainWindow : Window
     }
 
     private void HudButton_Click(object sender, RoutedEventArgs e) => Hud?.ToggleVisible();
+
+    private void NewTopic_Click(object sender, RoutedEventArgs e)
+    {
+        ChatViewModel.ToggleNewTopic();
+        ComposerBox.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>The New topic button is the thread's only (side chats and projects have no
+    /// episodes); armed, it sits on fill-secondary until the next message is sent.</summary>
+    private void UpdateNewTopicButton()
+    {
+        NewTopicButton.Visibility = ChatViewModel.IsThread ? Visibility.Visible : Visibility.Collapsed;
+        var armed = ChatViewModel.NewTopicPending;
+        NewTopicButton.Background = armed ? Themes.JarvisTheme.Brush("FillSecondary") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent);
+        ToolTipService.SetToolTip(NewTopicButton, armed ? "Cancel the new topic" : "Start a new topic with your next message");
+    }
 
     private async void MicButton_Click(object sender, RoutedEventArgs e)
     {

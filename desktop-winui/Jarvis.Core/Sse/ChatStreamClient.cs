@@ -24,6 +24,8 @@ public sealed class StreamChatOptions
 
     /// <summary>"chat" | "act" when voice mode sent this turn; null otherwise.</summary>
     public string? VoiceRoute { get; init; }
+    /// <summary>The Freeform thread: this message opens a new episode (New topic).</summary>
+    public bool NewTopic { get; init; }
 
     public string? SystemPrompt { get; init; }
     public List<string>? ApprovedActionIds { get; init; }
@@ -57,6 +59,7 @@ public sealed class ChatStreamClient
             Attachments = options.Attachments,
             Ephemeral = options.Ephemeral,
             VoiceRoute = options.VoiceRoute,
+            NewTopic = options.NewTopic,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/chat/stream")
@@ -155,6 +158,9 @@ public sealed class ChatStreamClient
                     break;
                 case "error":
                     callbacks.OnError?.Invoke(Deserialize<SseErrorEvent>(frame.Data));
+                    break;
+                case "episode":
+                    callbacks.OnEpisode?.Invoke(Deserialize<SseEpisodeEvent>(frame.Data));
                     break;
                 default:
                     break;

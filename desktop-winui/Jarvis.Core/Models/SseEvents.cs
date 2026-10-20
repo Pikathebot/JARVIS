@@ -269,6 +269,15 @@ public sealed class SseErrorEvent
     public string Error { get; set; } = "";
 }
 
+/// <summary>The Freeform thread (session "jarvis-thread", PLAN 4.18): this turn opened a new
+/// episode (a 3-hour gap or New topic) or folded the current one.</summary>
+public sealed class SseEpisodeEvent
+{
+    public long Id { get; set; }
+    public bool Opened { get; set; }
+    public bool Folded { get; set; }
+}
+
 /// <summary>Emitted by AgentLoop but not on the live /chat/stream path today (see backend/app/agent/loop.py). Handled for forward-compat.</summary>
 public sealed class SseFileChangeEvent
 {

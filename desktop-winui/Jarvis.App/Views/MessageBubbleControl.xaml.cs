@@ -116,6 +116,8 @@ public sealed partial class MessageBubbleControl : UserControl
             // A second take arriving (or voted away) shows or hides the compare card.
             case nameof(ChatMessage.CompareAlternative):
             case nameof(ChatMessage.CompareVoted):
+            // A thread marker gets its title once the episode's record is written.
+            case nameof(ChatMessage.MarkText):
                 DispatcherQueue.TryEnqueue(RenderNow);
                 break;
 
@@ -154,15 +156,24 @@ public sealed partial class MessageBubbleControl : UserControl
         var message = _message;
         if (message is null) return;
 
-        var signature = (message.Content, message.IsStreaming, message.ToolSteps.Count,
-                         message.PendingConfirmations.Count, message.Model, message.CompareAlternative,
-                         message.CompareVoted);
+        var signature = (message.Mark == ThreadMark.None ? message.Content : message.MarkText, message.IsStreaming,
+                         message.ToolSteps.Count, message.PendingConfirmations.Count, message.Model,
+                         message.CompareAlternative, message.CompareVoted);
         if (_rendered == signature) return;
         _rendered = signature;
 
         SystemPill.Visibility = Visibility.Collapsed;
         UserRow.Visibility = Visibility.Collapsed;
         AssistantRow.Visibility = Visibility.Collapsed;
+        DayDivider.Visibility = Visibility.Collapsed;
+        EpisodeMarker.Visibility = Visibility.Collapsed;
+        DigestCard.Visibility = Visibility.Collapsed;
+
+        if (message.Mark != ThreadMark.None)
+        {
+            RenderMark(message);
+            return;
+        }
 
         switch (message.Role)
         {
@@ -182,6 +193,38 @@ public sealed partial class MessageBubbleControl : UserControl
                 break;
         }
     }
+
+    /// <summary>A Freeform thread mark (PLAN 4.18): a day divider, an episode marker or a
+    /// digest card, which starts closed.</summary>
+    private void RenderMark(ChatMessage message)
+    {
+        switch (message.Mark)
+        {
+            case ThreadMark.Day:
+                DayDivider.Visibility = Visibility.Visible;
+                DayText.Text = message.MarkText;
+                break;
+            case ThreadMark.Episode:
+                EpisodeMarker.Visibility = Visibility.Visible;
+                EpisodeMarker.Text = message.MarkText;
+                break;
+            case ThreadMark.Digest:
+                DigestCard.Visibility = Visibility.Visible;
+                DigestTitle.Text = message.MarkText;
+                DigestDetail.Text = message.MarkDetail;
+                SetDigestOpen(false);
+                break;
+        }
+    }
+
+    private void SetDigestOpen(bool open)
+    {
+        DigestDetail.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        DigestChevron.Glyph = open ? "" : "";
+    }
+
+    private void DigestToggle_Click(object sender, RoutedEventArgs e) =>
+        SetDigestOpen(DigestDetail.Visibility != Visibility.Visible);
 
     /// <summary>Right-click / long-press "Copy message" on either bubble: the whole message as
     /// plain text, for when drag-selecting inside a bubble is more fiddly than wanted.</summary>

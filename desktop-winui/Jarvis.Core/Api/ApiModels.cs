@@ -134,7 +134,7 @@ public sealed class SendChatRequest
     [JsonPropertyName("project_id")]
     public string? ProjectId { get; set; }
 
-    /// <summary>"WORKSPACE" | "SYSTEM"</summary>
+    /// <summary>"WORKSPACE" | "SYSTEM" | "FREEFORM"</summary>
     [JsonPropertyName("chat_mode")]
     public string? ChatMode { get; set; }
 

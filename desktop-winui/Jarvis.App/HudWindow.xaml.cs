@@ -20,7 +20,12 @@ namespace Jarvis_App;
 /// </summary>
 public sealed partial class HudWindow : Window
 {
+    /// <summary>The HUD's voice session (listen / follow-up arming), not its conversation.</summary>
     private const string HudSessionId = "jarvis-hud";
+
+    /// <summary>What the HUD says goes into the one Freeform thread (PLAN 4.18), the same
+    /// conversation the main window shows -- not a chat of its own.</summary>
+    private const string HudChatSessionId = ViewModels.ChatViewModel.ThreadId;
     private const double MarginLogicalPx = 24.0;
 
     private readonly JarvisApiClient _api;
@@ -37,6 +42,9 @@ public sealed partial class HudWindow : Window
     /// attached, since the backend rejects an empty message.</summary>
     private string _lastQuery = "";
     public VoiceViewModel VoiceViewModel { get; }
+
+    /// <summary>A HUD turn was added to the thread; the main window reloads it if it shows it.</summary>
+    public event Action? ThreadTurnCompleted;
 
     /// <summary>The liquid-glass renderer behind this window (see GlassHost). Created before the
     /// window is first shown so the backdrop HWND exists and is owner-linked from the start.</summary>
@@ -137,7 +145,7 @@ public sealed partial class HudWindow : Window
         SendMessage(hwnd, WmNcLButtonDown, HtCaption, 0);
     }
 
-    // --- Mic toggle, backed by a real VoiceViewModel (its own session: HudSessionId) ---
+    // --- Mic toggle, backed by a real VoiceViewModel (its own voice session: HudSessionId) ---
 
     private async void MicButton_Tapped(object sender, TappedRoutedEventArgs e)
     {
@@ -289,7 +297,8 @@ public sealed partial class HudWindow : Window
         var response = await _api.SendChatAsync(new SendChatRequest
         {
             Message = message,
-            SessionId = HudSessionId,
+            SessionId = HudChatSessionId,
+            ChatMode = "FREEFORM",
             ApprovedActionIds = approvedActionIds is { Count: > 0 } ? approvedActionIds : null,
             VoiceRoute = voiceRoute,
         }, ct).ConfigureAwait(false);
@@ -301,6 +310,7 @@ public sealed partial class HudWindow : Window
             _pendingConfirmations.AddRange(response.PendingConfirmations);
         }
         DispatcherQueue.TryEnqueue(() => CaptionText.Text = response.Response);
+        ThreadTurnCompleted?.Invoke();
         return response;
     }
 }

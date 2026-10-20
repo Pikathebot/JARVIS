@@ -140,3 +140,39 @@ async def test_new_topic_alone_is_answered_in_code_and_stores_nothing(store):
     assert store.last_message_meta(THREAD_SESSION_ID)["id"] == before
     opened = store.open_episode(THREAD_SESSION_ID)
     assert opened is not None and opened["start_after_message_id"] == before
+
+
+def test_message_pages_mark_where_each_episode_starts(store, monkeypatch):
+    import app.main as main
+    from app.routers import thread as thread_router
+    monkeypatch.setattr(main, "memory_store", store)
+    eps = ThreadEpisodes(store)
+    first = eps.context(THREAD_SESSION_ID)
+    _say(store, "one", "1")
+    second = eps.context(THREAD_SESSION_ID, new_topic=True)
+    _say(store, "two", "2")
+    _say(store, "three", "3")
+    page = thread_router.list_messages(before_id=None, limit=80)
+    starts = [(m["content"], m.get("episode_start")) for m in page["messages"]]
+    assert starts[0] == ("one", first.episode["id"]) and starts[2] == ("two", second.episode["id"])
+    assert all(s is None for c, s in starts if c not in ("one", "two"))
+    # A page that begins exactly where an episode began still says so.
+    newest = thread_router.list_messages(before_id=None, limit=4)
+    assert newest["has_more"] and newest["messages"][0]["content"] == "two"
+    assert newest["messages"][0]["episode_start"] == second.episode["id"]
+    older = thread_router.list_messages(before_id=newest["messages"][0]["id"], limit=10)
+    assert [m["content"] for m in older["messages"]] == ["one", "1"] and not older["has_more"]
+    # The side-chat list leaves the thread out.
+    store.get_or_create_session("side", chat_mode="FREEFORM")
+    store.append_message("side", role="user", content="side chat")
+    assert [s["session_id"] for s in store.list_sessions(chat_mode="FREEFORM")] == ["side"]
+
+
+@pytest.mark.asyncio
+async def test_a_non_streaming_turn_in_the_thread_goes_through_its_episodes(store):
+    """The HUD's POST /chat turns land in the thread too: run() takes the streaming path."""
+    orch = AgentOrchestrator(memory_store=store)
+    result = await orch.run("new topic", session_id=THREAD_SESSION_ID, chat_mode="FREEFORM")
+    assert result.response == _NEW_TOPIC_REPLY and result.status == "completed"
+    assert result.session_id == THREAD_SESSION_ID
+    assert store.open_episode(THREAD_SESSION_ID) is not None

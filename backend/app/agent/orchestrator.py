@@ -1270,6 +1270,16 @@ class AgentOrchestrator:
         attachments: Optional[list[dict[str, Any]]] = None,
         voice_route: Optional[str] = None,
     ) -> OrchestratorResult:
+        if is_thread(session_id or "") and not self.is_ephemeral:
+            # The Freeform thread's episodes (PLAN 4.18) live in the streaming path only; the
+            # HUD's non-streaming turns go through it too rather than a second copy of them.
+            return await self._run_via_stream(
+                user_message=user_message, session_id=session_id, project_id=project_id,
+                requested_mode=requested_mode, requested_model=requested_model, system_prompt=system_prompt,
+                approved_action_ids=approved_action_ids, max_iterations=max_iterations,
+                compaction_threshold_override=compaction_threshold_override, chat_mode=chat_mode,
+                attachments=attachments, voice_route=voice_route,
+            )
         return await self._run_internal(
             voice_route=voice_route,
             user_message=user_message,
@@ -1283,6 +1293,30 @@ class AgentOrchestrator:
             compaction_threshold_override=compaction_threshold_override,
             chat_mode=chat_mode,
             attachments=attachments
+        )
+
+    async def _run_via_stream(self, **kwargs: Any) -> OrchestratorResult:
+        """One ``run_stream`` turn collected into an OrchestratorResult: the last ``done`` or
+        ``confirmation_required`` event carries the reply; an ``error`` event raises."""
+        final: dict[str, Any] = {}
+        async for ev in self.run_stream(**kwargs):
+            if ev.get("event") in ("done", "confirmation_required"):
+                final = ev.get("data") or {}
+            elif ev.get("event") == "error":
+                raise RuntimeError((ev.get("data") or {}).get("error") or "Stream error")
+        return OrchestratorResult(
+            response=final.get("response", ""),
+            model=final.get("model", ""),
+            provider=final.get("provider", "llama_cpp"),
+            status=final.get("status", "completed"),
+            session_id=final.get("session_id") or kwargs.get("session_id") or "default",
+            route_reason=final.get("route_reason", ""),
+            fallback_used=bool(final.get("fallback_used", False)),
+            compaction_performed=final.get("compaction_performed"),
+            active_skills=final.get("active_skills") or [],
+            tools_used=final.get("tools_used") or [],
+            pending_confirmations=final.get("pending_confirmations") or [],
+            spoken=final.get("spoken"),
         )
 
     async def _run_internal(

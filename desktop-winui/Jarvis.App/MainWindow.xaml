@@ -339,13 +339,14 @@
                             x:Name="MessageScroll"
                             Grid.Row="1"
                             VerticalAnchorRatio="1"
+                            HorizontalAnchorRatio="NaN"
                             Padding="24,16,24,8"
                             HorizontalScrollMode="Disabled"
                             HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                         <ItemsRepeater
                             x:Name="MessageList"
-                            MaxWidth="720"
+                            HorizontalAlignment="Left"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
                             <ItemsRepeater.Layout>
                                 <StackLayout Orientation="Vertical" />
@@ -411,8 +412,21 @@
                                 </StackPanel>
                             </Grid>
                             <!-- Where the model runs; the voice state while the mic is on. -->
-                            <TextBlock x:Name="ComposerCaption" Text="Runs on this PC · nothing leaves it" Style="{StaticResource CaptionText}"
-                                       Foreground="{ThemeResource LabelTertiaryBrush}" HorizontalAlignment="Center" />
+                            <Grid>
+                                <TextBlock x:Name="ComposerCaption" Text="Runs on this PC · nothing leaves it" Style="{StaticResource CaptionText}"
+                                           Foreground="{ThemeResource LabelTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <!-- The Freeform thread only (PLAN 4.18): start a new topic with the next
+                                     message; pressed again before sending, it disarms. -->
+                                <Button x:Name="NewTopicButton" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                        Height="24" Padding="8,0" Margin="8,0,0,0" BorderThickness="0" Background="Transparent"
+                                        CornerRadius="{StaticResource PillCornerRadius}" Click="NewTopic_Click"
+                                        ToolTipService.ToolTip="Start a new topic with your next message">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE8BD;" FontSize="12" Foreground="{ThemeResource AccentTextBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="NewTopicText" Text="New topic" Style="{StaticResource FootnoteText}" Foreground="{ThemeResource AccentTextBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
                         </StackPanel>
 
                         <!-- Awareness tray: floats bottom-right of the transcript. -->

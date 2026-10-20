@@ -73,6 +73,22 @@ public sealed class JarvisApiClient
     /// names the conversation's temporary upload folder after it.</summary>
     public static string CreateEphemeralSessionId() => "eph-" + Guid.NewGuid().ToString("n");
 
+    /// <summary>The one continuing Freeform thread's fixed session (PLAN 4.18).</summary>
+    public const string ThreadSessionId = "jarvis-thread";
+
+    /// <summary>The thread's episodes, newest first (the sidebar's table of contents).</summary>
+    public async Task<List<ThreadEpisode>> FetchThreadEpisodesAsync(int limit = 100, CancellationToken ct = default) =>
+        (await GetAsync<ThreadEpisodesResponse>($"/api/thread/episodes?limit={limit}", ct).ConfigureAwait(false)).Episodes;
+
+    /// <summary>The newest <paramref name="limit"/> thread messages older than
+    /// <paramref name="beforeId"/> (all when null), oldest first.</summary>
+    public Task<ThreadMessagePage> FetchThreadMessagesAsync(long? beforeId = null, int limit = 80, CancellationToken ct = default)
+    {
+        var url = $"/api/thread/messages?limit={limit}";
+        if (beforeId is not null) url += $"&before_id={beforeId}";
+        return GetAsync<ThreadMessagePage>(url, ct);
+    }
+
     public async Task<List<Dictionary<string, object?>>> FetchSessionMessagesAsync(string sessionId, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/sessions/{Uri.EscapeDataString(sessionId)}/messages", ct).ConfigureAwait(false);

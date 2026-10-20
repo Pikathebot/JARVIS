@@ -140,6 +140,8 @@ public sealed partial class MainWindow
         if (!_revealed) App.LogStartup("window heard the backend");
         if (!_revealed) SetStartupStep(0.45, LoadSavedSpace() == ChatSpace.Freeform ? "Opening Freeform" : "Loading workspaces");
         await ProjectsViewModel.RefreshAsync();
+        // Freeform opens onto the thread, whose first load ran before the backend was up.
+        if (ChatViewModel.IsThread && ChatViewModel.Messages.Count == 0) await ChatViewModel.LoadThreadAsync();
         if (_revealed) return;
         SetStartupStep(0.75, "Loading sessions");
         // RefreshAsync returns once the UI update is queued; that update (ActiveProjectChanged)

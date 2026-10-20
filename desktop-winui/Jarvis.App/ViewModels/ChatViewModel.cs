@@ -301,6 +301,7 @@ public partial class ChatViewModel : ObservableObject
     private Task RestoreSpaceSessionAsync()
     {
         if (_lastSessionBySpace.TryGetValue(Space, out var last)) return LoadSessionAsync(last);
+        if (Space == ChatSpace.Freeform) return LoadThreadAsync(); // Freeform is the one thread (PLAN 4.18)
         NewChat();
         return Task.CompletedTask;
     }
@@ -346,6 +347,11 @@ public partial class ChatViewModel : ObservableObject
     /// Opening a stored session leaves ephemeral mode (the scratchpad is purged).</summary>
     public async Task LoadSessionAsync(string sessionId)
     {
+        if (sessionId == ThreadId)
+        {
+            await LoadThreadAsync().ConfigureAwait(false);
+            return;
+        }
         if (IsEphemeral)
         {
             PurgeEphemeral(ActiveSessionId);
@@ -363,49 +369,57 @@ public partial class ChatViewModel : ObservableObject
             Post(() =>
             {
                 if (ActiveSessionId != sessionId) return; // user already switched again
-                // Stored tool rows come before the answer they led to: they go back on it as
-                // its tool steps, so a reopened chat shows its tool rows, "Remembered: ..."
-                // lines and screenshots as they were.
-                var steps = new List<ToolStep>();
-                foreach (var entry in raw)
-                {
-                    var msg = MapRawMessage(entry);
-                    if (msg.Role == MessageRole.Tool)
-                    {
-                        steps.Add(MapToolStep(entry));
-                        continue;
-                    }
-                    if (steps.Count > 0)
-                    {
-                        if (msg.Role != MessageRole.Assistant)
-                        {
-                            // tools that ran in a turn which ended without an answer (a confirmation)
-                            Messages.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
-                            Messages[^1].ToolSteps.AddRange(steps);
-                        }
-                        else
-                        {
-                            msg.ToolSteps.AddRange(steps);
-                        }
-                        steps.Clear();
-                    }
-                    Messages.Add(msg);
-                    if (msg.Role == MessageRole.Assistant)
-                    {
-                        ActiveReasoningMessage = msg;
-                    }
-                }
-                if (steps.Count > 0)
-                {
-                    Messages.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
-                    Messages[^1].ToolSteps.AddRange(steps);
-                }
+                foreach (var msg in MapHistory(raw)) Messages.Add(msg);
             });
         }
         catch (Exception ex)
         {
             Post(() => Error = ex.Message);
         }
+    }
+
+    /// <summary>Stored rows as transcript items. Stored tool rows come before the answer they led
+    /// to: they go back on it as its tool steps, so a reopened chat shows its tool rows,
+    /// "Remembered: ..." lines and screenshots as they were. Sets <see cref="ActiveReasoningMessage"/>
+    /// to the last answer.</summary>
+    private List<ChatMessage> MapHistory(IEnumerable<Dictionary<string, object?>> raw)
+    {
+        var items = new List<ChatMessage>();
+        var steps = new List<ToolStep>();
+        foreach (var entry in raw)
+        {
+            var msg = MapRawMessage(entry);
+            if (msg.Role == MessageRole.Tool)
+            {
+                steps.Add(MapToolStep(entry));
+                continue;
+            }
+            if (steps.Count > 0)
+            {
+                if (msg.Role != MessageRole.Assistant)
+                {
+                    // tools that ran in a turn which ended without an answer (a confirmation)
+                    items.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
+                    items[^1].ToolSteps.AddRange(steps);
+                }
+                else
+                {
+                    msg.ToolSteps.AddRange(steps);
+                }
+                steps.Clear();
+            }
+            items.Add(msg);
+            if (msg.Role == MessageRole.Assistant)
+            {
+                ActiveReasoningMessage = msg;
+            }
+        }
+        if (steps.Count > 0)
+        {
+            items.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
+            items[^1].ToolSteps.AddRange(steps);
+        }
+        return items;
     }
 
     private static ChatMessage MapRawMessage(Dictionary<string, object?> entry)
@@ -429,6 +443,9 @@ public partial class ChatViewModel : ObservableObject
             HasStructuredReasoning = !string.IsNullOrEmpty(reasoning),
             Model = ReadString(entry, "model"),
             Provider = ReadString(entry, "provider"),
+            // Thread pages carry the stored id and time (day dividers, scroll-back); /sessions rows don't.
+            StoredId = ReadNumber(entry, "id") is double id ? (long)id : null,
+            CreatedAt = ReadNumber(entry, "created_at") is double at ? FromUnix(at) : DateTimeOffset.Now,
         };
     }
 
@@ -504,6 +521,7 @@ public partial class ChatViewModel : ObservableObject
         // The user just acted in this window, so it may pass on the right to raise windows.
         Services.ForegroundGrant.ToBackend();
 
+        var newTopic = TakeNewTopic();
         _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
         Messages.Add(_streamingMessage);
         ActiveReasoningMessage = _streamingMessage;
@@ -519,6 +537,7 @@ public partial class ChatViewModel : ObservableObject
             OnRetrievalContext = e => Post(() => LatestRetrieval = e),
             OnDone = e => Post(() => HandleDone(e)),
             OnError = e => Post(() => HandleError(e.Error)),
+            OnEpisode = e => Post(() => HandleEpisode(e)),
         };
 
         try
@@ -534,6 +553,7 @@ public partial class ChatViewModel : ObservableObject
                 ApprovedActionIds = approvedActionIds.Count > 0 ? approvedActionIds : null,
                 Attachments = attachments,
                 VoiceRoute = voiceRoute,
+                NewTopic = newTopic,
                 Callbacks = callbacks,
             }, ct).ConfigureAwait(false);
         }
@@ -617,6 +637,7 @@ public partial class ChatViewModel : ObservableObject
 
     private void HandleDone(SseDoneEvent e)
     {
+        if (IsThread) _ = RefreshEpisodesAsync();
         if (_streamingMessage is null) return;
         _streamingMessage.IsStreaming = false;
         _streamingMessage.Model = e.Model;

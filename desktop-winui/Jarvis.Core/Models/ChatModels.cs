@@ -11,6 +11,15 @@ public enum MessageRole
     Tool,
 }
 
+/// <summary>What a non-message row of the Freeform thread is (PLAN 4.18).</summary>
+public enum ThreadMark
+{
+    None,
+    Day,
+    Episode,
+    Digest,
+}
+
 public enum ToolStatus
 {
     Running,
@@ -76,6 +85,23 @@ public partial class ChatMessage : ObservableObject
     public bool HasStructuredReasoning { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+
+    /// <summary>The Freeform thread (PLAN 4.18): not a message but a mark in the transcript --
+    /// a day divider, an episode marker or an episode's digest card. <see cref="MarkText"/> is
+    /// its line, <see cref="MarkDetail"/> what the digest card opens to.</summary>
+    public ThreadMark Mark { get; set; }
+
+    [ObservableProperty]
+    public partial string MarkText { get; set; }
+
+    public string MarkDetail { get; set; } = "";
+
+    /// <summary>The backend's message id (thread history only: the scroll-back pages by it).</summary>
+    public long? StoredId { get; set; }
+
+    /// <summary>The thread episode an episode marker or digest card belongs to.</summary>
+    public long? EpisodeId { get; set; }
+
     public List<ToolStep> ToolSteps { get; set; } = new();
     public string? Model { get; set; }
     public string? Provider { get; set; }
@@ -125,6 +151,7 @@ public partial class ChatMessage : ObservableObject
     {
         Content = "";
         ReasoningContent = "";
+        MarkText = "";
     }
 }
 
@@ -163,6 +190,11 @@ public sealed class ChatRequest
     /// for a typed turn.</summary>
     [JsonPropertyName("voice_route")]
     public string? VoiceRoute { get; set; }
+
+    /// <summary>The Freeform thread only: start a new episode with this message (the New topic
+    /// button, PLAN 4.18).</summary>
+    [JsonPropertyName("new_topic")]
+    public bool NewTopic { get; set; }
 }
 
 public sealed class ChatResponse

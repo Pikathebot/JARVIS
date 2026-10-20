@@ -2252,6 +2252,25 @@ yesterday", "what did we talk about on sunday", "Ooty hotel options") and not fo
 llama-bench 31.7 vs ~53 tok/s).
 The WORKSPACE head prefix is 36,518 chars with recall; **the user chose raising its cap 36,000 -> 37,000**
 (2026-10-20, as for email on 10-19) over trimming other tools.
+**Phase 4 BUILT 2026-10-20 (WinUI builds; backend tests pass; NOT seen on device -- needs the user's run).**
+Backend: `GET /api/thread/messages?before_id&limit` pages the thread (oldest first, `has_more`), flagging
+`episode_start` on an episode's first row; the Freeform side-chat list leaves `jarvis-thread` out; `run()` (POST
+/chat, the HUD) now goes through `run_stream` for the thread (`_run_via_stream`), so HUD turns get episodes too.
+Client: Freeform opens onto the thread (`ChatViewModel.Thread.cs`: `LoadThreadAsync`, 80-message pages,
+`LoadOlderThreadAsync` on scroll-up near the top, `JumpToEpisodeAsync`); `ChatMessage.Mark` rows render as day
+dividers, topic markers ("Title · HH:mm", "New topic · HH:mm" until the record exists; retitled live when
+episodes refresh after each reply) and a collapsed digest card (`MessageBubbleControl`). The Freeform sidebar
+is the table of contents (`SessionGroup.BuildThread`: "Current conversation", episodes by day -> tap scrolls to
+the marker, then "Side chats"; no "..." on thread rows). **New topic** button left of the composer caption
+(thread only; armed it shows its marker at once, pressing again disarms; sends `new_topic`). The `episode` SSE
+event places a marker live for a 3 h gap or typed "new topic". The HUD's chat turns go to `jarvis-thread`
+(FREEFORM; its voice session stays `jarvis-hud`) and the main window reloads the thread after one if idle.
+Design system: new **Thread** component spec (artifact v14).
+To check on device: the scroll-back keeps its place while pages insert (relies on `VerticalAnchorRatio`);
+jumping to an old episode loads pages until it is there; markers retitle once the keeper writes a record; the
+Workspace part of the sidebar is unchanged. Briefing/voice into the thread: the briefing already rides in the
+day's first digest; main-window voice turns use the active session, i.e. the thread when it is open.
+Next: phase 5 (archive-and-clear of the test history, per-episode delete, "forget").
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):
@@ -2286,3 +2305,30 @@ WinUI app is just one client. Remote control = a second client, on the phone, re
 are, possibly asking more often on remote turns; the laptop must be awake (plugged in with sleep off, later
 wake-on-LAN); voice from the phone later, on top of option 1. It should land in the one Freeform thread (4.18:
 voice, HUD and briefing already do). Not started; to discuss when it comes up in the queue.
+
+### 4.20 UI scaling across window sizes (raised by the user 2026-10-20) -- PLANNED, NOT BUILT
+The user: "the ui is not scaled properly for different variety of sizes". Snapshot 2026-10-20 19:32 (window
+2560x1528 px at 150%, Freeform thread open): the reading column and composer are fixed at 720 DIP, so on a wide
+window the transcript is a narrow strip in the middle of a ~1430 DIP slab, while the sidebar (fixed ~250 DIP) and
+the capsules keep one size at every width. Nothing adapts to the window's size or its DPI beyond that.
+To do: go through the main window, HUD, Settings, tray popup and sheets at several sizes (small/snapped ~1000x700,
+laptop default, maximised, 4K) and DPI scales (100/125/150/175%); with **screenshots of each** via
+`scripts/snapshot-window.ps1`, list what breaks (clipping, overlap, wasted space, text too small/large); then set
+breakpoints/proportional rules in the design system (AppLayout spec: column width from the window, sidebar
+collapse width, composer width tied to the column, type scale steps) before changing code. Also ask the user what
+"not loaded properly" looked like in the 19:32 shot (glass, layout and the thread rendered as expected there).
+**Fix found on the way (2026-10-20, built, NOT seen on device):** in the 19:32 shot the transcript column sat
+~230 DIP right of the composer (an older shot, before 4.17b, had them aligned). Cause, most likely: the scroll
+anchoring added for the follow-the-end fix (`VerticalAnchorRatio="1"`) also anchors horizontally by default and
+shifted the content sideways. `HorizontalAnchorRatio="NaN"` on `MessageScroll`, plus a backstop in
+`MainWindow.ChatScroll.cs` that resets any horizontal offset and logs "chat scroller had a horizontal offset"
+(if that line shows in the app log, the cause is confirmed and the backstop is what's holding it).
+**Not it** -- the 19:4x build had that fix, no offset was logged and the column was still ~116 DIP right. The
+column is exactly 720 DIP but centred in a slot ~232 DIP wider than the viewport: the ItemsRepeater (4.17b, for
+text copy) laid out inside the ScrollViewer, which the ListView never did. Now placed in code
+(`PlaceChatColumn`: width min(720, viewport), left margin = half the rest; MaxWidth/centring dropped), and the
+first layout of each run logs "chat column: scroller/viewport/extent/hoffset, list at x, composer at x" to
+jarvis-app.log -- read it after the next start to confirm the list and the composer now share their x.
+**Seen fixed on device 2026-10-20 19:48** (user: "it looks correct now"; log: list and composer both at x 24, width
+515 at the startup size). Same restart: the "actively refused" error is gone too -- Freeform's first thread load
+ran before the backend listened (phase 4 regression); it now logs quietly and `OnBackendCameOnline` reloads it.

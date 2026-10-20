@@ -24,6 +24,8 @@ from app.database.models import (
 DEFAULT_PROJECT_ID = "default-workspace"
 # Sessions of the Freeform space: no project, listed apart from every workspace.
 FREEFORM_CHAT_MODE = "FREEFORM"
+# The one continuing Freeform thread (app.memory.thread; not imported here: memory loads first).
+THREAD_SESSION_ID = "jarvis-thread"
 
 logger = logging.getLogger("jarvis.memory.store")
 
@@ -196,7 +198,10 @@ class MemoryStore:
             try:
                 statement = select(DBSession)
                 if (chat_mode or "").upper() == FREEFORM_CHAT_MODE:
-                    statement = statement.where(DBSession.chat_mode == FREEFORM_CHAT_MODE)
+                    # The one continuing thread has its own place in the sidebar (PLAN 4.18):
+                    # this list is the side chats.
+                    statement = statement.where(DBSession.chat_mode == FREEFORM_CHAT_MODE,
+                                                DBSession.session_id != THREAD_SESSION_ID)
                     project_id = None
                 else:
                     statement = statement.where(
@@ -314,6 +319,27 @@ class MemoryStore:
                 statement = statement.where(col(Message.id) <= upto_id)
             rows = session.exec(statement.order_by(col(Message.id).asc())).all()
             return [_message_dict(row, meta=True) for row in rows]
+
+    def get_message_page(self, session_id: str, before_id: Optional[int] = None,
+                         limit: int = 80) -> tuple[list[dict[str, Any]], bool]:
+        """The newest ``limit`` messages older than ``before_id`` (all when None), oldest first,
+        with ids and times, and whether older ones remain -- the thread's scroll-back."""
+        with self._get_session() as session:
+            statement = select(Message).where(Message.session_id == session_id)
+            if before_id is not None:
+                statement = statement.where(col(Message.id) < before_id)
+            rows = session.exec(statement.order_by(col(Message.id).desc()).limit(limit + 1)).all()
+            more = len(rows) > limit
+            return [_message_dict(row, meta=True) for row in reversed(rows[:limit])], more
+
+    def previous_message_id(self, session_id: str, before_id: int) -> int:
+        """The id of the session's message just before ``before_id``, or 0."""
+        with self._get_session() as session:
+            row = session.exec(
+                select(Message.id).where(Message.session_id == session_id, col(Message.id) < before_id)
+                .order_by(col(Message.id).desc()).limit(1)
+            ).first()
+            return int(row or 0)
 
     def last_message_meta(self, session_id: str) -> Optional[dict[str, Any]]:
         """``{"id", "created_at"}`` of the session's newest message, or None."""

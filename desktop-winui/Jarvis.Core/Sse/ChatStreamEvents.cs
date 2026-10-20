@@ -22,4 +22,5 @@ public sealed class ChatStreamCallbacks
     public Action<SseArtifactUpdateEvent>? OnArtifactUpdate { get; set; }
     public Action<SseDoneEvent>? OnDone { get; set; }
     public Action<SseErrorEvent>? OnError { get; set; }
+    public Action<SseEpisodeEvent>? OnEpisode { get; set; }
 }

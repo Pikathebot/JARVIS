@@ -22,6 +22,56 @@
         </Border>
 
         <!--
+            Freeform thread marks (PLAN 4.18, design system "Thread"): a day divider (centred
+            footnote between hairlines), an episode marker (centred footnote) and a digest card
+            (a ToolStepRow-style line that opens to what Jarvis carried over).
+        -->
+        <Grid x:Name="DayDivider" Visibility="Collapsed" ColumnSpacing="12" Margin="0,16,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Rectangle Height="1" VerticalAlignment="Center" Fill="{ThemeResource SeparatorBrush}" />
+            <TextBlock x:Name="DayText" Grid.Column="1" Style="{StaticResource SecondaryFootnoteText}" />
+            <Rectangle Grid.Column="2" Height="1" VerticalAlignment="Center" Fill="{ThemeResource SeparatorBrush}" />
+        </Grid>
+
+        <TextBlock
+            x:Name="EpisodeMarker"
+            Visibility="Collapsed"
+            HorizontalAlignment="Center"
+            Margin="0,8,0,4"
+            Style="{StaticResource SecondaryFootnoteText}"
+            TextWrapping="Wrap"
+            TextAlignment="Center" />
+
+        <StackPanel x:Name="DigestCard" Visibility="Collapsed" Margin="36,0,0,8" Spacing="4" HorizontalAlignment="Left" MaxWidth="560">
+            <Button
+                x:Name="DigestToggle"
+                Click="DigestToggle_Click"
+                Height="30"
+                Padding="10,0"
+                HorizontalAlignment="Left"
+                CornerRadius="{StaticResource RowCornerRadius}"
+                Background="{ThemeResource FillTertiaryBrush}"
+                BorderThickness="0">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE946;" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="DigestTitle" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
+                    <FontIcon x:Name="DigestChevron" Style="{StaticResource JarvisIcon}" Glyph="&#xE76C;" FontSize="10" Foreground="{ThemeResource LabelTertiaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+            <TextBlock
+                x:Name="DigestDetail"
+                Visibility="Collapsed"
+                Margin="10,2,0,0"
+                Style="{StaticResource SecondaryFootnoteText}"
+                TextWrapping="Wrap"
+                IsTextSelectionEnabled="True" />
+        </StackPanel>
+
+        <!--
             User message: a right-aligned accent bubble. Plain XAML on the reading surface,
             not glass: nothing on the surface is glass but the composer.
         -->
