@@ -2060,6 +2060,56 @@ Fixed (WinUI builds; none seen on device yet):
 ask); Jarvis invented governor "power limits" when asked about limits; the draft was written about Jarvis in the
 third person and said "Good afternoon" at 10:52 (the time is in the per-turn context; model quality).
 
+### 4.17c Main-model candidates: Ornith 1.5 9B, stock and OBLITERATED (raised 2026-10-20) -- DONE: main = stock Ornith
+
+**Why:** Ornith-1.5-9B (ornith-ai; Qwen3.5-9B + continued pretraining + RL self-improvement) reports large
+agentic gains over plain Qwen3.5-9B (Toolathlon 41.2 vs 29.6, MCP-Atlas 54.2 vs 46.8, BrowseComp 56.4 vs
+41.5; self-reported, bf16, long context). Same `qwen35` architecture and size as Defiant, so it drops into
+our llama-server as is.
+**Candidates (user's choice):** stock Ornith (shows what refusal removal costs, and whether it thinks itself
+into silence like the censored Qwen did) and `OBLITERATUS/Ornith-1.5-9B-OBLITERATED` (abliterated; card:
+MMLU 78.8 -> 74.8 on n=100, 98% liberation). Skipped: DuoNeural's Cyber-Ornith (a further cybersecurity QLoRA
+on top, Hermes-format tool data, marketing-heavy card).
+**Files:** `models/ornith-1.5-9b/` = mradermacher `Ornith-1.5-9B.i1-IQ3_XXS.gguf` (3756 MiB -- normal-size
+output tensor, unlike DavidAU's Defiant files) + Ornith's own `mmproj-Q8_0` (595 MiB; copied beside the
+obliterated model too, abliteration leaves the vision tower alone). The obliterated model has no IQ3 on HF:
+download its Q8_0 (9333 MiB), imatrix from `models/defiant-fable-9b/calibration.txt` (-ngl 20, -c 512), quantize
+IQ3_XXS with `--output-tensor-type q5_K --token-embedding-type q3_K` (Defiant's recipe), delete the Q8_0.
+All files sha256-checked against HF.
+**Eval, same as Defiant's (4.13 c / #8):** llama-bench + VRAM, `bench_tool_chain.py --thinking --ctx 32768`,
+`scripts/eval_refusal.py` (new: the 10 over-refusal prompts as a script), the screenshot description,
+`eval_jarvis_tasks.py` x3 seeds, then the user's blind votes against Defiant. Main stays Defiant until then.
+Card notes: reasoning model (`<think>`), Qwen template adjusted by Ornith, recommends presence_penalty 1.5 for
+general use (we send none).
+**Results 2026-10-20** (`models/ornith-1.5-9b/ab/`, `scripts/eval_results/2026-10-20-ornith/`):
+- Quantizing OBLITERATED: its Q8_0 carries the MTP layer (blk.32, `nextn_predict_layers=1`) that the imatrix
+  never sees, so IQ3_XXS refuses it; pruned (`--prune-layers 32 --override-kv qwen35.nextn_predict_layers=int:0`,
+  plus `--allow-requantize`) -> 3745 MiB, 427 tensors, like mradermacher's stock file. Projectors must be named
+  `mmproj*.gguf` (bench and `PROJECTOR_PREFIXES`): mradermacher's `Ornith-1.5-9B.mmproj-Q8_0.gguf` was renamed.
+- Speed: all three ~53 tok/s tg128, 1830-1990 pp512. VRAM with projector ~5100 MiB each.
+- Tool chains (`--thinking --ctx 32768`, both orders): Defiant 5/5, Ornith 5/5, OBLITERATED 4/5 (bump-version
+  went to 1.5.0 after four edits, both orders; chains twice as long).
+- Vision (`.shots/06-chat-cpu.png`): Defiant names the app, 18/18 sidebar titles, 3/3 user messages; Ornith
+  17/18 and all messages, careful ("can't identify the app" though the header says Jarvis); OBLITERATED invented
+  status-bar numbers, then looped "shutdown" to the token cap.
+- Over-refusal (`scripts/eval_refusal.py`): Defiant 10/10 in 132 s; Ornith 10/10 in 231 s (no silent-thinking
+  failure; one 76 s); OBLITERATED 3/10, seven EMPTY after 16-30k chars of thinking. **OBLITERATED dropped**
+  (folder in the Recycle Bin).
+- Task suite x3 seeds: **Ornith 129/150 vs Defiant 121/150** (re-run today, same harness). Skill 106 vs 102/111,
+  knowledge 23 vs 19/39, claimed-without-acting 2 vs 7, unsourced web specifics 6 vs 10. Groups: chain 13 vs 11/15,
+  closed 21 vs 16/36, calendar/email/notes perfect for Ornith. Worse: wukong-mod 0/3 (answers from knowledge that
+  Wukong is single-player instead of searching), sky-why ("Because the sky is blue."), one tool call written as
+  text. Slower overall: 942 s vs 559 s (thinks more; result-hint net fired 23x vs 8x).
+- **Blind review (user, 2026-10-20, 147 pairs): Ornith 118, Defiant 29**, no ties; Ornith won every group
+  (system 23-3, workspace 22-2, chain 14-1, notes 12-1, email 6-0, calendar 5-1, web 10-5, closed 22-14, convo
+  4-2). Unlike the Defiant review (terse picked 26/37), the user chose the *longer* answer 126/147. Picked a
+  failing answer over a passing one 8 times (6 Defiant, 2 Ornith). Votes in `data/preference_votes.jsonl`.
+**Decision:** Ornith wins on the eval and the votes; its cost is time (thinks more, suite 942 s vs 559 s).
+**Switched 2026-10-20: main = Ornith IQ3** (`data/models.json`, `backend/.env`); Defiant kept as fallback.
+Unverified on device. To watch: turn latency (thinks more), searching vs answering from memory (wukong-mod),
+tool calls written as text. Not tried: Ornith's recommended presence_penalty 1.5 for general use. Small
+follow-up: Defiant's `imatrix.gguf` is listed in the model catalogue as a model named "imatrix".
+
 ### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- TO DISCUSS, NOT DECIDED
 
 **The question (user):** is Freeform better as one long chat (or many, as now)? The same for Workspace, made

@@ -48,14 +48,16 @@ AUMID runs the previous build. Use the launcher script, which detects this and r
 ## Runtime reality (check before trusting config)
 
 - **Models actually served** come from `data/models.json` (per-slot selection) ahead of `.env`.
-  As of 2026-10-16: main = `models/defiant-fable-9b/Defiant-Fable-9B-IQ3_XXS.gguf` (+ Q8_0 projector, 32k
-  ctx; switched from Qwen3.5-9B UD-IQ3_XXS after the eval and the user's blind votes, PLAN 4.13 #8; the
-  Qwen folder was deleted 2026-10-20 to free disk -- re-download via `curated_models.json` if ever needed). Fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only).
+  As of 2026-10-20: main = `models/ornith-1.5-9b/Ornith-1.5-9B.i1-IQ3_XXS.gguf` (mradermacher imatrix
+  quant + Ornith's own `mmproj-Q8_0.gguf`, 32k ctx; won the eval 129 vs 121/150 and the user's blind votes
+  118-29 over Defiant, PLAN 4.17c). Defiant (`models/defiant-fable-9b/`) stays on disk as the fallback; it
+  had replaced Qwen3.5-9B UD-IQ3_XXS on 2026-10-16 (PLAN 4.13 #8), whose folder was deleted 2026-10-20.
+  A projector is paired only if its file name starts with `mmproj` (`PROJECTOR_PREFIXES`). Fast = `models/minicpm5-2b/MiniCPM5-2B-Q4_K_M.gguf` (text-only).
   Ternary Bonsai 2 9B was the fast slot 2026-10-17/18 and was dropped (voice mode runs the fast model with
   Laya and Whisper on the GPU; Bonsai's 3.4 GB left no headroom, PLAN 4.14). Ternary quants (`pq2_0`,
   `ptq1_0`) still launch on the PrismML fork, `tools/llama-cpp-prism/llama-server.exe`
   (`runtime_process_manager.py`), if one is ever selected. `backend/.env`'s
-  `LLAMA_MAIN_MODEL_PATH` names Defiant (2026-10-20); its other `LLAMA_*_MODEL_PATH` / `MAIN_MODEL`
+  `LLAMA_MAIN_MODEL_PATH` names Ornith (2026-10-20); its other `LLAMA_*_MODEL_PATH` / `MAIN_MODEL`
   keys are stale, not live.
   `GET /api/models` is the truth at runtime.
 - **Ports:** 8000 backend, 8001 llama-server (the chat model), 8002 image-captioner sidecar,
