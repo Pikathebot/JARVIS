@@ -15,7 +15,8 @@ HOURS = 3600.0
 
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_BRIEFING_STATE", str(tmp_path / "briefing.json"))  # no briefing today
     engine = create_engine(f"sqlite:///{tmp_path / 'thread.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
     return MemoryStore(session_factory=lambda: Session(engine))

@@ -43,12 +43,22 @@ def last_briefed() -> str:
         return ""
 
 
-def mark_briefed(day: date) -> None:
+def mark_briefed(day: date, text: str = "") -> None:
     p = state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"last_day": day.isoformat()}), encoding="utf-8")
+    tmp.write_text(json.dumps({"last_day": day.isoformat(), "text": text}), encoding="utf-8")
     tmp.replace(p)
+
+
+def briefing_text(day: date) -> str:
+    """The briefing given on ``day`` (its written text), or '' if that day wasn't briefed. The
+    Freeform thread's first episode of the day carries it (PLAN 4.18)."""
+    try:
+        state = json.loads(state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return state.get("text", "") if state.get("last_day") == day.isoformat() else ""
 
 
 # --- what the day holds -------------------------------------------------------------------------
@@ -213,6 +223,6 @@ async def brief_if_due(monitor: Any, persona_provider: Callable[[], Any], at: da
         logger.info("Day briefing: Google refresh skipped (%s)", exc)
     # gather reads files and asks Gmail: off the event loop
     obs = await asyncio.to_thread(build, persona_provider(), at, monitor.active_observations())
-    mark_briefed(day)
+    mark_briefed(day, obs.detail or "")
     logger.info("Day briefing for %s: %s", day, obs.data)
     return monitor.emit(obs)

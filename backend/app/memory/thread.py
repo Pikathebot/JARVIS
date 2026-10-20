@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from app.config import settings
@@ -58,27 +58,53 @@ class EpisodeContext:
     folded_now: bool = False
 
 
+def _clip(text: str, limit: int) -> str:
+    """The digest's share of a record field: the record keeps it whole (for recall), the digest
+    rides on every turn of an episode and stays ~300-400 tokens."""
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 3].rsplit(" ", 1)[0] + "..."
+
+
 def _clock(ts: Optional[float]) -> str:
     return datetime.fromtimestamp(ts).strftime("%a %d %b %H:%M") if ts else "?"
 
 
-def build_digest(store: Any, session_id: str, now: float) -> str:
+def todays_briefing(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None) -> str:
+    """The day's briefing text when this is the first episode since the day began (4 AM), else ''.
+    The briefing itself is composed and emitted by ``app.awareness.day_briefing``; the first
+    episode of the day carries it so the model knows what the user was told this morning."""
+    from app.awareness import day_briefing
+
+    at = datetime.fromtimestamp(now)
+    day = day_briefing.briefing_day(at)
+    day_start = (datetime.combine(day, datetime.min.time()) + day_briefing.DAY_STARTS_AT).timestamp()
+    if any(e["started_at"] >= day_start and e["id"] != exclude_id for e in store.list_episodes(session_id, limit=3)):
+        return ""
+    return day_briefing.briefing_text(day)
+
+
+def build_digest(store: Any, session_id: str, now: float, exclude_id: Optional[int] = None) -> str:
     """Earlier episodes, newest first, as the new episode's opening context. Uses each episode's
-    record where one exists (phase 2); otherwise its time span. Empty when there is no history."""
-    earlier = [e for e in store.list_episodes(session_id, limit=DIGEST_EPISODES) if e["record_status"] != "open"]
-    if not earlier:
+    record where one exists; otherwise its time span. The first episode of a day also carries the
+    morning briefing. Empty when there is neither."""
+    briefing = todays_briefing(store, session_id, now, exclude_id)
+    earlier = [e for e in store.list_episodes(session_id, limit=DIGEST_EPISODES + 1)
+               if e["record_status"] != "open" and e["id"] != exclude_id][:DIGEST_EPISODES]
+    if not earlier and not briefing:
         return ""
     lines = ["[Earlier in this conversation -- context, not part of the user's message; "
              "ask the user for anything not here:"]
+    if briefing:
+        lines.append("This morning's briefing: " + " ".join(briefing.split()))
     for ep in earlier:
         span = f"{_clock(ep['started_at'])}-{datetime.fromtimestamp(ep['ended_at']).strftime('%H:%M') if ep.get('ended_at') else '?'}"
         lines.append(f"- {span}: {ep.get('title') or 'untitled (summary pending)'}")
-    last = earlier[0]
+    last = earlier[0] if earlier else {}
     if last.get("summary"):
-        lines.append(f"Last time: {last['summary'].strip()}")
+        lines.append(f"Last time: {_clip(last['summary'], 500)}")
     if last.get("decisions"):
-        lines.append(f"Decided: {last['decisions'].strip()}")
-    open_items = [ep["open_items"].strip() for ep in earlier if ep.get("open_items")]
+        lines.append(f"Decided: {_clip(last['decisions'], 300)}")
+    open_items = [_clip(ep["open_items"], 200) for ep in earlier if ep.get("open_items")]
     if open_items:
         lines.append("Open items: " + " | ".join(open_items))
     return "\n".join(lines) + "]"
@@ -120,12 +146,11 @@ class ThreadEpisodes:
 
     def context(self, session_id: str, new_topic: bool = False, now: Optional[float] = None) -> EpisodeContext:
         episode, opened = self.current(session_id, new_topic=new_topic, now=now)
-        after = max(episode["start_after_message_id"], episode.get("fold_upto_message_id") or 0)
-        rows = self.store.get_message_rows(session_id, after_id=after)
+        rows = self.visible_rows(session_id, episode)
         folded_now = False
-        if self._tokens(rows) > self.budget_tokens:
-            episode, rows = self._fold(episode, rows)
-            folded_now = True
+        if self.needs_fold(rows):
+            episode, kept = self.fold(episode, rows)
+            folded_now, rows = kept is not rows, kept
         return EpisodeContext(episode=episode, opened=opened, rows=rows,
                               preamble=self.preamble(episode), folded_now=folded_now)
 
@@ -137,9 +162,10 @@ class ThreadEpisodes:
         clean = [{k: v for k, v in r.items() if k not in ("id", "created_at")} for r in rows]
         return sum(self.counter.count_messages(unit) for unit in _replay_units(clean))
 
-    def _fold(self, episode: dict[str, Any], rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Keep the newest rows worth about half the budget, starting at a user message (so a
-        tool call and its result are never split), and fold everything before it."""
+    def fold_point(self, rows: list[dict[str, Any]]) -> int:
+        """Index of the first row to keep: the newest rows worth about half the budget, starting
+        at a user message (so a tool call and its result are never split). 0 or len(rows) =
+        nothing sensible to cut (one enormous turn)."""
         keep_from = len(rows)
         kept = 0
         for i in range(len(rows) - 1, -1, -1):
@@ -148,14 +174,30 @@ class ThreadEpisodes:
                 keep_from = i
                 if kept >= self.budget_tokens // 2:
                     break
+        return keep_from
+
+    def needs_fold(self, rows: list[dict[str, Any]], ratio: float = 1.0) -> bool:
+        return self._tokens(rows) > self.budget_tokens * ratio
+
+    def fold(self, episode: dict[str, Any], rows: list[dict[str, Any]],
+             note: Optional[str] = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Fold everything before ``fold_point``. ``note`` is the summary of the folded rows (the
+        keeper's, written between turns); without one -- a fold forced mid-turn -- the note only
+        says what was folded."""
+        keep_from = self.fold_point(rows)
         if keep_from == 0 or keep_from >= len(rows):
-            return episode, rows  # nothing sensible to cut (one enormous turn): leave it
+            return episode, rows
         folded, kept_rows = rows[:keep_from], rows[keep_from:]
-        prior = episode.get("fold_note")
-        count = len([r for r in folded if r.get("role") in ("user", "assistant")])
-        note = (f"[Earlier in this episode, folded away: {count} messages from "
-                f"{_clock(folded[0].get('created_at'))} to {_clock(folded[-1].get('created_at'))}"
-                f"{' (after an earlier fold)' if prior else ''}. Ask the user if something from them matters.]")
+        if not note:
+            prior = episode.get("fold_note")
+            count = len([r for r in folded if r.get("role") in ("user", "assistant")])
+            note = (f"[Earlier in this episode, folded away: {count} messages from "
+                    f"{_clock(folded[0].get('created_at'))} to {_clock(folded[-1].get('created_at'))}"
+                    f"{' (after an earlier fold)' if prior else ''}. Ask the user if something from them matters.]")
         fields = {"fold_upto_message_id": folded[-1]["id"], "fold_note": note}
         self.store.update_episode(episode["id"], **fields)
         return {**episode, **fields}, kept_rows
+
+    def visible_rows(self, session_id: str, episode: dict[str, Any]) -> list[dict[str, Any]]:
+        after = max(episode["start_after_message_id"], episode.get("fold_upto_message_id") or 0)
+        return self.store.get_message_rows(session_id, after_id=after)

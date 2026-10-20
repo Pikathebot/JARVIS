@@ -2214,6 +2214,21 @@ closing episode is marked `pending` (record for phase 2). The digest lists the l
 "untitled (summary pending)" with the time span), the previous one's summary/decisions, open items. An `episode`
 SSE event ({id, opened, folded}) goes out when one opens or folds (the client ignores it for now).
 `GET /api/thread/episodes`. Tests: `backend/tests/test_thread.py`.
+**Phase 2 BUILT 2026-10-20 (backend; 1168 tests pass; record writing checked live on Ornith).**
+`app/memory/thread_keeper.py`, started in the app's lifespan, runs every 60 s and uses the model only when main
+is already loaded, Game mode is off, the governor has no activity and the thread has been quiet >= 60 s (it never
+loads a model): (1) closes an open episode idle for the gap (-> `pending`, no model needed); (2) writes records
+for pending episodes, oldest first, max 3 a pass -- one side request with a forced `episode_record` call (title,
+summary, decisions, open items; thinking off), the transcript clipping tool output to 400 chars; (3) folds ahead
+between turns past 85% of the budget, the folded part summarised the same way (the mid-turn fold stays as the
+safety net); (4) rebuilds an open episode's digest that said "summary pending" once the records exist. The day
+briefing's text is now saved with the briefed day (`data/briefing.json`, `briefing_text(day)`), and the first
+episode since 4 AM carries it in its digest. Digest fields are clipped (summary 500, decisions 300, open items 200
+chars); records keep them whole. Live check: Ornith on a side server (:8012), 40 rows of the 10-20 session ->
+correct forced call in 14 s, specific and accurate ("Discord launch, Epic force-close, game libraries"); found
+"None noted." for an empty field (now normalised to '') and a doubled period in the fold note (fixed).
+Not yet seen: the keeper running inside the app (nothing writes to `jarvis-thread` until phase 4).
+Tests: `backend/tests/test_thread_keeper.py`.
 
 **How Claude Code works on this project vs how Jarvis works on a Workspace project** (user: "check how you
 work on a project and how jarvis work on a project"; first pass 2026-10-19, to discuss after 4.16 + 4.17):

@@ -304,15 +304,15 @@ class MemoryStore:
 
     # ---- The one continuing Freeform thread (PLAN 4.18) -------------------------------------
 
-    def get_message_rows(self, session_id: str, after_id: int = 0) -> list[dict[str, Any]]:
-        """Messages with an id above ``after_id``, oldest first, each with its ``id`` and
-        ``created_at`` (which ``get_messages`` leaves out)."""
+    def get_message_rows(self, session_id: str, after_id: int = 0,
+                         upto_id: Optional[int] = None) -> list[dict[str, Any]]:
+        """Messages with an id above ``after_id`` (and at most ``upto_id``), oldest first, each with
+        its ``id`` and ``created_at`` (which ``get_messages`` leaves out)."""
         with self._get_session() as session:
-            rows = session.exec(
-                select(Message)
-                .where(Message.session_id == session_id, col(Message.id) > after_id)
-                .order_by(col(Message.id).asc())
-            ).all()
+            statement = select(Message).where(Message.session_id == session_id, col(Message.id) > after_id)
+            if upto_id is not None:
+                statement = statement.where(col(Message.id) <= upto_id)
+            rows = session.exec(statement.order_by(col(Message.id).asc())).all()
             return [_message_dict(row, meta=True) for row in rows]
 
     def last_message_meta(self, session_id: str) -> Optional[dict[str, Any]]:

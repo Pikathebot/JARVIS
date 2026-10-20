@@ -496,6 +496,20 @@ async def lifespan(app: FastAPI):
     _background_tasks.add(gsync)
     gsync.add_done_callback(_background_tasks.discard)
 
+    # The Freeform thread's housekeeping (PLAN 4.18 phase 2): episode records, fold-ahead, digest
+    # refresh -- only with main already loaded and nothing else running; it never loads a model.
+    from app.agent.provider_factory import get_model_provider
+    from app.agent.runtime_process_manager import get_runtime_process_manager
+    from app.memory.thread_keeper import ThreadKeeper, keeper_loop
+
+    def _keeper_may_use_model() -> bool:
+        return (get_runtime_process_manager().current_model_kind == "main" and not game_mode.active
+                and not governor.is_busy and not governor.is_loading_model)
+
+    keeper = asyncio.create_task(keeper_loop(ThreadKeeper(memory_store, get_model_provider, _keeper_may_use_model)))
+    _background_tasks.add(keeper)
+    keeper.add_done_callback(_background_tasks.discard)
+
     # Load the local TTS model off the event loop so the first spoken reply is not the slow one
     # (~5 s cold vs ~1 s warm). Nothing waits on it; speech simply loads on demand if it is
     # still running. Delayed: loading takes ~3.5 s at ~50% of the whole CPU (ONNX Runtime uses
