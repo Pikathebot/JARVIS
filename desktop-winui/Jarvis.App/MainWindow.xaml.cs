@@ -1496,7 +1496,7 @@ public sealed partial class MainWindow : Window
             ComposerBox.Placeholder = "Message Jarvis";
         }
 
-        await ChatViewModel.SendMessageAsync(text, uploaded);
+        await ChatViewModel.SendMessageAsync(text, uploaded, imagePaths: paths.Where(ImageAttachmentService.IsImagePath).ToList());
     }
 
     private async void AttachFile_Click(object sender, RoutedEventArgs e)

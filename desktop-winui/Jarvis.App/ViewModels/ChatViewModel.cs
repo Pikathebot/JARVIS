@@ -101,7 +101,7 @@ public partial class ChatViewModel : ObservableObject
     }
 
     /// <param name="voiceRoute">Voice mode's route for a spoken turn ("chat" | "act"); null when typed.</param>
-    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null, string? voiceRoute = null)
+    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null, string? voiceRoute = null, List<string>? imagePaths = null)
     {
         var hasAttachments = attachments is { Count: > 0 };
         if (string.IsNullOrWhiteSpace(content) && !hasAttachments)
@@ -134,7 +134,7 @@ public partial class ChatViewModel : ObservableObject
             displayContent = $"Uploaded {attachments!.Count} file(s): {string.Join(", ", attachments.Select(a => a.Filename))}";
         }
         _lastUserPrompt = displayContent;
-        Messages.Add(new ChatMessage { Role = MessageRole.User, Content = displayContent });
+        Messages.Add(new ChatMessage { Role = MessageRole.User, Content = displayContent, ImagePaths = imagePaths ?? new List<string>() });
 
         var attachmentPayload = attachments?.Select(a => new Dictionary<string, object?>
         {

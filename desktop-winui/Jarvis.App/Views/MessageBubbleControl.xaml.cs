@@ -185,6 +185,7 @@ public sealed partial class MessageBubbleControl : UserControl
             case MessageRole.User:
                 UserRow.Visibility = Visibility.Visible;
                 UserText.Text = message.Content;
+                RenderUserImages(message);
                 break;
 
             default:
@@ -192,6 +193,34 @@ public sealed partial class MessageBubbleControl : UserControl
                 RenderAssistant(message);
                 break;
         }
+    }
+
+    /// <summary>The pictures sent with a user message, above its text. Rebuilt on every render,
+    /// since a recycled bubble may have held another message's images.</summary>
+    private void RenderUserImages(ChatMessage message)
+    {
+        UserImages.Children.Clear();
+        UserImages.Visibility = Visibility.Collapsed;
+        foreach (var path in message.ImagePaths)
+        {
+            try
+            {
+                var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path)) { DecodePixelWidth = 480 };
+                UserImages.Children.Add(new Border
+                {
+                    CornerRadius = (CornerRadius)Application.Current.Resources["RowCornerRadius"],
+                    MaxWidth = 240,
+                    MaxHeight = 240,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Child = new Image { Source = bitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform },
+                });
+            }
+            catch
+            {
+                // a file that has gone since it was sent: the text still says what was attached
+            }
+        }
+        if (UserImages.Children.Count > 0) UserImages.Visibility = Visibility.Visible;
     }
 
     /// <summary>A Freeform thread mark (PLAN 4.18): a day divider, an episode marker or a

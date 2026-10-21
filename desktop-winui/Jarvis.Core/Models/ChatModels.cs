@@ -86,6 +86,10 @@ public partial class ChatMessage : ObservableObject
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
 
+    /// <summary>Local paths of the images sent with a user message, shown as thumbnails in its
+    /// bubble. Live turns only: history reloaded from the backend has no local path to show.</summary>
+    public List<string> ImagePaths { get; set; } = new();
+
     /// <summary>The Freeform thread (PLAN 4.18): not a message but a mark in the transcript --
     /// a day divider, an episode marker or an episode's digest card. <see cref="MarkText"/> is
     /// its line, <see cref="MarkDetail"/> what the digest card opens to.</summary>

@@ -89,7 +89,10 @@
                     <MenuFlyoutItem Text="Copy message" Click="CopyMessage_Click" />
                 </MenuFlyout>
             </Border.ContextFlyout>
-            <TextBlock x:Name="UserText" Style="{StaticResource MessageText}" Foreground="{ThemeResource OnAccentBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+            <StackPanel Spacing="8">
+                <StackPanel x:Name="UserImages" Spacing="6" Visibility="Collapsed" />
+                <TextBlock x:Name="UserText" Style="{StaticResource MessageText}" Foreground="{ThemeResource OnAccentBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+            </StackPanel>
         </Border>
 
         <!-- Assistant message: no bubble, just text beside the mark, as long answers read best. -->
