@@ -2350,77 +2350,15 @@ cached app.js) -- is in `docs/MILESTONES.md`. Still open:
 - **Known limit:** when another device's turn arrives, the desktop reloads the thread and jumps to the end even if
   you were scrolled back reading.
 
-### 4.20 UI scaling across window sizes (raised by the user 2026-10-20) -- PLANNED, NOT BUILT
-The user: "the ui is not scaled properly for different variety of sizes". Snapshot 2026-10-20 19:32 (window
-2560x1528 px at 150%, Freeform thread open): the reading column and composer are fixed at 720 DIP, so on a wide
-window the transcript is a narrow strip in the middle of a ~1430 DIP slab, while the sidebar (fixed ~250 DIP) and
-the capsules keep one size at every width. Nothing adapts to the window's size or its DPI beyond that.
-To do: go through the main window, HUD, Settings, tray popup and sheets at several sizes (small/snapped ~1000x700,
-laptop default, maximised, 4K) and DPI scales (100/125/150/175%); with **screenshots of each** via
-`scripts/snapshot-window.ps1`, list what breaks (clipping, overlap, wasted space, text too small/large); then set
-breakpoints/proportional rules in the design system (AppLayout spec: column width from the window, sidebar
-collapse width, composer width tied to the column, type scale steps) before changing code. Also ask the user what
-"not loaded properly" looked like in the 19:32 shot (glass, layout and the thread rendered as expected there).
-**Fix found on the way (2026-10-20, built, NOT seen on device):** in the 19:32 shot the transcript column sat
-~230 DIP right of the composer (an older shot, before 4.17b, had them aligned). Cause, most likely: the scroll
-anchoring added for the follow-the-end fix (`VerticalAnchorRatio="1"`) also anchors horizontally by default and
-shifted the content sideways. `HorizontalAnchorRatio="NaN"` on `MessageScroll`, plus a backstop in
-`MainWindow.ChatScroll.cs` that resets any horizontal offset and logs "chat scroller had a horizontal offset"
-(if that line shows in the app log, the cause is confirmed and the backstop is what's holding it).
-**Not it** -- the 19:4x build had that fix, no offset was logged and the column was still ~116 DIP right. The
-column is exactly 720 DIP but centred in a slot ~232 DIP wider than the viewport: the ItemsRepeater (4.17b, for
-text copy) laid out inside the ScrollViewer, which the ListView never did. Now placed in code
-(`PlaceChatColumn`: width min(720, viewport), left margin = half the rest; MaxWidth/centring dropped), and the
-first layout of each run logs "chat column: scroller/viewport/extent/hoffset, list at x, composer at x" to
-jarvis-app.log -- read it after the next start to confirm the list and the composer now share their x.
-**Seen fixed on device 2026-10-20 19:48** (user: "it looks correct now"; log: list and composer both at x 24, width
-515 at the startup size). Same restart: the "actively refused" error is gone too -- Freeform's first thread load
-ran before the backend listened (phase 4 regression); it now logs quietly and `OnBackendCameOnline` reloads it.
-**Pass 1, 2026-10-20 ~21:00 (main window; display at 150%, so 960-2240 px = 640-1493 DIP; changing the scale is a
-system setting, left to the user).** `size_sweep.ps1` (scratch) resized the window to 960x640, 1280x800, 1600x960,
-1920x1080, 2240x1360, snapshotted each, and restored it. Fine at >= 1600: sidebar, chat, inspector side by side,
-the column centred over the composer. Broken: (1) 1280: sidebar docked + inspector *floating* over the chat, the
-transcript printing through its glass (XAML is always above the glass); (2) 960: sidebar compact (correct) but the
-same floating-inspector bleed; (3) every size: the awareness toast (VRAM high) sat over the reply's last lines.
-Fixes (built, NOT seen on device): an open inspector outranks the docked sidebar -- when both don't fit beside the
-chat but the inspector alone does, the sidebar goes compact and the inspector docks; anything still floating over
-the chat (compact sidebar opened, inspector at very narrow widths) clips the chat's content beneath it
-(`UpdateChatClip`, SurfaceContent.Clip); the transcript gets bottom padding the toast's height while one shows, so
-it ends above the toast. Still to sweep: Settings window, sheets (New workspace), the tray popup, the HUD; and
-other DPI scales (100/125/175%) by the user.
-**Pass 2 (after restart, inspector open): fixed, seen in the app's own snapshots.** 1280: sidebar compact, inspector
-docked, chat ~440 DIP, nothing overlapping; 960: inspector floats (no room) and the chat is clipped cleanly at its
-edge; 1600+: unchanged (all docked). The toast padding wasn't exercised (no toast showed). Open question for the
-user: the toolbar band between the capsules is transparent, so the window behind shows through *unblurred* (Discord's
-"THALAPATHY_27's server" and its icons sat between the capsules at every width) -- keep, or give the band glass/frost?
-**Toolbar band (user chose "give the band glass", 2026-10-20; snapshot-verified at 960-2240 px: frosted, layer 1,
-capsules on 2).** `ToolbarBand`: a Regular-glass
-strip, 40 px, radius 20, from the sidebar's edge to the window's, behind the capsules, no hit-testing; the capsules
-move one layer up (`GlassLayers.ToolbarCapsule = 2`) so they refract the band instead of sharing its layer.
-Design system AppLayout amended (band + width rules), v17.
-It showed during the startup card (user, 10-20): it wasn't in `StartupPanels`; now it materialises with the panels
-(user confirmed gone, 10-20).
-**Band removed 2026-10-21 (user: "it looks odd... either remove it or enhance it"; built, snapshot-verified, user:
-"for now good" 10-21; docked inspector and narrow widths not looked at).** A pill over a slab of the same width, 8 DIP apart, read as three pieces of glass. Now
-`MessagesSlab` spans the caption row too (`Grid.RowSpan=2`, `Padding` top 40, so the transcript still starts below the
-capsules), the toolbar capsules float on its top edge (layer 2, `Canvas.ZIndex=1` so the slab never takes their
-clicks), and a docked inspector also runs to the top (margin 0, padding 40) so the caption buttons sit on its glass.
-A floating inspector still starts at 48. Design system AppLayout item 2 + preview amended, v25.
+### 4.20 UI scaling across window sizes -- DONE 2026-10-20 (moved to `docs/MILESTONES.md`)
 
-**Window sizes are DIPs (2026-10-20).** `AppWindow.Resize` / `PreferredMinimumWidth` take *physical* pixels, so at the
-user's 150% Settings' 760x520 minimum was 507x347 DIPs: the Theme segmented spilled out of its card, labels clipped
-("Show or hide the H"). The main window's 420 minimum was 280 DIPs, under the chat's own 360 floor. `WindowSizing`
-(Jarvis.App) scales DIP sizes by the window's DPI and re-applies the minimum when the window lands on a monitor with
-another scale; first-open sizes are capped at 90% of the work area. Snapshot-verified: Settings opens 1500x1080, stops
-at 1140x780 and General fits there. Other Settings pages at the minimum, and the main window's minimum, not looked at.
-Design system AppLayout v18.
-Tray popup: already DPI-scaled (320 DIPs wide, content height); snapshot at 150% fine. HUD left as is (user: no use
-case for it right now; still sized 460x108 *pixels*).
-**New workspace sheet** (snapshots 10-20): a fixed `Width="460"` (+ content `MinWidth="380"`) in a window that may
-now be 420 DIPs wide -- at the minimum it ran edge to edge, labels clipped on the left ("nstructions"), its close
-button under the traffic lights, Create cut off. Now `MaxWidth="460"`, stretched, `Margin="16,56,16,16"` (clear of
-the caption row). Snapshot-verified at 630, 960 and 1920 px. The alert text faintly visible through a sheet is the deliberate 8%
-backdrop fade, not a bug. Design system v19.
+Main window, Settings and the New workspace sheet fixed across sizes at 150% (record in `docs/MILESTONES.md`).
+Never checked:
+- Other display scales (100 / 125 / 175%): a Windows setting, for the user to switch.
+- The other Settings pages at the minimum window size, and the main window's own minimum.
+- Since the top-edge change (10-21): the docked inspector and narrow widths.
+- The awareness toast's bottom padding (no toast showed during the sweep).
+- The HUD is still sized in pixels (left as is: the user has no use case for it right now).
 
 ### 4.21 A small model on the phone and iPad, for when the PC is off (raised by the user 2026-10-21) -- IDEA, for when the app is nearly finished
 The user: run a small LLM on the iPad Pro M1 and the CMF Phone 1 to answer simple questions about the day's tasks.
