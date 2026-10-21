@@ -1,7 +1,7 @@
 /* The app shell, so the installed app opens (and says it can't reach the PC) while the laptop is
    asleep. Network first, so a new build shows on the next open; the API is never cached. */
-const SHELL = "jarvis-m-v3";
-const FILES = ["./", "index.html", "app.css?v=3", "app.js?v=3", "manifest.webmanifest", "icons/jarvis-mark.svg"];
+const SHELL = "jarvis-m-v4";
+const FILES = ["./", "index.html", "app.css?v=3", "app.js?v=4", "manifest.webmanifest", "icons/jarvis-mark.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

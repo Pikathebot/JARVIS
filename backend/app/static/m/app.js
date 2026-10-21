@@ -990,8 +990,11 @@ async function setNotify(want) {
       // Must follow the tap directly: iOS only asks from a user gesture.
       if (await Notification.requestPermission() !== "granted") { notifyOn = false; return paintNotify(); }
       const key = (await getJson("/api/remote/push/key")).public_key;
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
+      // The server has none for this device (never on, or it dropped a dead one with 404/410), so any
+      // subscription the browser still holds is stale -- reusing it is what kept answering "refused".
+      const old = await reg.pushManager.getSubscription();
+      if (old) await old.unsubscribe().catch(() => {});
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
       const res = await api("/api/remote/push", { method: "POST", body: sub.toJSON() });
       notifyOn = res.ok;
       paintNotify(res.ok ? null : "Couldn't turn them on. Try again.");
