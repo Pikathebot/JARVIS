@@ -148,6 +148,15 @@ public sealed class GovernorTelemetry
     public GovernorThresholds Thresholds { get; set; } = new();
 }
 
+/// <summary>POST /models/warm: "ready", "loading", or "held" with a reason (Game mode, voice
+/// mode, a busy PC). It never waits for the load.</summary>
+public sealed class WarmModelResponse
+{
+    public string State { get; set; } = "";
+    public string? Reason { get; set; }
+    public string? Model { get; set; }
+}
+
 public sealed class UnloadResponse
 {
     public bool Success { get; set; }

@@ -721,10 +721,21 @@
                         <TextBlock x:Name="PopoverFastModel" Text="—" Style="{StaticResource SecondaryFootnoteText}" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </Border>
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,14,0,0">
-                    <glass:GlassButton Text="Free VRAM" Click="FreeVram_Click" />
-                    <glass:GlassButton Text="Models…" Click="StatusModels_Click" />
-                </StackPanel>
+                <!-- Two rows: three buttons abreast cut every label short in 288 DIP (user, 10-21). -->
+                <Grid ColumnSpacing="8" RowSpacing="8" Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- Load model: starts the chat model now, without sending anything (MainWindow.ModelWarm.cs). -->
+                    <glass:GlassButton x:Name="LoadModelButton" Text="Load model" Click="LoadModel_Click" HorizontalAlignment="Stretch" />
+                    <glass:GlassButton Grid.Column="1" Text="Free VRAM" Click="FreeVram_Click" HorizontalAlignment="Stretch" />
+                    <glass:GlassButton Grid.Row="1" Grid.ColumnSpan="2" Text="Models…" Click="StatusModels_Click" HorizontalAlignment="Stretch" />
+                </Grid>
             </StackPanel>
         </glass:GlassSlab>
 

@@ -1308,7 +1308,11 @@ public sealed partial class MainWindow : Window
 
     private async void MicButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!VoiceViewModel.IsActive) await VoiceViewModel.StartAsync();
+        if (!VoiceViewModel.IsActive)
+        {
+            WarmModelSoon(); // talking is about to start: load the model meanwhile
+            await VoiceViewModel.StartAsync();
+        }
         else VoiceViewModel.Stop();
         UpdateVoiceStateText();
     }

@@ -229,6 +229,8 @@ REMOTE_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"/api/remote/push/key"),
         ("POST", r"/api/remote/push(/test)?"),
         ("DELETE", r"/api/remote/push"),
+        ("POST", r"/api/remote/(transcribe|say)"),  # the phone's mic and spoken replies (phase 3)
+        ("POST", r"/models/warm"),  # load the chat model ahead of a message (main only, no arguments)
     )
 )
 # Reachable without a token: the app itself (so an unpaired phone can show the pairing screen)

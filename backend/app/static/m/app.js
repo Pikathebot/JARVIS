@@ -38,10 +38,11 @@ class Unpaired extends Error {}
 const CLIENT_ID = `m-${Math.random().toString(36).slice(2, 10)}`;
 
 async function api(path, { method = "GET", body, signal } = {}) {
+  const form = body instanceof FormData;  // an upload sets its own multipart type
   const res = await fetch(path, {
     method, signal, cache: "no-store",
-    headers: { "X-Jarvis-Client": CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
+    headers: { "X-Jarvis-Client": CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body && !form ? { "Content-Type": "application/json" } : {}) },
+    body: form ? body : body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) throw new Unpaired();
   return res;
@@ -408,7 +409,7 @@ let confirmTimeout = 90;
 
 const input = $("input");
 function autosize() { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
-input.addEventListener("input", autosize);
+input.addEventListener("input", () => { autosize(); warmModel(); });
 input.addEventListener("keydown", (e) => {
   // A hardware keyboard (iPad): Enter sends, Shift+Enter breaks the line. On-screen keyboards
   // send with the button.
@@ -430,20 +431,177 @@ function setStreaming(on) {
   btn.setAttribute("aria-label", on ? "Stop" : "Send");
 }
 
+/** A message of ours: typed, or spoken (then the answer is spoken back too). */
+function sendMessage(text, spoken = false) {
+  if (mic.classList.contains("speaking")) stopSpeaking();
+  const d = dayLabel(Date.now() / 1000);
+  if (d !== lastDay) { transcript.append(el("div", "day touch-footnote", d)); lastDay = d; }
+  const armed = transcript.querySelector(".mark.armed");
+  if (armed) { armed.classList.remove("armed"); armed.textContent = `New topic · ${clock(Date.now() / 1000)}`; }
+  transcript.append(el("div", "user touch-message", text));
+  lastPrompt = text; lastSpoken = spoken;
+  runTurn(text, null, spoken);
+}
+
 $("composer").addEventListener("submit", (e) => {
   e.preventDefault();
   if (streaming) { streaming.abort(); return; }
   const text = input.value.trim();
   if (!text) return;
   input.value = ""; autosize();
-  const d = dayLabel(Date.now() / 1000);
-  if (d !== lastDay) { transcript.append(el("div", "day touch-footnote", d)); lastDay = d; }
-  const armed = transcript.querySelector(".mark.armed");
-  if (armed) { armed.classList.remove("armed"); armed.textContent = `New topic · ${clock(Date.now() / 1000)}`; }
-  transcript.append(el("div", "user touch-message", text));
-  lastPrompt = text;
-  runTurn(text, null);
+  sendMessage(text);
 });
+
+// ---- voice from the phone's mic (PLAN 4.19 phase 3) ----
+// Tap the mic and speak: it stops on its own after a moment of quiet (or on a second tap), the
+// PC's Whisper turns the recording into words (/api/remote/transcribe) and they go out as an
+// ordinary message. A message asked by voice is answered aloud as well, in Jarvis's voice made on
+// the PC (/api/remote/say); a tap on the mic stops it.
+const mic = $("mic");
+const SILENCE_MS = 1200, NO_SPEECH_MS = 6000, MAX_MS = 60000;
+// Chrome on Android records WebM/Opus, Safari on iPad MP4/AAC; Whisper on the PC reads both.
+const REC_TYPES = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"];
+const player = new Audio();
+let rec = null;                    // the recording in progress
+let lastSpoken = false;            // the last message was spoken: an approval's answer is spoken too
+
+// iOS plays audio only from a tap: the mic tap plays this silent clip once, after which the
+// player may play the reply when it arrives seconds later.
+const SILENT_WAV = (() => {
+  const b = new Uint8Array(46), v = new DataView(b.buffer);
+  const s = (o, t) => [...t].forEach((c, i) => { b[o + i] = c.charCodeAt(0); });
+  s(0, "RIFF"); v.setUint32(4, 38, true); s(8, "WAVE"); s(12, "fmt "); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 16000, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, "data"); v.setUint32(40, 2, true);
+  return `data:audio/wav;base64,${btoa(String.fromCharCode(...b))}`;
+})();
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  player.src = SILENT_WAV;
+  player.play().then(() => { player.pause(); audioUnlocked = true; }).catch(() => { /* tried again next tap */ });
+}
+
+const MIC_LABEL = { idle: "Speak a message", rec: "Stop and send", busy: "Transcribing", speaking: "Stop speaking" };
+function micState(state, note) {
+  mic.className = state === "idle" ? "mic" : `mic ${state}`;
+  mic.replaceChildren(icon(state === "busy" ? "sync" : state === "speaking" ? "stop" : "mic", "i"));
+  mic.setAttribute("aria-label", MIC_LABEL[state]);
+  $("composer").classList.toggle("listening", state === "rec" || state === "busy");
+  input.placeholder = note || (state === "rec" ? "Listening…" : state === "busy" ? "Transcribing…" : "Message Jarvis");
+  if (note) setTimeout(() => { if (mic.className === "mic" && input.placeholder === note) input.placeholder = "Message Jarvis"; }, 3000);
+  if (state !== "rec") mic.style.removeProperty("--level");
+}
+
+async function startListening() {
+  unlockAudio();
+  warmModel();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    micState("idle", e && e.name === "NotAllowedError" ? "Microphone blocked: allow it for Jarvis in this device's settings" : "No microphone available");
+    return;
+  }
+  const type = REC_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+  // A level meter decides when you've finished: speech is well above the room's own noise
+  // (its floor, learnt as we go); after speech, this long a quiet ends the message.
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  const t0 = performance.now();
+  let floor = null, heard = false, quietSince = null;
+  const r = rec = { recorder, raf: 0, send: false, note: null, stopping: false };
+  const loop = () => {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const x of buf) sum += x * x;
+    const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    floor = floor == null ? rms : Math.min(rms, floor * 1.002 + 1e-5);
+    if (rms > Math.max(0.015, floor * 3)) { heard = true; quietSince = null; }
+    else if (heard && quietSince == null) quietSince = now;
+    mic.style.setProperty("--level", Math.min(1, rms * 12).toFixed(2));
+    if (heard && quietSince != null && now - quietSince > SILENCE_MS) return stopListening(true);
+    if (!heard && now - t0 > NO_SPEECH_MS) return stopListening(false, "Didn't hear anything");
+    if (now - t0 > MAX_MS) return stopListening(true);
+    r.raf = requestAnimationFrame(loop);
+  };
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    ctx.close().catch(() => {});
+    rec = null;
+    if (!r.send) { micState("idle", r.note); return; }
+    transcribeAndSend(new Blob(chunks, { type: recorder.mimeType || type || "audio/webm" }));
+  };
+  recorder.start();
+  micState("rec");
+  r.raf = requestAnimationFrame(loop);
+}
+
+function stopListening(send, note) {
+  if (!rec || rec.stopping) return;
+  rec.stopping = true; rec.send = send; rec.note = note || null;
+  cancelAnimationFrame(rec.raf);
+  if (rec.recorder.state !== "inactive") rec.recorder.stop();
+}
+
+async function transcribeAndSend(blob) {
+  micState("busy");
+  const ext = /mp4|aac/.test(blob.type) ? "mp4" : /ogg/.test(blob.type) ? "ogg" : "webm";
+  const form = new FormData();
+  form.append("file", blob, `message.${ext}`);
+  try {
+    const res = await api("/api/remote/transcribe", { method: "POST", body: form });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setOffline(false);
+    const { text } = await res.json();
+    if (!text) { micState("idle", "Didn't catch that. Try again"); return; }
+    micState("idle");
+    // A reply still streaming: the words wait in the field rather than stopping it.
+    if (streaming) { input.value = text; autosize(); return; }
+    sendMessage(text, true);
+  } catch (e) {
+    if (e instanceof Unpaired) { micState("idle"); showPairing("This device was removed on your PC. Pair it again."); return; }
+    setOffline(true);
+    micState("idle", "Couldn't reach your PC");
+  }
+}
+
+async function speak(text) {
+  try {
+    const res = await api("/api/remote/say", { method: "POST", body: { text } });
+    if (!res.ok) return;
+    const d = await res.json();
+    if (!d.audio_base64 || rec || mic.classList.contains("busy")) return;  // never talk over a new message
+    player.src = `data:${d.audio_mime || "audio/mpeg"};base64,${d.audio_base64}`;
+    player.onended = player.onerror = () => { if (mic.classList.contains("speaking")) micState("idle"); };
+    micState("speaking");
+    await player.play();
+  } catch {
+    if (mic.classList.contains("speaking")) micState("idle");
+  }
+}
+function stopSpeaking() { player.pause(); player.removeAttribute("src"); micState("idle"); }
+
+mic.addEventListener("click", () => {
+  if (mic.classList.contains("speaking")) { stopSpeaking(); return; }
+  if (mic.classList.contains("busy")) return;
+  if (rec) { stopListening(true); return; }
+  startListening();
+});
+// Leaving the app drops a recording in progress and stops speaking.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden") return;
+  if (rec) stopListening(false);
+  if (mic.classList.contains("speaking")) stopSpeaking();
+});
+mic.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
 /** Reads an SSE response body (fetch: EventSource can't POST or send a token) frame by frame. */
 async function readSse(res, onFrame) {
@@ -499,13 +657,13 @@ function turnView(turn, own) {
         if (d.opened) { transcript.insertBefore(markFor(null, Date.now() / 1000), turn.node.previousSibling || turn.node); loadEpisodes(); }
         break;
       case "confirmation_required":
-        view.ended = true;
+        view.ended = true; view.outcome = "approval";
         text = d.response || text; paint();
         if (own) showApproval(turn, d.pending_confirmations || []);
         else showForeignApproval(turn, d.pending_confirmations || []);
         break;
       case "done":
-        view.ended = true;
+        view.ended = true; view.outcome = "done";
         if (d.response) { text = d.response; paint(); }
         if (d.model && d.model !== "none") turn.col.append(el("div", "data meta", d.model));
         break;
@@ -524,8 +682,8 @@ function turnView(turn, own) {
   return view;
 }
 
-/** One /chat/stream call of our own. */
-async function runTurn(message, approvedIds) {
+/** One /chat/stream call of our own; ``spoken``: asked by voice, so the answer is spoken too. */
+async function runTurn(message, approvedIds, spoken = false) {
   const turn = assistantTurn();
   transcript.append(turn.node);
   toBottom();
@@ -555,6 +713,8 @@ async function runTurn(message, approvedIds) {
     view.finish();
     streaming = null; setStreaming(false);
     catchUp({ adoptOnly: true });   // our own turn is already on screen
+    // An approval card waits silently; its answer is spoken once allowed (lastSpoken).
+    if (spoken && view.outcome === "done" && view.text.trim()) speak(view.text);
   }
 }
 
@@ -671,7 +831,7 @@ function showApproval(turn, pending) {
     if (streaming) return;
     finish("Allowed");
     pending.forEach((p) => p._row.setStatus("running"));
-    runTurn(lastPrompt || "yes", ids);
+    runTurn(lastPrompt || "yes", ids, lastSpoken);
   });
   deny.addEventListener("click", async () => {
     finish("Denied");
@@ -719,7 +879,34 @@ function paintStatus() {
   $("st-gov-cap").textContent = !s ? "—" : s.game_mode ? "Paused while Game mode is on"
     : s.governor_auto ? "Auto · yields VRAM to other apps" : "Off · ignores load, never unloads";
   $("st-game-cap").textContent = !s ? "—" : s.game_mode ? "On · the model stays unloaded" : "Off · turn on before a game starts";
+
+  if (modelReady()) warmState = null;
+  const load = $("load-model"), note = $("load-note");
+  const loading = (s && s.governor_status === "LOADING") || (warmState && warmState.state === "loading" && Date.now() - warmAt < 120000);
+  load.hidden = !s || !!s.game_mode || modelReady();
+  load.disabled = !!loading;
+  load.textContent = loading ? "Loading…" : "Load model";
+  note.hidden = !(warmState && warmState.state === "held");
+  note.textContent = note.hidden ? "" : `Not now: ${warmState.reason}.`;
 }
+
+// ---- loading the model ahead of a message (/models/warm) ----
+// The Load model button, and the first keystroke or mic tap: the PC starts loading in the
+// background, so the model is mostly ready by the time the message goes. It never waits or
+// overrides: Game mode, voice mode or a busy PC hold it, and the message itself tries again.
+let warmAt = 0, warmState = null;
+function modelReady() { return !!(status && status.model && !status.model_unloaded); }
+async function warmModel(fromButton = false) {
+  if (!fromButton && (!status || modelReady() || Date.now() - warmAt < 20000)) return;
+  warmAt = Date.now();
+  try {
+    const res = await api("/models/warm", { method: "POST" });
+    if (!res.ok) return;
+    warmState = await res.json();
+    if (fromButton) { paintStatus(); setTimeout(pollStatus, 1500); }
+  } catch { /* the message itself will load it */ }
+}
+$("load-model").addEventListener("click", () => warmModel(true));
 // meter-high past the soft limit (StatusPopover: VRAM 88%, GPU 90%), meter-critical at the
 // governor's eviction line.
 function meter(bar, pct, soft, evict) {

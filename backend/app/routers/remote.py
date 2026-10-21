@@ -2,10 +2,14 @@
 
 Desktop-only (the remote port answers 404): ``GET/POST /api/remote/pairing`` (the code, its QR and
 the address the phone opens), ``GET /api/remote/devices``, ``DELETE /api/remote/devices/{id}``.
-From the phone: ``POST /api/remote/pair`` (no token yet) and ``GET /api/remote/me``.
+From the phone: ``POST /api/remote/pair`` (no token yet), ``GET /api/remote/me``, and its voice:
+``POST /api/remote/transcribe`` (a recorded message to words) and ``POST /api/remote/say`` (a reply to
+audio).
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import logging
 import re
@@ -14,7 +18,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -217,6 +221,66 @@ def push_test(request: Request) -> dict[str, Any]:
     if result not in (200, 201, 202):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"The push service refused it ({result}).")
     return {"sent": True}
+
+
+# ---- voice from the phone (PLAN 4.19 phase 3) -----------------------------------------------------
+
+_MAX_CLIP_BYTES = 8 * 1024 * 1024  # minutes of Opus/AAC; a spoken message is seconds
+_CLIP_FORMATS = {"webm", "ogg", "mp4", "m4a", "aac", "wav", "mp3"}
+
+
+def _clip_format(file: UploadFile) -> str:
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext in _CLIP_FORMATS:
+        return ext
+    sub = (file.content_type or "").split(";")[0].split("/")[-1].lower()  # "audio/mp4;codecs=..." -> mp4
+    return sub if sub in _CLIP_FORMATS else "webm"
+
+
+@router.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)) -> dict[str, Any]:
+    """The phone's mic: one whole recorded message to text, with the PC's Whisper. Only the words
+    come back; the phone sends them as an ordinary remote chat turn, so the stricter gate applies
+    and no wake word, hands-free state or voice-mode routing is involved -- that machinery is the
+    desktop's own (/api/voice/listen), and a phone message must not move it."""
+    from app.routers.voice import get_transcriber
+
+    data = await file.read(_MAX_CLIP_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty recording.")
+    if len(data) > _MAX_CLIP_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Recording too long.")
+    # Whisper is synchronous and takes a second or more: off the event loop, so the phone's own
+    # stream and the desktop keep moving meanwhile.
+    result = await asyncio.to_thread(get_transcriber().transcribe_audio_bytes, data, _clip_format(file))
+    return {
+        "text": (result.get("text") or "").strip(),
+        "duration_seconds": result.get("duration_seconds") or 0.0,
+        "error": result.get("error"),
+    }
+
+
+class SayRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=8000)
+
+
+@router.post("/say")
+async def say(body: SayRequest) -> dict[str, Any]:
+    """A reply as the persona would say it, in its voice, made on the PC (the phone has no Kokoro):
+    the spoken text and MP3 audio. Unlike /api/voice/say it leaves the desktop's voice state alone."""
+    from app.persona import persona_manager
+    from app.routers.voice import get_synthesizer
+
+    persona = persona_manager.get_active()
+    spoken = persona.shape_for_speech(body.text)
+    if not spoken:
+        return {"spoken_text": "", "audio_base64": "", "audio_mime": "audio/mpeg"}
+    audio = await get_synthesizer().generate_neural_audio_bytes(spoken, voice=persona.voice_id)
+    return {
+        "spoken_text": spoken,
+        "audio_base64": base64.b64encode(audio).decode("ascii") if audio else "",
+        "audio_mime": "audio/mpeg",
+    }
 
 
 @router.get("/me")

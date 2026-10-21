@@ -637,8 +637,22 @@ app.include_router(remote_router)
 # before CORS and everything else.
 app.add_middleware(RemoteGateMiddleware, remote_port=settings.remote_port)
 _MOBILE_DIR = Path(__file__).resolve().parent / "static" / "m"
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """The phone app's files, each checked with the PC on every load (a 304 when unchanged).
+    Without a Cache-Control header a browser may keep reusing an old app.js under a new
+    index.html: Android showed phase 3's mic button with the previous script, so a tap did
+    nothing (2026-10-21)."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if _MOBILE_DIR.is_dir():
-    app.mount("/m", StaticFiles(directory=_MOBILE_DIR, html=True), name="mobile")
+    app.mount("/m", _RevalidatedStaticFiles(directory=_MOBILE_DIR, html=True), name="mobile")
 
 
 
@@ -1138,6 +1152,45 @@ async def load_model_endpoint(req: Optional[LoadModelRequest] = None):
     }
 
 
+
+
+_warm_task: Optional[asyncio.Task] = None
+
+
+async def _warm_main() -> None:
+    try:
+        async with governor.activity(ActivityType.MODEL_LOADING, label="main"):
+            await get_runtime_process_manager().ensure_running("main")
+    except Exception as exc:  # the first message will try again, and say why
+        logger.info("Model warm-up didn't load: %s", exc)
+
+
+@app.post("/models/warm")
+async def warm_model() -> dict[str, Any]:
+    """Start loading the chat model now, without waiting for it: the clients' Load model button,
+    and their first keystroke or mic tap (user, 2026-10-21: "so i wont need to send a message
+    everytime to load the model"). Returns at once with ``state``: ``ready`` (something is
+    already serving), ``loading``, or ``held`` with a ``reason`` (Game mode, voice mode, or the
+    governor saying the PC is busy: a warm-up never waits or overrides, unlike a sent message)."""
+    global _warm_task
+    if _warm_task is not None and not _warm_task.done():
+        return {"state": "loading"}
+    if game_mode.active:
+        return {"state": "held", "reason": "Game mode is on"}
+    from app.voice.voice_mode import get_voice_mode
+
+    mode = get_voice_mode()
+    if mode.enabled or mode.busy:
+        return {"state": "held", "reason": "Voice mode manages the models"}
+    pm = get_runtime_process_manager()
+    if pm.current_model_kind and await pm.health_check(timeout=1.0):
+        return {"state": "ready", "model": pm.current_model_kind}
+    if settings.governor_enabled:
+        healthy, reason = await governor.wait_until_healthy(timeout_seconds=0)
+        if not healthy:
+            return {"state": "held", "reason": reason or "The PC is busy"}
+    _warm_task = asyncio.create_task(_warm_main())
+    return {"state": "loading"}
 
 
 def resolve_project_id(requested: Optional[str]) -> Optional[str]:

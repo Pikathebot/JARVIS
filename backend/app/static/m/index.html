@@ -14,7 +14,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/jarvis-mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="app.css">
+<!-- ?v= bumps with the shell (sw.js): a phone holding an older copy fetches the new one. -->
+<link rel="stylesheet" href="app.css?v=3">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -33,6 +34,7 @@
 <symbol id="i-game" viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 014 4v1a3 3 0 01-5.3 1.9L14.5 14h-5l-1.2.9A3 3 0 013 13v-1a4 4 0 014-4z"/><path d="M8 10.5v3M6.5 12h3"/></symbol>
 <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5l7 2.5v5.5c0 4.3-3 7.7-7 9-4-1.3-7-4.7-7-9V6z"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0013 0M12 18v2.5"/></symbol>
 <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0111 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2 2 0 004 0"/></symbol>
 </defs></svg>
 
@@ -84,6 +86,7 @@
       <button class="chip touch-footnote" id="new-topic" aria-pressed="false"><svg class="i s"><use href="#i-add"/></svg>New topic</button>
       <form class="comp glass reg" id="composer">
         <textarea id="input" class="f touch-message" rows="1" placeholder="Message Jarvis" enterkeyhint="send" aria-label="Message"></textarea>
+        <button class="mic" id="mic" type="button" aria-label="Speak a message"><svg class="i"><use href="#i-mic"/></svg></button>
         <button class="send" id="send" type="submit" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
       </form>
       <div class="cap touch-caption">Runs on your PC · risky steps ask here first</div>
@@ -96,6 +99,8 @@
     <div class="grab"></div>
     <div class="sh-head"><svg class="i" id="st-icon"><use href="#i-sync"/></svg><span class="touch-headline" id="st-model">—</span><span class="touch-footnote" id="st-word"></span></div>
     <div class="touch-footnote sub" id="st-detail"></div>
+    <button class="loadbtn touch-body" id="load-model" type="button" hidden>Load model</button>
+    <div class="touch-footnote sub" id="load-note" hidden></div>
     <div class="k touch-footnote"><span>VRAM</span><span class="data" id="st-vram">—</span></div><div class="bar"><i id="st-vram-bar"></i></div>
     <div class="k touch-footnote"><span id="st-gpu-label">GPU</span><span class="data" id="st-gpu">—</span></div><div class="bar"><i id="st-gpu-bar"></i></div>
     <div class="sw"><svg class="i sub"><use href="#i-shield"/></svg><div class="tx"><div class="touch-body">Governor</div><div class="touch-footnote sub" id="st-gov-cap"></div></div>
@@ -108,6 +113,6 @@
   </section>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

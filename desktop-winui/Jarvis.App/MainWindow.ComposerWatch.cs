@@ -18,7 +18,7 @@ public sealed partial class MainWindow
 
     private void SetUpComposerWatch()
     {
-        ComposerBox.InputKeyDown += (_, _) => _composerKeyAt = DateTime.UtcNow;
+        ComposerBox.InputKeyDown += (_, _) => { _composerKeyAt = DateTime.UtcNow; WarmModelSoon(); };
     }
 
     private bool IsTypingInComposer() =>

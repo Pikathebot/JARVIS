@@ -121,6 +121,10 @@ public sealed class JarvisApiClient
     public Task<UnloadResponse> UnloadModelsAsync(CancellationToken ct = default) =>
         PostAsync<object?, UnloadResponse>("/models/unload", null, ct);
 
+    /// <summary>Start loading the chat model in the background (Load model, first keystroke).</summary>
+    public Task<WarmModelResponse> WarmModelAsync(CancellationToken ct = default) =>
+        PostAsync<object?, WarmModelResponse>("/models/warm", null, ct);
+
     /// <summary>Every local GGUF, recommended (top-level) ones first — the backend's ordering is
     /// meaningful, so callers should preserve it rather than re-sorting.</summary>
     public Task<ModelCatalogResponse> FetchModelCatalogAsync(CancellationToken ct = default) =>

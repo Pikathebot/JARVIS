@@ -2386,6 +2386,32 @@ Verified: `test_remote_push.py` (18), a dry-run push built with real keys (heade
 "it came"). Refusals now log the service's body. **Android works too** (user, 10-21). **Away-from-PC
 reminder end to end works** (10-21: a one-off message routine fired with the PC left alone; user: "it reached").
 Phase 2 DONE, DEVICE-VERIFIED.
+**Phase 3 BUILT 2026-10-21 (voice from the phone; NOT seen on a phone).** Decided with the user: tap, talk,
+auto-send; a voice question is answered aloud, typed ones stay silent. Backend (`routers/remote.py`, both in
+`REMOTE_ROUTES`): `POST /api/remote/transcribe` (multipart clip -> words only, the PC's Whisper off the event loop;
+no wake word, hands-free state or voice-mode routing -- `/api/voice/listen` stays desktop-only) and
+`POST /api/remote/say` (persona speech shaping + Kokoro MP3, leaves the desktop's voice state alone). Phone
+(`static/m/`): a mic button in the composer; MediaRecorder (WebM/Opus on Android, MP4/AAC on iPad) with a level meter
+that stops after 1.2 s quiet once speech was heard (6 s with none: cancelled, 60 s cap); the words go out through the
+same send path (same bubble, same stricter gate); a `done` voice turn is spoken (an approval's answer once allowed);
+the mic tap plays a silent clip so iOS lets the reply play later. Shell cache v3; design system Mobile v26.
+Verified: `test_remote_voice.py` (8) + test_remote (25 together); live on :8000, Kokoro -> MP3 -> Whisper round trip
+gave "Set the volume to 30 and open Spotify." (2.1 s warm for 3.5 s); :8005 gives 401 without a token and still 404s
+`/api/voice/listen`; composer idle/listening states seen in a phone-width browser.
+**On device 10-21:** the iPad's mic worked first time (an MP4 clip transcribed and answered). Android showed the mic
+but a tap did nothing: `/m/` was served with no Cache-Control, so Chrome kept the old app.js under the new index.html.
+Now `/m/` is `Cache-Control: no-cache` (`_RevalidatedStaticFiles` in main.py) and index.html loads `app.css?v=3` /
+`app.js?v=3`; after that **the Android mic works** (user). **Phase 3 DONE, DEVICE-VERIFIED** (user: "the phone
+voice works").
+**Load the model without sending a message (user, 10-21; built, live-checked, DEVICE-VERIFIED: "Load model ... works").**
+`POST /models/warm` (main.py, also in `REMOTE_ROUTES`): starts the main model in the background and returns at once
+-- `ready` (something serves), `loading` (one load; repeats join it), or `held` with a reason (Game mode, voice mode,
+the governor not healthy -- checked without waiting). User chose "when you start typing" over loading at startup:
+the desktop composer's first keystroke and the mic (throttled to one call per 20 s, `MainWindow.ModelWarm.cs`), the
+phone's input and mic tap, plus a **Load model** button (desktop popover; phone sheet while nothing is loaded).
+Live: not loaded -> serving in 5 s with no message. The popover's three buttons abreast truncated every label (user);
+now Load model | Free VRAM, then Models… full width (snapshot-checked). `test_model_warm.py` (6); 1243 pass.
+Design system: StatusPopover + Mobile amended.
 **Phases:** (1) chat in the Freeform thread: streaming, tool steps, approval cards as Allow/Deny, the stricter
 remote gate, pairing; plus the status strip (model, VRAM) and Game mode / Governor -- cheap, the endpoints exist.
 (2) Notifications: ambient remarks and routine reminders as web push (VAPID; service worker). (3) Voice from the
