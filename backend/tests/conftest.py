@@ -34,6 +34,7 @@ os.environ.setdefault("JARVIS_BRIEFING_STATE", os.path.join(os.path.dirname(_TES
 # No second listener during tests; paired devices in a temp file (PLAN 4.19).
 os.environ.setdefault("REMOTE_PORT", "0")
 os.environ.setdefault("JARVIS_REMOTE_DEVICES_PATH", os.path.join(os.path.dirname(_TEST_DB), "remote.json"))
+os.environ.setdefault("JARVIS_REMOTE_VAPID_PATH", os.path.join(os.path.dirname(_TEST_DB), "remote_vapid.pem"))
 
 import pytest
 from unittest.mock import patch
@@ -54,3 +55,4 @@ def ensure_test_healthy_governor(request):
     with patch("app.main.governor.wait_until_healthy", return_value=(True, None)), \
          patch("app.main.governor.is_throttled", return_value=(False, None)):
         yield
+

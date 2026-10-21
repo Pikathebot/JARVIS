@@ -711,7 +711,7 @@ public sealed partial class SettingsPane : UserControl
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(new TextBlock { Text = device.Name, Style = (Style)Application.Current.Resources["BodyText"] });
-            text.Children.Add(new TextBlock { Text = $"Last used {Ago(device.LastUsedAt)}", Style = (Style)Application.Current.Resources["SecondaryFootnoteText"] });
+            text.Children.Add(new TextBlock { Text = $"Last used {Ago(device.LastUsedAt)}" + (device.Notifications ? " · Notifications on" : ""), Style = (Style)Application.Current.Resources["SecondaryFootnoteText"] });
             var remove = new Button { Content = "Remove", VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(remove, 1);
             remove.Click += async (_, _) =>

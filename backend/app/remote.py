@@ -143,7 +143,27 @@ class RemoteDevices:
 
     @staticmethod
     def public(device: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in device.items() if k != "token_sha256"}
+        """The record without its secrets: no token hash, and only whether notifications are on."""
+        out = {k: v for k, v in device.items() if k not in ("token_sha256", "push")}
+        out["notifications"] = bool(device.get("push"))
+        return out
+
+    def set_push(self, device_id: str, subscription: Optional[dict[str, Any]]) -> bool:
+        """A device's web-push subscription (app/remote_push.py); None turns its notifications off."""
+        with self._lock:
+            for device in self._devices:
+                if device["id"] == device_id:
+                    if subscription:
+                        device["push"] = subscription
+                    else:
+                        device.pop("push", None)
+                    self._save()
+                    return True
+            return False
+
+    def push_targets(self) -> list[tuple[str, dict[str, Any]]]:
+        with self._lock:
+            return [(d["id"], d["push"]) for d in self._devices if d.get("push")]
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -206,6 +226,9 @@ REMOTE_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"/health"),
         ("GET", r"/api/remote/me"),
         ("GET", r"/api/remote/status"),
+        ("GET", r"/api/remote/push/key"),
+        ("POST", r"/api/remote/push(/test)?"),
+        ("DELETE", r"/api/remote/push"),
     )
 )
 # Reachable without a token: the app itself (so an unpaired phone can show the pairing screen)

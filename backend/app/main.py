@@ -458,6 +458,13 @@ async def lifespan(app: FastAPI):
     if settings.awareness_enabled:
         await awareness_monitor.start()
 
+    # What Jarvis says unprompted, also as a notification on paired phones that turned them on,
+    # while the user is away from the PC (PLAN 4.19 phase 2).
+    from app.remote import get_remote_devices
+    from app.remote_push import RemotePusher
+
+    awareness_monitor.add_listener(RemotePusher(get_remote_devices))
+
     if settings.routines_enabled:
         await routine_scheduler.start()
 

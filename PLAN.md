@@ -2368,6 +2368,24 @@ iPadOS 16.4+). Remote = a request that came through serve (its `Tailscale-User-L
 server, never by a client flag; plus a pairing token (a QR shown in desktop Settings). One layout that is a phone
 column on Android and uses the iPad's width (sidebar of episodes, like the desktop) -- CSS glass from the design
 system's tokens (the D3D renderer is desktop-only), so the design system gets a "Mobile" spec first.
+**Phase 2 BUILT 2026-10-21 (notifications; 1227 pass, WinUI builds; NOT seen on a phone).** `app/remote_push.py`:
+`RemotePusher` is an `AwarenessMonitor.add_listener` listener (new: called on every publish but NOT counted by
+`has_subscribers`, which the day briefing reads as "the app is open"). Pushes `routine:` / `calendar:` /
+`briefing:` / `confirmation_timeout` and anything warning+ (not resolved, not `*_action`), only while the PC has had
+no keyboard/mouse input for 120 s or is locked (`GetLastInputInfo`, `OpenInputDesktop`). VAPID key made on first
+use in `data/remote_vapid.pem` (gitignored); RFC 8292 `vapid t=,k=` via py_vapid's `Vapid` (Vapid01's older draft
+headers would be refused by Apple), aes128gcm payload (pywebpush 2.0.0; upgraded cryptography to 50.0.2, pip check
+clean, no Google SDK in use). Subscriptions on the device record (`set_push`, `push_targets`; `public()` shows only
+`notifications: bool`); 404/410 drops them. Phone: Notifications switch in the status sheet (permission from the
+tap, subscribe, POST `/api/remote/push`; "Send a test" -> `/api/remote/push/test`); sw.js `push` /
+`notificationclick`, shell cache v2. Desktop Settings device rows say "· Notifications on". Design system v23.
+Verified: `test_remote_push.py` (18), a dry-run push built with real keys (headers checked).
+**On device 10-21:** the iPad's first test was refused by Apple, 403 `{"reason":"BadJwtToken"}` -- the JWT `sub`
+"mailto:jarvis@jarvis.invalid" (Apple refuses contacts it deems fake). Now `vapid_sub()` = `https://<tailnet host>`
+(fallback `https://jarvis.localhost`); a push through `send()` with it got 201 and **arrived on the iPad** (user:
+"it came"). Refusals now log the service's body. **Android works too** (user, 10-21). **Away-from-PC
+reminder end to end works** (10-21: a one-off message routine fired with the PC left alone; user: "it reached").
+Phase 2 DONE, DEVICE-VERIFIED.
 **Phases:** (1) chat in the Freeform thread: streaming, tool steps, approval cards as Allow/Deny, the stricter
 remote gate, pairing; plus the status strip (model, VRAM) and Game mode / Governor -- cheap, the endpoints exist.
 (2) Notifications: ambient remarks and routine reminders as web push (VAPID; service worker). (3) Voice from the

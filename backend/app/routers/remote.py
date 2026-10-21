@@ -167,6 +167,58 @@ async def remote_status() -> dict[str, Any]:
     }
 
 
+# ---- notifications (PLAN 4.19 phase 2, app/remote_push.py) --------------------------------------
+
+def _this_device(request: Request) -> dict[str, Any]:
+    device = remote_device(request)
+    if device is None:  # the desktop has no subscription to keep
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only a paired phone or tablet can do this.")
+    return device
+
+
+@router.get("/push/key")
+def push_key() -> dict[str, Any]:
+    """The key the phone subscribes with (made on first use)."""
+    from app.remote_push import public_key
+
+    return {"public_key": public_key()}
+
+
+class PushSubscription(BaseModel):
+    endpoint: str = Field(..., min_length=10, max_length=2048)
+    keys: dict[str, str]
+    expirationTime: Optional[float] = None
+
+
+@router.post("/push")
+def push_subscribe(body: PushSubscription, request: Request) -> dict[str, Any]:
+    """The phone's Notifications switch turned on: keep its subscription."""
+    device = _this_device(request)
+    if not body.endpoint.startswith("https://") or not {"p256dh", "auth"} <= set(body.keys):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a web-push subscription.")
+    get_remote_devices().set_push(device["id"], {"endpoint": body.endpoint, "keys": body.keys})
+    return {"notifications": True}
+
+
+@router.delete("/push")
+def push_unsubscribe(request: Request) -> dict[str, Any]:
+    get_remote_devices().set_push(_this_device(request)["id"], None)
+    return {"notifications": False}
+
+
+@router.post("/push/test")
+def push_test(request: Request) -> dict[str, Any]:
+    """Sends this device a test notification now (away from the PC or not)."""
+    from app.remote_push import RemotePusher
+
+    result = RemotePusher(get_remote_devices).test(_this_device(request)["id"])
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="The push service couldn't be reached.")
+    if result not in (200, 201, 202):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"The push service refused it ({result}).")
+    return {"sent": True}
+
+
 @router.get("/me")
 def me(request: Request) -> dict[str, Any]:
     """Which paired device this is (the phone checks its token is still good on start)."""

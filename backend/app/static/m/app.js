@@ -768,6 +768,71 @@ async function toggle(btn, path) {
   catch (e) { if (e instanceof Unpaired) return showPairing(); }
   finally { btn.disabled = false; pollStatus(); }
 }
+// ---- notifications (PLAN 4.19 phase 2): web push while you're away from the PC ----
+const pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+let notifyOn = false;              // what the server has for this device
+
+function b64urlToBytes(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+function paintNotify(note) {
+  const tg = $("tg-notify"), cap = $("st-notify-cap");
+  tg.setAttribute("aria-checked", String(notifyOn));
+  $("notify-test").hidden = !notifyOn;
+  if (!pushSupported) {
+    tg.disabled = true;
+    cap.textContent = iosBrowserTab ? "Add Jarvis to the Home Screen to get notifications" : "Not supported in this browser";
+  } else if (Notification.permission === "denied") {
+    tg.disabled = true;
+    cap.textContent = "Blocked: allow notifications for Jarvis in this device's settings";
+  } else {
+    tg.disabled = false;
+    cap.textContent = note || (notifyOn ? "On · reminders and alerts while you're away from your PC" : "Off · nothing arrives while you're away");
+  }
+}
+
+async function setNotify(want) {
+  const tg = $("tg-notify");
+  tg.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (want) {
+      // Must follow the tap directly: iOS only asks from a user gesture.
+      if (await Notification.requestPermission() !== "granted") { notifyOn = false; return paintNotify(); }
+      const key = (await getJson("/api/remote/push/key")).public_key;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
+      const res = await api("/api/remote/push", { method: "POST", body: sub.toJSON() });
+      notifyOn = res.ok;
+      paintNotify(res.ok ? null : "Couldn't turn them on. Try again.");
+    } else {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) await sub.unsubscribe().catch(() => {});
+      await api("/api/remote/push", { method: "DELETE" });
+      notifyOn = false;
+      paintNotify();
+    }
+  } catch (e) {
+    if (e instanceof Unpaired) return showPairing();
+    paintNotify("Couldn't change notifications: " + (e.message || e));
+  } finally {
+    tg.disabled = !pushSupported;
+  }
+}
+$("tg-notify").addEventListener("click", () => setNotify(!notifyOn));
+$("notify-test").addEventListener("click", async () => {
+  const btn = $("notify-test");
+  btn.disabled = true;
+  try {
+    const res = await api("/api/remote/push/test", { method: "POST" });
+    paintNotify(res.ok ? "Test sent · it should arrive in a few seconds" : (await res.json().catch(() => ({}))).detail || "The test didn't go through.");
+  } catch { paintNotify("The test didn't go through."); }
+  finally { btn.disabled = false; }
+});
+
 $("tg-gov").addEventListener("click", (e) => toggle(e.currentTarget, "/governor/auto"));
 $("tg-game").addEventListener("click", (e) => toggle(e.currentTarget, "/api/game-mode"));
 
@@ -778,12 +843,14 @@ async function start() {
   try {
     const me = await getJson("/api/remote/me");
     if (!me.device) return showPairing();
+    notifyOn = !!me.device.notifications;
   } catch (e) {
     if (e instanceof Unpaired) { store.clear(); token = ""; return showPairing(); }
     // Not reachable: show the app with the banner; it retries on its own.
   }
   $("pair").hidden = true;
   $("app").hidden = false;
+  paintNotify();
   try {
     await loadEpisodes();
     await loadLatest();

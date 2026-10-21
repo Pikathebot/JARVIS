@@ -70,6 +70,7 @@ class AwarenessMonitor:
         self._actioned: set[str] = set()
         self._last_snapshot: Optional[SystemSnapshot] = None
         self._subscribers: list[asyncio.Queue] = []
+        self._listeners: list[Callable[[dict[str, Any]], None]] = []
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -245,10 +246,20 @@ class AwarenessMonitor:
         if queue in self._subscribers:
             self._subscribers.remove(queue)
 
+    def add_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Called with every published payload, like a stream subscriber, but without counting as
+        "the app is open" (``has_subscribers``) -- the phone's notifications (app/remote_push.py)."""
+        self._listeners.append(listener)
+
     def _publish(self, observations: list[Observation]) -> None:
         for observation in observations:
             payload = observation.to_dict()
             payload["speak"] = self.should_speak(observation)
+            for listener in list(self._listeners):
+                try:
+                    listener(dict(payload))
+                except Exception as exc:
+                    logger.warning("Observation listener failed: %s", exc)
             for queue in list(self._subscribers):
                 try:
                     queue.put_nowait(payload)

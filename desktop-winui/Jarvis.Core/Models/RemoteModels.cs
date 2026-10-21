@@ -46,4 +46,7 @@ public sealed class RemoteDevice
     public string Name { get; set; } = "";
     public double CreatedAt { get; set; }
     public double LastUsedAt { get; set; }
+
+    /// <summary>The device turned on notifications (PLAN 4.19 phase 2).</summary>
+    public bool Notifications { get; set; }
 }
