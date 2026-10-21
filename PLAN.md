@@ -2338,7 +2338,7 @@ First guess at the missing piece: **a living project state** the agent reads at 
 updates as work lands (Jarvis's PLAN.md + memory), plus a visible plan for multi-step work. To check with the
 user against how a Claude Project feels.
 
-### 4.19 Remote control: Jarvis from the phone (raised by the user 2026-10-18) -- PLANNED, NOT BUILT
+### 4.19 Remote control: Jarvis from the phone (raised by the user 2026-10-18) -- PHASE 1 DONE 2026-10-21, DEVICE-VERIFIED
 
 Asked in the 10-18 session ("like how we are doing for claude"); the user said "add that remote control to plan",
 but the entry never landed (the API connection was failing at the time) -- recovered 2026-10-20 from that
@@ -2374,6 +2374,68 @@ remote gate, pairing; plus the status strip (model, VRAM) and Game mode / Govern
 phone's mic into the existing `/api/voice/listen` path. Later: wake-on-LAN for a sleeping laptop.
 **User's part before phase 1 can be tried:** install Tailscale on the laptop, the Android phone and the iPad, signed
 in to one account; enable HTTPS certificates for the tailnet (admin console, DNS page).
+
+**Phase 1 BUILT 2026-10-21 (backend + phone app + Settings page; 1205 pass, WinUI builds; NOT seen on a phone).**
+State on 10-21: Tailscale is on the laptop (`D:\Tailscale`, host `msi.taild6d645.ts.net`) and the Android phone; not
+yet on the iPad. `tailscale serve --bg http://127.0.0.1:8005` set up 10-21 (`https://msi.taild6d645.ts.net/` ->
+:8005, tailnet only; undo with `tailscale serve --https=443 off`).
+- **Remote is a port, not a header** (changed from the plan): the backend also listens on `127.0.0.1:8005`
+  (`REMOTE_PORT`, a second uvicorn server started in the lifespan, `lifespan="off"`), and `tailscale serve --bg
+  http://127.0.0.1:8005` is the only thing that forwards there. Anything arriving on 8005 is remote, whatever its
+  headers -- safer than trusting `Tailscale-User-Login` (absent for tagged nodes, and a local process could send it).
+  `app/remote.py`: `RemoteGateMiddleware` (pure ASGI) marks those requests, 404s every route not in `REMOTE_ROUTES`
+  (thread messages/episodes, `/chat/stream`, confirmations + deny, governor status/auto/resume, Game mode, health,
+  `/api/remote/{me,status}`) and 401s anything without a paired device's `Authorization: Bearer`; `/m/*` and
+  `POST /api/remote/pair` are open. :8000 (the desktop) is untouched.
+- **Pairing:** Settings -> Remote shows a 6-character code (10 min, one live at a time, dropped after 10 wrong
+  guesses) with a QR of `https://<host>/m/#pair=CODE` (segno, added to requirements). The phone trades it for a
+  token; only its SHA-256 is kept in `data/remote.json`. Paired devices listed with Remove (signs out at once).
+  iPadOS keeps a Home Screen app's storage apart from Safari's, so on iPad: add to Home Screen first, type the code there.
+- **Remote turns:** forced into the Freeform thread (session, FREEFORM, no project/attachments/model override);
+  `remote_turn` contextvar set for the turn; `permissions.REMOTE_ASKS` -- type_text, press_keys, scroll, focus_app,
+  launch_app, set_clipboard, write_file, patch_file -- ask on remote turns even where the desktop wouldn't, and every
+  card reason from a remote turn starts "From your phone:". Reads, volume/media, notes/tasks/calendar adds run.
+- **Phone app** (`backend/app/static/m/`, plain HTML/CSS/JS, no build step): pairing screen, the thread with day
+  dividers, topic markers and scroll-back, live streaming via fetch-SSE, tool step rows, approval cards (Allow resends
+  the prompt with the ids, like the desktop; Deny calls `/deny`; 90 s countdown), New topic, sidebar of episodes,
+  status pill + sheet (model, VRAM/GPU meters, Governor and Game mode switches) from the slim `/api/remote/status`,
+  "Can't reach your PC" banner, manifest + service worker (shell only, API never cached), icons from the app tile.
+  Phone = one column; >= 1024 px (iPad landscape) = docked sidebar, 720 px column, popover status.
+- **Verified:** pytest (`test_remote.py`, 19); a throwaway backend on 8010/8015 with scratch data paths: 401/404 on
+  the remote port, pairing via the QR link, the real thread rendered, sheet/sidebar/approval card/iPad layout in the
+  browser pane at 375x812 and 1180x820. **Not verified:** a real turn from the phone (no model was loaded in the
+  check), the approval round trip, Tailscale serve end to end, install to home screen on Android/iPad.
+- Design system: Mobile spec + Touch type styles (v21), Remote icon `E8EA`.
+- **First device test (user, 10-21): "works smoothly"**, three issues, all fixed (built, NOT re-tested on device):
+  Settings crashed on open (QR frame `CornerRadius` given the `RadiusRow` double; now `RowCornerRadius`); the phone
+  pill's VRAM never moved (it showed the model's own share, fixed at load; now the card's used VRAM like the desktop
+  pill); neither client showed the other's turns until a refresh / Freeform<->Workspace switch. Now `GET
+  /api/thread/head` (newest message id) + `/api/thread/messages?after_id=`: the phone checks it with each 5 s status
+  poll and appends what's new; the desktop checks it on its 4 s telemetry tick (`ThreadChangedElsewhereAsync`, then the window reloads on the UI thread -- the first build reloaded from a pool thread and crashed the app, 0x8001010E) and reloads
+  the thread, as it does after a HUD turn. Neither does so while its own turn streams or an approval waits there;
+  after its own turn each only adopts the new head. Known limit: a desktop reload jumps to the end if you were
+  scrolled back reading.
+- **Second device test (10-21):** the desktop's first head check reloaded from a pool thread and crashed the app
+  (fixed: the window reloads on the UI thread). The phone showed no tool steps for history (fixed: stored turns
+  are "tool" rows, each with its own call, *before* the answer -- `buildRows` now reads them as
+  `ChatViewModel.MapHistory` does; checked on the live thread); bare URLs weren't links (fixed: auto-linked); the
+  phone ignored `reasoning` events, so a thinking turn looked frozen then appeared at once (now "Thinking…").
+  The user's "tools vanish on live update" was the pre-fix code still loaded; the catch-up path checked on the
+  live thread shows both research steps.
+- **Live on every device (user chose "stream live", 10-21; built, NOT seen on device).** `app/thread_live.py`:
+  `/chat/stream` publishes each thread turn (not side chats or ephemeral) -- `turn_start` {message, resumed,
+  new_topic, remote}, every event as its own client gets it, `turn_end` (also when the sender stops it) -- each
+  frame with `_turn` and `_origin` (the sender's `X-Jarvis-Client`). `GET /api/thread/live` relays to every open
+  client (keepalive 15 s; a subscriber 2000 frames behind is dropped and reconnects). Phone: `turnView` draws both
+  its own and relayed turns, `connectLive` reconnects every 3 s / on wake. Desktop:
+  `ChatStreamClient.ConnectThreadLiveAsync` (reuses `Dispatch`, sends `ClientId`), `ChatViewModel.StartThreadLive`
+  draws relayed turns via `Post`. A relayed approval is shown as words ("Waiting for an answer on the device that
+  asked"), never buttons, so one action can't be approved twice. Head checks and catch-up stand down during a
+  relayed turn and adopt the head after its `turn_end`; they remain for HUD turns (`/chat`, not relayed).
+  Verified: `test_thread_live.py` (4), 1210 pass, WinUI builds, phone rendering of synthetic relay frames in the
+  browser pane. **Device-verified by the user 10-21 ("it works good"): phone<->desktop turns stream live both ways.**
+- **Next (user):** run `tailscale serve --bg http://127.0.0.1:8005` once; Start Jarvis.bat; Settings -> Remote;
+  scan with the phone; try a chat, an approval (e.g. "open Spotify"), Game mode from the sheet.
 
 ### 4.20 UI scaling across window sizes (raised by the user 2026-10-20) -- PLANNED, NOT BUILT
 The user: "the ui is not scaled properly for different variety of sizes". Snapshot 2026-10-20 19:32 (window

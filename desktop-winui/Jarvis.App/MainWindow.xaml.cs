@@ -107,6 +107,7 @@ public sealed partial class MainWindow : Window
         GovernorViewModel.Start();
         StartTelemetry();
         AwarenessViewModel.Start();
+        ChatViewModel.StartThreadLive(); // turns from the phone stream here live (PLAN 4.19)
 
         ChatViewModel.PropertyChanged += (_, args) =>
         {
@@ -598,7 +599,17 @@ public sealed partial class MainWindow : Window
     {
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromSeconds(4);
-        timer.Tick += async (_, _) => await PollTelemetryAsync();
+        timer.Tick += async (_, _) =>
+        {
+            await PollTelemetryAsync();
+            // Turns from the phone (PLAN 4.19). The await resumes here on the UI thread, where the
+            // reload must run (it clears the transcript collection).
+            if (GovernorViewModel.Status != "offline" && await ChatViewModel.ThreadChangedElsewhereAsync()
+                && ChatViewModel.IsThread && !ChatViewModel.IsLoading)
+            {
+                await ChatViewModel.LoadThreadAsync();
+            }
+        };
         timer.Start();
         Closed += (_, _) => timer.Stop();
     }

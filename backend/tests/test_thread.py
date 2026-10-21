@@ -142,6 +142,27 @@ async def test_new_topic_alone_is_answered_in_code_and_stores_nothing(store):
     assert opened is not None and opened["start_after_message_id"] == before
 
 
+def test_head_and_after_id_give_what_another_device_added(store, monkeypatch):
+    """PLAN 4.19: the phone and the desktop check the head while idle, then fetch only what's new."""
+    import app.main as main
+    from app.routers import thread as thread_router
+    monkeypatch.setattr(main, "memory_store", store)
+    assert thread_router.head()["last_message_id"] == 0
+    eps = ThreadEpisodes(store)
+    eps.context(THREAD_SESSION_ID)
+    _say(store, "one", "1")
+    seen = thread_router.head()["last_message_id"]
+    assert seen == thread_router.list_messages(before_id=None, after_id=None, limit=80)["messages"][-1]["id"]
+    second = eps.context(THREAD_SESSION_ID, new_topic=True)
+    _say(store, "two", "2")
+    new = thread_router.list_messages(before_id=None, after_id=seen, limit=80)
+    assert [m["content"] for m in new["messages"]] == ["two", "2"] and not new["has_more"]
+    assert new["messages"][0]["episode_start"] == second.episode["id"]
+    assert thread_router.head()["last_message_id"] == new["messages"][-1]["id"]
+    capped = thread_router.list_messages(before_id=None, after_id=0, limit=3)
+    assert [m["content"] for m in capped["messages"]] == ["one", "1", "two"] and capped["has_more"]
+
+
 def test_message_pages_mark_where_each_episode_starts(store, monkeypatch):
     import app.main as main
     from app.routers import thread as thread_router
@@ -152,15 +173,15 @@ def test_message_pages_mark_where_each_episode_starts(store, monkeypatch):
     second = eps.context(THREAD_SESSION_ID, new_topic=True)
     _say(store, "two", "2")
     _say(store, "three", "3")
-    page = thread_router.list_messages(before_id=None, limit=80)
+    page = thread_router.list_messages(before_id=None, after_id=None, limit=80)
     starts = [(m["content"], m.get("episode_start")) for m in page["messages"]]
     assert starts[0] == ("one", first.episode["id"]) and starts[2] == ("two", second.episode["id"])
     assert all(s is None for c, s in starts if c not in ("one", "two"))
     # A page that begins exactly where an episode began still says so.
-    newest = thread_router.list_messages(before_id=None, limit=4)
+    newest = thread_router.list_messages(before_id=None, after_id=None, limit=4)
     assert newest["has_more"] and newest["messages"][0]["content"] == "two"
     assert newest["messages"][0]["episode_start"] == second.episode["id"]
-    older = thread_router.list_messages(before_id=newest["messages"][0]["id"], limit=10)
+    older = thread_router.list_messages(before_id=newest["messages"][0]["id"], after_id=None, limit=10)
     assert [m["content"] for m in older["messages"]] == ["one", "1"] and not older["has_more"]
     # The side-chat list leaves the thread out.
     store.get_or_create_session("side", chat_mode="FREEFORM")

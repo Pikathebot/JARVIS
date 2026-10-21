@@ -332,6 +332,16 @@ class MemoryStore:
             more = len(rows) > limit
             return [_message_dict(row, meta=True) for row in reversed(rows[:limit])], more
 
+    def get_messages_after(self, session_id: str, after_id: int, limit: int = 200) -> tuple[list[dict[str, Any]], bool]:
+        """Messages newer than ``after_id``, oldest first, and whether more remain past ``limit`` --
+        what another device added to the thread since a client last looked (PLAN 4.19)."""
+        with self._get_session() as session:
+            rows = session.exec(
+                select(Message).where(Message.session_id == session_id, col(Message.id) > after_id)
+                .order_by(col(Message.id)).limit(limit + 1)
+            ).all()
+            return [_message_dict(row, meta=True) for row in rows[:limit]], len(rows) > limit
+
     def previous_message_id(self, session_id: str, before_id: int) -> int:
         """The id of the session's message just before ``before_id``, or 0."""
         with self._get_session() as session:

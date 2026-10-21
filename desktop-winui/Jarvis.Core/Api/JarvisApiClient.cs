@@ -89,6 +89,11 @@ public sealed class JarvisApiClient
         return GetAsync<ThreadMessagePage>(url, ct);
     }
 
+    /// <summary>The thread's newest message id (0 when empty): checked while idle to pick up turns
+    /// another device added (the phone, PLAN 4.19).</summary>
+    public async Task<long> FetchThreadHeadAsync(CancellationToken ct = default) =>
+        (await GetAsync<ThreadHead>("/api/thread/head", ct).ConfigureAwait(false)).LastMessageId;
+
     public async Task<List<Dictionary<string, object?>>> FetchSessionMessagesAsync(string sessionId, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/sessions/{Uri.EscapeDataString(sessionId)}/messages", ct).ConfigureAwait(false);
@@ -560,6 +565,28 @@ public sealed class JarvisApiClient
 
     public Task<GoogleSyncResult> SyncGoogleNowAsync(CancellationToken ct = default) =>
         PostAsync<object?, GoogleSyncResult>("/api/google/sync", null, ct);
+
+    // ==========================================
+    // Remote: phone and iPad (PLAN 4.19)
+    // ==========================================
+
+    /// <summary>The live pairing code (a new one when none is live) with its QR and address.</summary>
+    public Task<RemotePairing> FetchRemotePairingAsync(CancellationToken ct = default) =>
+        GetAsync<RemotePairing>("/api/remote/pairing", ct);
+
+    /// <summary>A fresh code; the previous one stops working.</summary>
+    public Task<RemotePairing> NewRemotePairingAsync(CancellationToken ct = default) =>
+        PostAsync<object?, RemotePairing>("/api/remote/pairing", null, ct);
+
+    public Task<RemoteDeviceList> FetchRemoteDevicesAsync(CancellationToken ct = default) =>
+        GetAsync<RemoteDeviceList>("/api/remote/devices", ct);
+
+    /// <summary>Signs the device out at once.</summary>
+    public async Task<bool> RemoveRemoteDeviceAsync(string deviceId, CancellationToken ct = default)
+    {
+        var response = await _http.DeleteAsync($"/api/remote/devices/{Uri.EscapeDataString(deviceId)}", ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode;
+    }
 
     // ==========================================
     // Non-streaming chat (HUD)

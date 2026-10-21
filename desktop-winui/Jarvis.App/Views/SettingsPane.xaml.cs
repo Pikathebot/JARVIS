@@ -17,7 +17,7 @@ namespace Jarvis_App.Views;
 /// </summary>
 public sealed partial class SettingsPane : UserControl
 {
-    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Accounts", "Developer", "About" };
+    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Accounts", "Remote", "Developer", "About" };
 
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
@@ -86,7 +86,7 @@ public sealed partial class SettingsPane : UserControl
         {
             ("General", GeneralPage, NavGeneral), ("Models", ModelsPage, NavModels), ("Persona", PersonaPage, NavPersona),
             ("Voice", VoicePage, NavVoice), ("Routines", RoutinesPage, NavRoutines), ("Accounts", AccountsPage, NavAccounts),
-            ("Developer", DeveloperPage, NavDeveloper), ("About", AboutPage, NavAbout),
+            ("Remote", RemotePage, NavRemote), ("Developer", DeveloperPage, NavDeveloper), ("About", AboutPage, NavAbout),
         };
         foreach (var (name, panel, nav) in panels)
         {
@@ -105,6 +105,7 @@ public sealed partial class SettingsPane : UserControl
         else StopLogs();
         if (page == "Models") RefreshBudget();
         if (page == "Accounts") _ = RefreshGoogleAsync();
+        if (page == "Remote") _ = RefreshRemoteAsync(newCode: false);
     }
 
     private bool _syncingAppearance;
@@ -599,6 +600,137 @@ public sealed partial class SettingsPane : UserControl
         {
             App.Log($"open repo folder failed: {ex.Message}");
         }
+    }
+
+    // --- Remote: phone and iPad (PLAN 4.19) ----------------------------------------------------
+
+    private RemotePairing? _pairing;
+    private DispatcherTimer? _pairingTimer;
+
+    /// <summary>Shows the live pairing code (its QR and address), the paired devices and whether
+    /// Tailscale can reach the backend; ticks the expiry while the page shows.</summary>
+    private async Task RefreshRemoteAsync(bool newCode)
+    {
+        RemoteDeviceList? devices = null;
+        try
+        {
+            _pairing = newCode ? await _api.NewRemotePairingAsync() : await _api.FetchRemotePairingAsync();
+            devices = await _api.FetchRemoteDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            _pairing = null;
+            RemoteCodeText.Text = "—";
+            RemoteExpiryText.Text = "";
+            RemoteTailscaleText.Text = $"Can't reach the backend ({ex.Message}).";
+            return;
+        }
+        RemoteCodeText.Text = _pairing.Code.Length == 6 ? $"{_pairing.Code[..3]} {_pairing.Code[3..]}" : _pairing.Code;
+        RemoteUrlText.Text = _pairing.Url ?? "";
+        await ShowQrAsync(_pairing.QrSvg);
+        RemoteTailscaleText.Text = TailscaleLine(_pairing.Tailscale);
+        ShowRemoteDevices(devices.Devices);
+        TickPairing();
+        if (_pairingTimer is null)
+        {
+            _pairingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _pairingTimer.Tick += (_, _) =>
+            {
+                if (_page != "Remote") { _pairingTimer.Stop(); return; }
+                TickPairing();
+            };
+        }
+        _pairingTimer.Start();
+    }
+
+    private void TickPairing()
+    {
+        if (_pairing is null) return;
+        var left = DateTimeOffset.FromUnixTimeMilliseconds((long)(_pairing.ExpiresAt * 1000)) - DateTimeOffset.UtcNow;
+        if (left <= TimeSpan.Zero)
+        {
+            _ = RefreshRemoteAsync(newCode: true); // an expired code is no use on screen
+            return;
+        }
+        RemoteExpiryText.Text = left.TotalMinutes >= 1 ? $"Expires in {(int)Math.Ceiling(left.TotalMinutes)} min" : "Expires in under a minute";
+    }
+
+    private async Task ShowQrAsync(string? svg)
+    {
+        RemoteQrFrame.Visibility = string.IsNullOrEmpty(svg) ? Visibility.Collapsed : Visibility.Visible;
+        if (string.IsNullOrEmpty(svg)) return;
+        if (!svg.Contains("xmlns=", StringComparison.Ordinal))
+            svg = svg.Replace("<svg ", "<svg xmlns=\"http://www.w3.org/2000/svg\" ", StringComparison.Ordinal);
+        try
+        {
+            using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            using (var writer = new Windows.Storage.Streams.DataWriter(stream.GetOutputStreamAt(0)))
+            {
+                writer.WriteString(svg);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+            }
+            stream.Seek(0);
+            var source = new Microsoft.UI.Xaml.Media.Imaging.SvgImageSource();
+            await source.SetSourceAsync(stream);
+            RemoteQr.Source = source;
+        }
+        catch (Exception ex)
+        {
+            App.Log($"pairing QR failed: {ex.Message}");
+            RemoteQrFrame.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static string TailscaleLine(TailscaleState ts) =>
+        !ts.Installed ? "Tailscale isn't installed on this PC. Install it here and on the phone, signed in to the same account."
+        : !ts.Running ? "Tailscale is installed but not connected. Open it and sign in."
+        : !ts.Serving ? $"Tailscale is connected as {ts.Host}, but isn't passing the phone through to Jarvis yet. Run this once in a terminal: {ts.ServeCommand}"
+        : $"Reachable from your devices at https://{ts.Host}/m/";
+
+    private void ShowRemoteDevices(List<RemoteDevice> devices)
+    {
+        RemoteDevicesList.Children.Clear();
+        if (devices.Count == 0)
+        {
+            var empty = new Grid { Style = (Style)Resources["SettingsRow"] };
+            empty.Children.Add(new TextBlock
+            {
+                Text = "No devices yet", Style = (Style)Application.Current.Resources["BodyText"],
+                Foreground = Themes.JarvisTheme.Brush("LabelSecondary"), VerticalAlignment = VerticalAlignment.Center,
+            });
+            RemoteDevicesList.Children.Add(empty);
+            return;
+        }
+        for (var i = 0; i < devices.Count; i++)
+        {
+            var device = devices[i];
+            if (i > 0) RemoteDevicesList.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Style = (Style)Resources["RowSeparator"] });
+            var row = new Grid { Style = (Style)Resources["SettingsRow"], ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = device.Name, Style = (Style)Application.Current.Resources["BodyText"] });
+            text.Children.Add(new TextBlock { Text = $"Last used {Ago(device.LastUsedAt)}", Style = (Style)Application.Current.Resources["SecondaryFootnoteText"] });
+            var remove = new Button { Content = "Remove", VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(remove, 1);
+            remove.Click += async (_, _) =>
+            {
+                remove.IsEnabled = false;
+                await _api.RemoveRemoteDeviceAsync(device.Id);
+                await RefreshRemoteAsync(newCode: false);
+            };
+            row.Children.Add(text);
+            row.Children.Add(remove);
+            RemoteDevicesList.Children.Add(row);
+        }
+    }
+
+    private async void RemoteNewCode_Click(object sender, RoutedEventArgs e)
+    {
+        RemoteNewCodeButton.IsEnabled = false;
+        await RefreshRemoteAsync(newCode: true);
+        RemoteNewCodeButton.IsEnabled = true;
     }
 
     // --- Accounts (Google, PLAN 4.16 phase B) ---------------------------------------------------

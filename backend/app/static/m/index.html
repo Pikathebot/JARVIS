@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="referrer" content="no-referrer">
+<title>Jarvis</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/jarvis-mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+<symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
+<symbol id="i-err" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/></symbol>
+<symbol id="i-sync" viewBox="0 0 24 24"><path d="M19 12a7 7 0 01-12.5 4.3M5 12a7 7 0 0112.5-4.3"/><path d="M17.5 4v3.7h-3.7M6.5 20v-3.7h3.7"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 7.8v.1"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+<symbol id="i-add" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5h14v10H10l-5 4z"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-game" viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 014 4v1a3 3 0 01-5.3 1.9L14.5 14h-5l-1.2.9A3 3 0 013 13v-1a4 4 0 014-4z"/><path d="M8 10.5v3M6.5 12h3"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5l7 2.5v5.5c0 4.3-3 7.7-7 9-4-1.3-7-4.7-7-9V6z"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</defs></svg>
+
+<!-- Pairing: shown until this device has a token -->
+<section id="pair" class="pair" hidden>
+  <img src="icons/jarvis-mark.svg" alt="" width="48" height="48">
+  <h1 class="touch-title">Pair this device</h1>
+  <p class="sub touch-body">On your PC open Settings → Remote and scan the code with this device's camera, or type the code shown there.</p>
+  <form id="pair-form" autocomplete="off">
+    <input id="pair-code" class="code" inputmode="text" autocapitalize="characters" spellcheck="false"
+           maxlength="8" placeholder="K7Q4MZ" aria-label="Pairing code">
+    <button class="pbtn touch-body" type="submit">Pair</button>
+  </form>
+  <p id="pair-error" class="touch-footnote err" hidden></p>
+  <p id="pair-ios" class="sub touch-footnote" hidden>On iPad, add Jarvis to your Home Screen first (Share → Add to Home Screen), open it from there, and type the code in it.</p>
+</section>
+
+<!-- The app -->
+<div id="app" class="app" hidden>
+  <aside id="sidebar" class="sidebar glass reg" aria-label="Topics">
+    <div class="side-head">
+      <img src="icons/jarvis-mark.svg" alt="" width="24" height="24"><span class="touch-headline">Jarvis</span>
+      <button class="icon-btn side-close" id="side-close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="gh touch-footnote">Conversation</div>
+    <button class="srow on touch-body" id="row-thread"><svg class="i s"><use href="#i-chat"/></svg><span>Current conversation</span></button>
+    <div id="episodes"></div>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <main class="main">
+    <header class="top glass reg">
+      <button class="icon-btn side-open" id="side-open" aria-label="Topics"><svg class="i"><use href="#i-menu"/></svg></button>
+      <button class="pill glass reg touch-footnote" id="pill" aria-haspopup="dialog">
+        <svg class="i s" id="pill-icon"><use href="#i-sync"/></svg><span id="pill-name">Connecting</span><span class="data" id="pill-vram"></span>
+      </button>
+    </header>
+
+    <div id="scroll" class="scroll">
+      <div id="banner" class="banner touch-footnote" hidden>
+        <svg class="i s err"><use href="#i-err"/></svg>
+        <div><div class="err" id="banner-title">Can't reach your PC</div><div class="sub" id="banner-sub">It may be asleep, or Jarvis is closed.</div></div>
+      </div>
+      <div id="older" class="older touch-footnote" hidden>Loading earlier messages…</div>
+      <div id="transcript" class="transcript"></div>
+    </div>
+
+    <footer class="dock">
+      <button class="chip touch-footnote" id="new-topic" aria-pressed="false"><svg class="i s"><use href="#i-add"/></svg>New topic</button>
+      <form class="comp glass reg" id="composer">
+        <textarea id="input" class="f touch-message" rows="1" placeholder="Message Jarvis" enterkeyhint="send" aria-label="Message"></textarea>
+        <button class="send" id="send" type="submit" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
+      </form>
+      <div class="cap touch-caption">Runs on your PC · risky steps ask here first</div>
+    </footer>
+  </main>
+
+  <!-- Status sheet (phone) / popover (iPad) -->
+  <div id="sheet-scrim" class="scrim" hidden></div>
+  <section id="sheet" class="sheet glass thick" role="dialog" aria-label="Status" hidden>
+    <div class="grab"></div>
+    <div class="sh-head"><svg class="i" id="st-icon"><use href="#i-sync"/></svg><span class="touch-headline" id="st-model">—</span><span class="touch-footnote" id="st-word"></span></div>
+    <div class="touch-footnote sub" id="st-detail"></div>
+    <div class="k touch-footnote"><span>VRAM</span><span class="data" id="st-vram">—</span></div><div class="bar"><i id="st-vram-bar"></i></div>
+    <div class="k touch-footnote"><span id="st-gpu-label">GPU</span><span class="data" id="st-gpu">—</span></div><div class="bar"><i id="st-gpu-bar"></i></div>
+    <div class="sw"><svg class="i sub"><use href="#i-shield"/></svg><div class="tx"><div class="touch-body">Governor</div><div class="touch-footnote sub" id="st-gov-cap"></div></div>
+      <button class="tg" id="tg-gov" role="switch" aria-checked="false" aria-label="Governor"><i></i></button></div>
+    <div class="sw"><svg class="i sub"><use href="#i-game"/></svg><div class="tx"><div class="touch-body">Game mode</div><div class="touch-footnote sub" id="st-game-cap"></div></div>
+      <button class="tg" id="tg-game" role="switch" aria-checked="false" aria-label="Game mode"><i></i></button></div>
+  </section>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

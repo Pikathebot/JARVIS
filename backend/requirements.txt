@@ -35,3 +35,5 @@ sqlmodel>=0.0.14
 alembic>=1.13.0
 qdrant-client>=1.19.0
 
+# QR code for pairing a phone or iPad (PLAN 4.19, app/routers/remote.py).
+segno>=1.6.6

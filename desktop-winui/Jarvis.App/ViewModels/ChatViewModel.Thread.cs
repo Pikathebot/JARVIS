@@ -38,6 +38,134 @@ public partial class ChatViewModel
     private ChatMessage? _pendingTopicMark;
     private bool _sentWithTopicMark;
 
+    // ---- other devices' turns, live (PLAN 4.19) ----------------------------------------------
+
+    private readonly Dictionary<string, ChatMessage> _liveTurns = new(); // UI thread only
+    private CancellationTokenSource? _liveCts;
+
+    /// <summary>Keeps a connection to the backend's live thread relay (reconnecting every few
+    /// seconds while it is down), so a turn sent from the phone streams here as it happens.</summary>
+    public void StartThreadLive()
+    {
+        if (_liveCts is not null) return;
+        _liveCts = new CancellationTokenSource();
+        var ct = _liveCts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await _streamClient.ConnectThreadLiveAsync(OnLiveTurnStart, OnLiveTurnEnd, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // backend starting or restarting: try again shortly
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+            }
+        }, ct);
+    }
+
+    public void StopThreadLive()
+    {
+        _liveCts?.Cancel();
+        _liveCts = null;
+    }
+
+    /// <summary>A turn another device started: its message (unless it resumes an approval, whose
+    /// prompt is already shown) and a streaming answer, drawn only while the thread is open here.
+    /// Runs on the stream's thread: every change is posted to the UI thread, in order.</summary>
+    private ChatStreamCallbacks OnLiveTurnStart(string turnId, string message, bool resumed)
+    {
+        var answer = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
+        Post(() =>
+        {
+            if (!IsThread) return;
+            if (!resumed) Messages.Add(new ChatMessage { Role = MessageRole.User, Content = message, CreatedAt = DateTimeOffset.Now });
+            Messages.Add(answer);
+            _liveTurns[turnId] = answer;
+        });
+        return new ChatStreamCallbacks
+        {
+            OnToken = e => Post(() => answer.Content += e.Delta),
+            OnReasoning = e => Post(() => answer.ReasoningContent += e.Delta),
+            OnToolStart = e => Post(() => answer.ToolSteps.Add(new ToolStep { Tool = e.Tool, Args = e.Args, Status = ToolStatus.Running })),
+            OnToolEnd = e => Post(() =>
+            {
+                var step = answer.ToolSteps.LastOrDefault(s => s.Tool == e.Tool && s.Status == ToolStatus.Running);
+                if (step is null) return;
+                step.Status = e.Status == "success" ? ToolStatus.Success : ToolStatus.Error;
+                step.Result = e.Result;
+            }),
+            // The approval belongs to the device that asked: shown here as words, not buttons,
+            // so the same action can't be approved twice.
+            OnConfirmationRequired = e => Post(() =>
+            {
+                answer.Content = (string.IsNullOrEmpty(e.Response) ? answer.Content : e.Response)
+                    + "\n\nWaiting for your answer on the device that asked.";
+                answer.IsStreaming = false;
+            }),
+            OnDone = e => Post(() =>
+            {
+                if (!string.IsNullOrEmpty(e.Response) && (e.ReplaceContent || string.IsNullOrEmpty(answer.Content))) answer.Content = e.Response;
+                answer.Model = e.Model;
+                answer.Provider = e.Provider;
+                answer.IsStreaming = false;
+            }),
+            OnError = e => Post(() => { answer.Content += $"\n\nSomething went wrong: {e.Error}"; answer.IsStreaming = false; }),
+        };
+    }
+
+    private void OnLiveTurnEnd(string turnId) => Post(() =>
+    {
+        if (_liveTurns.Remove(turnId, out var answer)) answer.IsStreaming = false;
+        _sawOwnTurn = true; // what was relayed is what was stored: the next head check adopts it
+        if (IsThread) _ = RefreshEpisodesAfterTurnAsync();
+    });
+
+    private long? _threadHead;     // the newest stored message this window has shown or adopted
+    private bool _sawOwnTurn;      // a turn of ours ran since the last head check
+
+    partial void OnIsLoadingChanged(bool value)
+    {
+        if (value) _sawOwnTurn = true;
+    }
+
+    /// <summary>Whether another device added turns to the thread (the phone, PLAN 4.19): asked
+    /// every few seconds by the window, which then reloads the thread on the UI thread (the
+    /// transcript collection may only change there; LoadThreadAsync clears it before its first
+    /// await). True when the newest message isn't one this window has seen -- never while a turn
+    /// streams or an approval waits here. After a turn of our own the new head is only adopted
+    /// (it is already on screen).</summary>
+    public async Task<bool> ThreadChangedElsewhereAsync()
+    {
+        var idle = await OnUiAsync(() => IsThread && !IsLoading && PendingConfirmations.Count == 0 && _liveTurns.Count == 0).ConfigureAwait(false);
+        if (!idle) return false;
+        long head;
+        try
+        {
+            head = await _api.FetchThreadHeadAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            return false; // offline: the governor poll already says so
+        }
+        return await OnUiAsync(() =>
+        {
+            if (!IsThread || IsLoading || PendingConfirmations.Count > 0 || _liveTurns.Count > 0) return false;
+            var adopt = _threadHead is null || _sawOwnTurn;
+            _sawOwnTurn = false;
+            var changed = _threadHead != head;
+            _threadHead = head;
+            return changed && !adopt;
+        }).ConfigureAwait(false);
+    }
+
     public async Task LoadThreadAsync()
     {
         if (IsEphemeral)
@@ -46,6 +174,7 @@ public partial class ChatViewModel
             IsEphemeral = false;
         }
         ClearTranscript();
+        _liveTurns.Clear(); // their answers just left the transcript; the reload shows what is stored
         NewTopicPending = false;
         _pendingTopicMark = null;
         ActiveSessionId = ThreadId;
@@ -60,6 +189,8 @@ public partial class ChatViewModel
                 SetEpisodes(list);
                 _threadHasMore = page.HasMore;
                 _threadOldestId = OldestId(page);
+                _threadHead = page.Messages.Count > 0 && ReadNumber(page.Messages[^1], "id") is double newest ? (long)newest : 0;
+                _sawOwnTurn = false;
                 foreach (var item in BuildThreadItems(page.Messages)) Messages.Add(item);
             });
         }

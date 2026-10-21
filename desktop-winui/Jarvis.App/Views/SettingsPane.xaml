@@ -95,6 +95,12 @@
                         <TextBlock Text="Accounts" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
+                <Button x:Name="NavRemote" Style="{StaticResource NavButton}" Tag="Remote" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE8EA;" FontSize="16" />
+                        <TextBlock Text="Remote" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
                 <Button x:Name="NavDeveloper" Style="{StaticResource NavButton}" Tag="Developer" Click="Nav_Click">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE90F;" FontSize="16" />
@@ -637,6 +643,38 @@
                                 </Border>
                                 <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,2,4,0"
                                            Text="Jarvis keeps your calendar and to-do list in step with Google Calendar and Google Tasks, every few minutes and whenever you ask. It can read your Gmail and write drafts; it never sends. The sign-in stays on this PC, encrypted with your Windows account. While the Google app is in Testing, Google asks you to connect again about once a week." />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ========== Remote: phone and iPad (PLAN 4.19) ========== -->
+                        <StackPanel x:Name="RemotePage" Spacing="20" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Pair a phone or tablet" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Padding="16" ColumnSpacing="20">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <!-- Black on white with its quiet zone in every theme, so cameras can read it. -->
+                                        <Border x:Name="RemoteQrFrame" Width="160" Height="160" CornerRadius="{StaticResource RowCornerRadius}" Background="White" VerticalAlignment="Top">
+                                            <Image x:Name="RemoteQr" Stretch="Uniform" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                            <TextBlock Text="Code" Style="{StaticResource SecondaryFootnoteText}" />
+                                            <TextBlock x:Name="RemoteCodeText" Text="—" Style="{StaticResource MetricText}" FontFamily="Cascadia Mono" CharacterSpacing="200" IsTextSelectionEnabled="True" />
+                                            <TextBlock x:Name="RemoteExpiryText" Text="" Style="{StaticResource SecondaryFootnoteText}" />
+                                            <TextBlock x:Name="RemoteUrlText" Text="" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                            <Button x:Name="RemoteNewCodeButton" Content="New code" Click="RemoteNewCode_Click" Margin="0,6,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="RemoteTailscaleText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,2,4,0" IsTextSelectionEnabled="True" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Paired devices" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel x:Name="RemoteDevicesList" />
+                                </Border>
+                                <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,2,4,0"
+                                           Text="Scan the code with the phone's or iPad's camera (on iPad, add Jarvis to the Home Screen first and type the code there). The phone reaches this PC only over your own Tailscale network, and only for the conversation, approvals and the status controls. Anything that types, opens apps or changes files asks on the phone first. Removing a device signs it out at once." />
                             </StackPanel>
                         </StackPanel>
 

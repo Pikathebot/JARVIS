@@ -51,6 +51,12 @@ from app.routers import (
 )
 from app.routers.google import router as google_router
 from app.routers.thread import router as thread_router
+from app.routers.remote import router as remote_router
+from app.remote import RemoteGateMiddleware, is_remote_request, set_remote_turn
+from app.memory.thread import THREAD_SESSION_ID
+from app.thread_live import get_thread_live
+import uuid
+from fastapi.staticfiles import StaticFiles
 from app.awareness.monitor import AwarenessMonitor
 from app.persona import persona_manager
 from app.routines.scheduler import RoutineScheduler
@@ -458,6 +464,21 @@ async def lifespan(app: FastAPI):
     if settings.confirmation_timeout_seconds > 0:
         await confirmation_watcher.start()
 
+    # The phone/iPad listener (PLAN 4.19): the same app on a second loopback port that only
+    # `tailscale serve` forwards to; RemoteGateMiddleware treats everything arriving there as remote.
+    # lifespan="off": this lifespan has already run for the app.
+    remote_server = None
+    if settings.remote_port:
+        import uvicorn
+
+        remote_server = uvicorn.Server(uvicorn.Config(
+            app, host="127.0.0.1", port=settings.remote_port, lifespan="off", log_level="warning"))
+        # _serve, not serve: serve() would take over the process's signal handlers, which belong
+        # to the main server (it stops this one on shutdown, below).
+        remote_task = asyncio.create_task(remote_server._serve())
+        _background_tasks.add(remote_task)
+        remote_task.add_done_callback(_background_tasks.discard)
+
     # Google Tasks <-> tasks.md and Google Calendar <-> calendar.json every few minutes while signed
     # in (PLAN 4.16 phase B); the tasks and calendar tools also sync before they read and after they
     # write. Not signed in: never touches the network.
@@ -540,6 +561,8 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down Jarvis Assistant backend services...")
+    if remote_server is not None:
+        remote_server.should_exit = True
     stop_audio_playback()
     wake_detector.stop_listening()
     await awareness_monitor.stop()
@@ -600,6 +623,15 @@ app.include_router(rag_debug_router)
 app.include_router(thread_router)
 app.include_router(compare_router)
 app.include_router(google_router)
+app.include_router(remote_router)
+
+# Phone and iPad (PLAN 4.19): requests on the remote port are marked remote, gated to the routes
+# the phone app needs, and need a paired device's token (app/remote.py). Outermost, so it runs
+# before CORS and everything else.
+app.add_middleware(RemoteGateMiddleware, remote_port=settings.remote_port)
+_MOBILE_DIR = Path(__file__).resolve().parent / "static" / "m"
+if _MOBILE_DIR.is_dir():
+    app.mount("/m", StaticFiles(directory=_MOBILE_DIR, html=True), name="mobile")
 
 
 
@@ -1201,11 +1233,20 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, http_request: Request):
     """
     High-speed Server-Sent Events (SSE) streaming chat endpoint.
     Emits real-time token events, tool execution updates, and final metadata.
     """
+    remote = is_remote_request(http_request)
+    if remote:
+        # The phone and iPad talk to the one Freeform thread only (PLAN 4.19 phase 1), whatever
+        # they send; the permission gate asks more for the whole turn (remote_turn).
+        request = request.model_copy(update={
+            "session_id": THREAD_SESSION_ID, "chat_mode": "FREEFORM", "project_id": None,
+            "ephemeral": False, "voice_route": None, "attachments": None, "model": None,
+            "mode": None, "system_prompt": None,
+        })
     detected, wake_word, cleaned_query = wake_detector.detect_in_text(request.message)
     active_message = cleaned_query if detected and cleaned_query else request.message
     project_id = await asyncio.to_thread(resolve_turn_project_id, request)
@@ -1230,7 +1271,20 @@ async def chat_stream(request: ChatRequest):
     )
 
 
+    # A thread turn streams live on every other open device too (app/thread_live.py); the sender
+    # names itself in X-Jarvis-Client so it can skip its own turn there.
+    live = (get_thread_live() if request.session_id == THREAD_SESSION_ID and not request.ephemeral else None)
+    turn_id = uuid.uuid4().hex[:12]
+    origin = (http_request.headers.get("x-jarvis-client") or "")[:64]
+
+    def publish(event: str, data: dict) -> None:
+        if live is not None:
+            live.publish(event, data, turn_id, origin)
+
     async def event_generator():
+        set_remote_turn(remote)
+        publish("turn_start", {"message": active_message, "resumed": bool(request.approved_action_ids),
+                               "new_topic": request.new_topic, "remote": remote})
         try:
             async with governor.activity(ActivityType.INFERENCING, label=request.session_id or "chat_turn"):
                 async for event in orchestrator.run_stream(
@@ -1248,12 +1302,17 @@ async def chat_stream(request: ChatRequest):
                 ):
 
                     event_type = event.get("event", "message")
-                    data_json = json.dumps(event.get("data", {}))
+                    data = event.get("data", {})
+                    publish(event_type, data)
+                    data_json = json.dumps(data)
                     yield f"event: {event_type}\ndata: {data_json}\n\n"
         except Exception as e:
             logger.error("Error in streaming response generator: %s", e)
+            publish("error", {"error": str(e)})
             err_data = json.dumps({"error": str(e)})
             yield f"event: error\ndata: {err_data}\n\n"
+        finally:
+            publish("turn_end", {})  # also when the sender stopped it (the generator is closed)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

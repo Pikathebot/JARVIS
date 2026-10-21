@@ -117,6 +117,20 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
 }
 
 
+# Tools that run unasked on the desktop but ask on a remote turn (app/remote.py), with the card's
+# reason: from the phone you can't see the screen they act on.
+REMOTE_ASKS: dict[str, str] = {
+    "type_text": "types on your PC, and you can't see the screen from here.",
+    "press_keys": "presses keys on your PC, and you can't see the screen from here.",
+    "scroll": "scrolls a window on your PC, and you can't see the screen from here.",
+    "focus_app": "switches apps on your PC, and you can't see the screen from here.",
+    "launch_app": "opens an app on your PC, and you can't see the screen from here.",
+    "set_clipboard": "changes your PC's clipboard.",
+    "write_file": "changes a file on your PC.",
+    "patch_file": "changes a file on your PC.",
+}
+
+
 # Windows core/critical system processes that must never be terminated without explicit user confirmation.
 # Named constant defined per Phase 3 spec §3.4 — extendable and auditable.
 MAJOR_PROCESS_NAMES: set[str] = {
@@ -805,6 +819,20 @@ def evaluate_tool_permission(
             effective_tier = RiskTier.CONFIRMATION_REQUIRED
             custom_reason = (f"This turn read {tainted_by}, and text from there could be steering this. "
                              + (custom_reason or "")).strip()
+
+    # A turn from the phone or iPad (PLAN 4.19): what acts on the PC's screen or files asks there,
+    # because the user can't see what it would do.
+    if effective_tier == RiskTier.LOW_RISK and tool_name in REMOTE_ASKS:
+        from app.remote import remote_turn
+
+        if remote_turn():
+            effective_tier = RiskTier.CONFIRMATION_REQUIRED
+            custom_reason = f"From your phone: {REMOTE_ASKS[tool_name]}"
+    elif custom_reason and effective_tier != RiskTier.LOW_RISK:
+        from app.remote import remote_turn
+
+        if remote_turn() and not custom_reason.startswith("From your phone"):
+            custom_reason = f"From your phone: {custom_reason}"
 
     # 3. Check if user already provided explicit approval token (strictly per action_id)
     if action_id in approved_ids:

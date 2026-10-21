@@ -31,6 +31,9 @@ os.environ.setdefault("JARVIS_PREFERENCE_VOTES_PATH", os.path.join(os.path.dirna
 os.environ.setdefault("JARVIS_NOTES_DIR", os.path.join(os.path.dirname(_TEST_DB), "notes"))
 os.environ.setdefault("JARVIS_GOOGLE_DIR", os.path.join(os.path.dirname(_TEST_DB), "google"))
 os.environ.setdefault("JARVIS_BRIEFING_STATE", os.path.join(os.path.dirname(_TEST_DB), "briefing.json"))
+# No second listener during tests; paired devices in a temp file (PLAN 4.19).
+os.environ.setdefault("REMOTE_PORT", "0")
+os.environ.setdefault("JARVIS_REMOTE_DEVICES_PATH", os.path.join(os.path.dirname(_TEST_DB), "remote.json"))
 
 import pytest
 from unittest.mock import patch
