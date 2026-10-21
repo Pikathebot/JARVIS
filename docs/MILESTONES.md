@@ -463,3 +463,177 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     Still open: changing an existing workspace's location from the UI.
 
   - **On device 2026-10-02 (the user): the picker opens, the workspace works in the picked folder.**
+
+- [x] **Remote control: Jarvis on the phone and iPad (PLAN §4.19, raised 2026-10-18, done 2026-10-21)** --
+  a web app (PWA) the backend serves over the user's own Tailscale network: the Freeform thread with tool steps,
+  Allow/Deny approvals under a stricter remote gate and pairing (phase 1), live relay between devices, web-push
+  notifications while away from the PC (phase 2), voice from the phone's mic with spoken replies (phase 3), and
+  loading the model ahead of a message. Commits 7bdba01 (phase 1), 8eaa187 (phase 2), bc47c4c (phase 3 + Load
+  model); desktop fixes found along the way in efaeab5. All device-verified by the user on Android and iPad.
+  - **Background and options.** Asked in the 10-18 session ("like how we are doing for claude"); the user said "add that remote control to plan",
+    but the entry never landed (the API connection was failing at the time) -- recovered 2026-10-20 from that
+    session's transcript. **Why it's easy-ish:** all of Jarvis sits behind one HTTP API (`/chat/stream` on :8000); the
+    WinUI app is just one client. Remote control = a second client, on the phone, reaching that API safely.
+    **Options (the 10-18 recommendation was 1):**
+    1. **Tailscale + a small phone web page.** Tailscale is a free private network between the user's own devices:
+       phone and laptop see each other anywhere, end-to-end encrypted, nothing exposed to the internet, no server in
+       the middle reading messages (fits local-first). Jarvis serves a simple chat page the phone opens in the browser
+       (and pins to the home screen like an app); replies stream as on the desktop; approval cards are Yes/No buttons.
+       Effort: a moderate milestone, mostly the page plus sign-in protection.
+    2. A Telegram/Discord bot: quickest, phone notifications (reminders) for free, but every message passes through
+       their servers -- breaks the privacy idea.
+    3. Our own relay server like Claude's Remote Control: means renting and running a server; option 1 gets the
+       same result without one.
+    **Whichever way:** a login token (Jarvis can type, run commands and open apps); the approval rules stay as they
+    are, possibly asking more often on remote turns; the laptop must be awake (plugged in with sleep off, later
+    wake-on-LAN); voice from the phone later, on top of option 1. It should land in the one Freeform thread (4.18:
+    voice, HUD and briefing already do). Not started; to discuss when it comes up in the queue.
+  - **Decided with the user, 2026-10-20:** Tailscale; **Android phone and iPad** both; remote turns ask more (anything
+    risky needs an Allow tap from the phone even where the desktop wouldn't ask); first version's scope left to Claude.
+    **Shape:** a web app (PWA) served by the backend itself (static files under `/m/`), reached through `tailscale serve`
+    (https on the tailnet name, proxying to 127.0.0.1:8000 -- the backend keeps listening on localhost only). https
+    matters: installable to the home screen, mic and web push need a secure context (iPad: push only once installed,
+    iPadOS 16.4+). Remote = a request that came through serve (its `Tailscale-User-Login` header), decided by the
+    server, never by a client flag; plus a pairing token (a QR shown in desktop Settings). One layout that is a phone
+    column on Android and uses the iPad's width (sidebar of episodes, like the desktop) -- CSS glass from the design
+    system's tokens (the D3D renderer is desktop-only), so the design system gets a "Mobile" spec first.
+  - **Phases:** (1) chat in the Freeform thread: streaming, tool steps, approval cards as Allow/Deny, the stricter
+    remote gate, pairing; plus the status strip (model, VRAM) and Game mode / Governor -- cheap, the endpoints exist.
+    (2) Notifications: ambient remarks and routine reminders as web push (VAPID; service worker). (3) Voice from the
+    phone's mic into the existing `/api/voice/listen` path. Later: wake-on-LAN for a sleeping laptop.
+  - **User's part before phase 1 can be tried:** install Tailscale on the laptop, the Android phone and the iPad, signed
+    in to one account; enable HTTPS certificates for the tailnet (admin console, DNS page).
+  - **Phase 1 BUILT 2026-10-21 (backend + phone app + Settings page; 1205 pass, WinUI builds; NOT seen on a phone).**
+    State on 10-21: Tailscale is on the laptop (`D:\Tailscale`, host `msi.taild6d645.ts.net`) and the Android phone; not
+    yet on the iPad. `tailscale serve --bg http://127.0.0.1:8005` set up 10-21 (`https://msi.taild6d645.ts.net/` ->
+    :8005, tailnet only; undo with `tailscale serve --https=443 off`).
+    - **Remote is a port, not a header** (changed from the plan): the backend also listens on `127.0.0.1:8005`
+      (`REMOTE_PORT`, a second uvicorn server started in the lifespan, `lifespan="off"`), and `tailscale serve --bg
+      http://127.0.0.1:8005` is the only thing that forwards there. Anything arriving on 8005 is remote, whatever its
+      headers -- safer than trusting `Tailscale-User-Login` (absent for tagged nodes, and a local process could send it).
+      `app/remote.py`: `RemoteGateMiddleware` (pure ASGI) marks those requests, 404s every route not in `REMOTE_ROUTES`
+      (thread messages/episodes, `/chat/stream`, confirmations + deny, governor status/auto/resume, Game mode, health,
+      `/api/remote/{me,status}`) and 401s anything without a paired device's `Authorization: Bearer`; `/m/*` and
+      `POST /api/remote/pair` are open. :8000 (the desktop) is untouched.
+    - **Pairing:** Settings -> Remote shows a 6-character code (10 min, one live at a time, dropped after 10 wrong
+      guesses) with a QR of `https://<host>/m/#pair=CODE` (segno, added to requirements). The phone trades it for a
+      token; only its SHA-256 is kept in `data/remote.json`. Paired devices listed with Remove (signs out at once).
+      iPadOS keeps a Home Screen app's storage apart from Safari's, so on iPad: add to Home Screen first, type the code there.
+    - **Remote turns:** forced into the Freeform thread (session, FREEFORM, no project/attachments/model override);
+      `remote_turn` contextvar set for the turn; `permissions.REMOTE_ASKS` -- type_text, press_keys, scroll, focus_app,
+      launch_app, set_clipboard, write_file, patch_file -- ask on remote turns even where the desktop wouldn't, and every
+      card reason from a remote turn starts "From your phone:". Reads, volume/media, notes/tasks/calendar adds run.
+    - **Phone app** (`backend/app/static/m/`, plain HTML/CSS/JS, no build step): pairing screen, the thread with day
+      dividers, topic markers and scroll-back, live streaming via fetch-SSE, tool step rows, approval cards (Allow resends
+      the prompt with the ids, like the desktop; Deny calls `/deny`; 90 s countdown), New topic, sidebar of episodes,
+      status pill + sheet (model, VRAM/GPU meters, Governor and Game mode switches) from the slim `/api/remote/status`,
+      "Can't reach your PC" banner, manifest + service worker (shell only, API never cached), icons from the app tile.
+      Phone = one column; >= 1024 px (iPad landscape) = docked sidebar, 720 px column, popover status.
+    - **Verified:** pytest (`test_remote.py`, 19); a throwaway backend on 8010/8015 with scratch data paths: 401/404 on
+      the remote port, pairing via the QR link, the real thread rendered, sheet/sidebar/approval card/iPad layout in the
+      browser pane at 375x812 and 1180x820. **Not verified:** a real turn from the phone (no model was loaded in the
+      check), the approval round trip, Tailscale serve end to end, install to home screen on Android/iPad.
+    - Design system: Mobile spec + Touch type styles (v21), Remote icon `E8EA`.
+    - **First device test (user, 10-21): "works smoothly"**, three issues, all fixed (built, NOT re-tested on device):
+      Settings crashed on open (QR frame `CornerRadius` given the `RadiusRow` double; now `RowCornerRadius`); the phone
+      pill's VRAM never moved (it showed the model's own share, fixed at load; now the card's used VRAM like the desktop
+      pill); neither client showed the other's turns until a refresh / Freeform<->Workspace switch. Now `GET
+      /api/thread/head` (newest message id) + `/api/thread/messages?after_id=`: the phone checks it with each 5 s status
+      poll and appends what's new; the desktop checks it on its 4 s telemetry tick (`ThreadChangedElsewhereAsync`, then the window reloads on the UI thread -- the first build reloaded from a pool thread and crashed the app, 0x8001010E) and reloads
+      the thread, as it does after a HUD turn. Neither does so while its own turn streams or an approval waits there;
+      after its own turn each only adopts the new head. Known limit: a desktop reload jumps to the end if you were
+      scrolled back reading.
+    - **Second device test (10-21):** the desktop's first head check reloaded from a pool thread and crashed the app
+      (fixed: the window reloads on the UI thread). The phone showed no tool steps for history (fixed: stored turns
+      are "tool" rows, each with its own call, *before* the answer -- `buildRows` now reads them as
+      `ChatViewModel.MapHistory` does; checked on the live thread); bare URLs weren't links (fixed: auto-linked); the
+      phone ignored `reasoning` events, so a thinking turn looked frozen then appeared at once (now "Thinking…").
+      The user's "tools vanish on live update" was the pre-fix code still loaded; the catch-up path checked on the
+      live thread shows both research steps.
+    - **Live on every device (user chose "stream live", 10-21; built, NOT seen on device).** `app/thread_live.py`:
+      `/chat/stream` publishes each thread turn (not side chats or ephemeral) -- `turn_start` {message, resumed,
+      new_topic, remote}, every event as its own client gets it, `turn_end` (also when the sender stops it) -- each
+      frame with `_turn` and `_origin` (the sender's `X-Jarvis-Client`). `GET /api/thread/live` relays to every open
+      client (keepalive 15 s; a subscriber 2000 frames behind is dropped and reconnects). Phone: `turnView` draws both
+      its own and relayed turns, `connectLive` reconnects every 3 s / on wake. Desktop:
+      `ChatStreamClient.ConnectThreadLiveAsync` (reuses `Dispatch`, sends `ClientId`), `ChatViewModel.StartThreadLive`
+      draws relayed turns via `Post`. A relayed approval is shown as words ("Waiting for an answer on the device that
+      asked"), never buttons, so one action can't be approved twice. Head checks and catch-up stand down during a
+      relayed turn and adopt the head after its `turn_end`; they remain for HUD turns (`/chat`, not relayed).
+      Verified: `test_thread_live.py` (4), 1210 pass, WinUI builds, phone rendering of synthetic relay frames in the
+      browser pane. **Device-verified by the user 10-21 ("it works good"): phone<->desktop turns stream live both ways.**
+    - **Next (user):** run `tailscale serve --bg http://127.0.0.1:8005` once; Start Jarvis.bat; Settings -> Remote;
+      scan with the phone; try a chat, an approval (e.g. "open Spotify"), Game mode from the sheet.
+  - **Android gotcha (10-21):** the CMF phone couldn't open `https://msi.taild6d645.ts.net/m/` while the tailnet itself
+    was fine (`tailscale ping` 6 ms direct). Cause: Android **Private DNS** set to a hostname overrides Tailscale's
+    MagicDNS, so `.ts.net` names don't resolve; set it to Off or Automatic. (Chrome's "Use secure DNS" with a fixed
+    provider does the same.)
+  - **Phase 2 BUILT 2026-10-21 (notifications; 1227 pass, WinUI builds; NOT seen on a phone).** `app/remote_push.py`:
+    `RemotePusher` is an `AwarenessMonitor.add_listener` listener (new: called on every publish but NOT counted by
+    `has_subscribers`, which the day briefing reads as "the app is open"). Pushes `routine:` / `calendar:` /
+    `briefing:` / `confirmation_timeout` and anything warning+ (not resolved, not `*_action`), only while the PC has had
+    no keyboard/mouse input for 120 s or is locked (`GetLastInputInfo`, `OpenInputDesktop`). VAPID key made on first
+    use in `data/remote_vapid.pem` (gitignored); RFC 8292 `vapid t=,k=` via py_vapid's `Vapid` (Vapid01's older draft
+    headers would be refused by Apple), aes128gcm payload (pywebpush 2.0.0; upgraded cryptography to 50.0.2, pip check
+    clean, no Google SDK in use). Subscriptions on the device record (`set_push`, `push_targets`; `public()` shows only
+    `notifications: bool`); 404/410 drops them. Phone: Notifications switch in the status sheet (permission from the
+    tap, subscribe, POST `/api/remote/push`; "Send a test" -> `/api/remote/push/test`); sw.js `push` /
+    `notificationclick`, shell cache v2. Desktop Settings device rows say "· Notifications on". Design system v23.
+    Verified: `test_remote_push.py` (18), a dry-run push built with real keys (headers checked).
+    **On device 10-21:** the iPad's first test was refused by Apple, 403 `{"reason":"BadJwtToken"}` -- the JWT `sub`
+    "mailto:jarvis@jarvis.invalid" (Apple refuses contacts it deems fake). Now `vapid_sub()` = `https://<tailnet host>`
+    (fallback `https://jarvis.localhost`); a push through `send()` with it got 201 and **arrived on the iPad** (user:
+    "it came"). Refusals now log the service's body. **Android works too** (user, 10-21). **Away-from-PC
+    reminder end to end works** (10-21: a one-off message routine fired with the PC left alone; user: "it reached").
+    Phase 2 DONE, DEVICE-VERIFIED.
+  - **Phase 3 BUILT 2026-10-21 (voice from the phone; NOT seen on a phone).** Decided with the user: tap, talk,
+    auto-send; a voice question is answered aloud, typed ones stay silent. Backend (`routers/remote.py`, both in
+    `REMOTE_ROUTES`): `POST /api/remote/transcribe` (multipart clip -> words only, the PC's Whisper off the event loop;
+    no wake word, hands-free state or voice-mode routing -- `/api/voice/listen` stays desktop-only) and
+    `POST /api/remote/say` (persona speech shaping + Kokoro MP3, leaves the desktop's voice state alone). Phone
+    (`static/m/`): a mic button in the composer; MediaRecorder (WebM/Opus on Android, MP4/AAC on iPad) with a level meter
+    that stops after 1.2 s quiet once speech was heard (6 s with none: cancelled, 60 s cap); the words go out through the
+    same send path (same bubble, same stricter gate); a `done` voice turn is spoken (an approval's answer once allowed);
+    the mic tap plays a silent clip so iOS lets the reply play later. Shell cache v3; design system Mobile v26.
+    Verified: `test_remote_voice.py` (8) + test_remote (25 together); live on :8000, Kokoro -> MP3 -> Whisper round trip
+    gave "Set the volume to 30 and open Spotify." (2.1 s warm for 3.5 s); :8005 gives 401 without a token and still 404s
+    `/api/voice/listen`; composer idle/listening states seen in a phone-width browser.
+    **On device 10-21:** the iPad's mic worked first time (an MP4 clip transcribed and answered). Android showed the mic
+    but a tap did nothing: `/m/` was served with no Cache-Control, so Chrome kept the old app.js under the new index.html.
+    Now `/m/` is `Cache-Control: no-cache` (`_RevalidatedStaticFiles` in main.py) and index.html loads `app.css?v=3` /
+    `app.js?v=3`; after that **the Android mic works** (user). **Phase 3 DONE, DEVICE-VERIFIED** (user: "the phone
+    voice works").
+  - **Load the model without sending a message (user, 10-21; built, live-checked, DEVICE-VERIFIED: "Load model ... works").**
+    `POST /models/warm` (main.py, also in `REMOTE_ROUTES`): starts the main model in the background and returns at once
+    -- `ready` (something serves), `loading` (one load; repeats join it), or `held` with a reason (Game mode, voice mode,
+    the governor not healthy -- checked without waiting). User chose "when you start typing" over loading at startup:
+    the desktop composer's first keystroke and the mic (throttled to one call per 20 s, `MainWindow.ModelWarm.cs`), the
+    phone's input and mic tap, plus a **Load model** button (desktop popover; phone sheet while nothing is loaded).
+    Live: not loaded -> serving in 5 s with no message. The popover's three buttons abreast truncated every label (user);
+    now Load model | Free VRAM, then Models… full width (snapshot-checked). `test_model_warm.py` (6); 1243 pass.
+    Design system: StatusPopover + Mobile amended.
+  - **Found along the way (desktop):** **Chat scroll fight (desktop, 10-21; built, NOT re-tested on device):** the user couldn't scroll to the bottom of
+    a long thread ("it jitters to above again"). UI Automation on the running app: stuck at 84.9% with later messages
+    below; a programmatic jump to 60% snapped back to the end. Two causes in `MainWindow.ChatScroll.cs`: (1) scrolled up,
+    the view stayed bottom-anchored (`VerticalAnchorRatio=1`, from 4.17b), so each row the virtualizing ItemsRepeater laid
+    out below at a height other than its estimate moved the view back up; (2) a jump or scrollbar drag left "follow the
+    end" on until it finished, and the content growing meanwhile queued a scroll back down. Now `SetChatFollow` sets the
+    anchor with the state (1 while following, 0 otherwise -- also keeps scroll-back insertions in place), and any scroll
+    not started by us (`_chatOwnScroll` marks ours) lets go of the end as soon as it leaves it, even mid-drag.
+    **NOT FIXED on device** (user after restart, 10-21: "still having the same issues"). Next: confirm the running build
+    has the change (AppX layout time vs source), re-run the UIA probes (scratchpad `uia_chat.ps1` / `uia_wheel.ps1`:
+    scroll %, view %, wheel notches) and log `VerticalAnchorRatio` / offset / extent per ViewChanged to find what moves
+    the view; candidates left: the thread's scroll-back (`LoadOlderThreadAsync` near the top), the 4 s head check reload,
+    or giving up virtualization (`VerticalCacheLength`) so the extent stops changing.
+    **Traced and fixed 10-21 evening -- DEVICE-VERIFIED (user: "its fixed"); trace removed.** The
+    running build did have the change; a temporary per-event trace (`jarvis-scroll.log` beside the exe, `TraceChatScroll`)
+    showed two real causes: (1) the virtualizing ItemsRepeater's extent flipped ~3760 <-> ~4320 DIP several times a second
+    near the bottom (unrealized rows' heights guessed from an average that changed as end rows were realized), throwing the
+    view ~600 DIP up -- the "jitters to above"; (2) ViewChanged also fires for anchoring/re-measure shifts (71 DIP off the end
+    with nobody scrolling), and treating those as the user flipped following and the anchor ratio, which moved it again.
+    Now `MessageList` has `VerticalCacheLength="10000"` (every row laid out; a thread is a few pages of 80), and only real
+    input -- wheel, keys, the scrollbar's `Scroll`, `DirectManipulation*` -- decides following; while following, any other
+    shift is put back at the end. With it: extent steady, scrolls land exactly at the end.
+    **"Ctrl + ," popup that never left (10-21; fixed, DEVICE-VERIFIED):** the Settings accelerator sits on
+    `RootGrid`, and WinUI shows an accelerator as a hover tooltip on its element -- here the whole window, which the pointer
+    never leaves. `RootGrid.KeyboardAcceleratorPlacementMode = Hidden`; the shortcut itself still works.
