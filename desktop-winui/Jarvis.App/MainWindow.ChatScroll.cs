@@ -27,6 +27,22 @@ public sealed partial class MainWindow
     private ScrollViewer? _chatScroller;
     private bool _chatFollow = true;
     private bool _chatScrollQueued;
+    private bool _chatOwnScroll;   // a ChangeView of ours is in flight (its ViewChanged isn't the user's)
+    private bool _chatUserScroll;  // a wheel, key, scrollbar or touch scroll is under way: its ViewChanged decides following
+
+    /// <summary>Holding the end, or not -- and the anchor that goes with it. Anchored to the bottom
+    /// (ratio 1) the view keeps the end in place as a reply grows; but scrolled up with it still
+    /// at 1, each message the virtualizing list lays out below at a height other than its estimate
+    /// moved the view, which pushed it back up while scrolling down (device 2026-10-21, a long
+    /// thread with many tool rows). Not following, the top anchors (ratio 0): scrolling down
+    /// realizes rows below without moving what's on screen, and older pages inserted at the top
+    /// keep it in place too.</summary>
+    private void SetChatFollow(bool follow)
+    {
+        if (_chatFollow == follow) return; // changing the anchor moves the view: only on a real change
+        _chatFollow = follow;
+        if (_chatScroller is not null) _chatScroller.VerticalAnchorRatio = follow ? 1.0 : 0.0;
+    }
 
     /// <summary>How close to the top (DIPs) the thread's scroll-back fetches the page before.</summary>
     private const double ThreadScrollBackSlop = 300;
@@ -71,7 +87,27 @@ public sealed partial class MainWindow
                 App.Log($"chat scroller had a horizontal offset of {_chatScroller.HorizontalOffset:F1}; reset to 0");
                 _chatScroller.ChangeView(0, null, null, disableAnimation: true);
             }
-            if (!e.IsIntermediate && !_chatScrollQueued) _chatFollow = IsChatAtEnd();
+            // Only the user's own scrolling (wheel, keys, scrollbar, touch) decides whether we hold
+            // the end: let go as soon as it leaves the end, even mid-drag, and take hold once it
+            // settles there. ViewChanged also fires when the ScrollViewer's anchoring or the list
+            // re-measuring a row moves the view; reading those as the user flipped following off
+            // and on, each flip swapped the anchor and moved the view again -- the jitter that
+            // kept the end out of reach (traced 2026-10-21: 71 DIP off the end with nobody
+            // scrolling). While following, such a shift is put back at the end instead.
+            if (_chatOwnScroll)
+            {
+                if (!e.IsIntermediate) _chatOwnScroll = false;
+            }
+            else if (_chatUserScroll)
+            {
+                if (!IsChatAtEnd()) SetChatFollow(false);
+                else if (!e.IsIntermediate) SetChatFollow(true);
+                if (!e.IsIntermediate) _chatUserScroll = false;
+            }
+            else if (_chatFollow && !IsChatAtEnd())
+            {
+                QueueChatScrollToEnd();
+            }
             // The Freeform thread pages in older messages as the view nears its top. The
             // ScrollViewer's anchoring keeps what is on screen in place as they are inserted.
             if (ChatViewModel.IsThread && _chatScroller.VerticalOffset < ThreadScrollBackSlop
@@ -84,8 +120,30 @@ public sealed partial class MainWindow
         // waiting for the next ViewChanged to land (the stream may have moved the end by then).
         _chatScroller.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, e) =>
         {
-            if (e.GetCurrentPoint(_chatScroller).Properties.MouseWheelDelta > 0) _chatFollow = false;
+            _chatUserScroll = true;
+            if (e.GetCurrentPoint(_chatScroller).Properties.MouseWheelDelta > 0) SetChatFollow(false);
         }), handledEventsToo: true);
+        _chatScroller.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) =>
+        {
+            if (e.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down
+                or Windows.System.VirtualKey.PageUp or Windows.System.VirtualKey.PageDown
+                or Windows.System.VirtualKey.Home or Windows.System.VirtualKey.End or Windows.System.VirtualKey.Space)
+                _chatUserScroll = true;
+        }), handledEventsToo: true);
+        // Touch and precision-touchpad pans.
+        _chatScroller.DirectManipulationStarted += (_, _) => _chatUserScroll = true;
+        _chatScroller.DirectManipulationCompleted += (_, _) => SetChatFollow(IsChatAtEnd());
+        // The scrollbar: thumb drags, arrow and track clicks.
+        if (FindVerticalScrollBar(_chatScroller) is { } bar)
+        {
+            bar.Scroll += (_, e) =>
+            {
+                _chatUserScroll = true;
+                if (e.ScrollEventType == Microsoft.UI.Xaml.Controls.Primitives.ScrollEventType.EndScroll)
+                    SetChatFollow(IsChatAtEnd());
+            };
+        }
+        else App.Log("chat scroller: no vertical scrollbar found; drags are seen through ViewChanged only");
         QueueChatScrollToEnd();
     }
 
@@ -93,12 +151,12 @@ public sealed partial class MainWindow
     {
         // A session opened (reset) or the user sent something: take hold of the end again.
         if (e.Action == NotifyCollectionChangedAction.Reset)
-            _chatFollow = true;
+            SetChatFollow(true);
         // Only at the end: the thread's scroll-back inserts older user messages at the top.
         else if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is { } added
                  && e.NewStartingIndex + added.Count >= ChatViewModel.Messages.Count)
             foreach (var item in added)
-                if (item is ChatMessage { Role: MessageRole.User }) _chatFollow = true;
+                if (item is ChatMessage { Role: MessageRole.User }) SetChatFollow(true);
 
         if (_chatFollow) QueueChatScrollToEnd();
     }
@@ -108,7 +166,7 @@ public sealed partial class MainWindow
     private void ScrollChatToItem(int index)
     {
         if (index < 0 || index >= ChatViewModel.Messages.Count) return;
-        _chatFollow = false;
+        SetChatFollow(false);
         if (MessageList.GetOrCreateElement(index) is UIElement element)
         {
             MessageList.UpdateLayout();
@@ -155,6 +213,18 @@ public sealed partial class MainWindow
                 $"width {MessageList.ActualWidth:F0}; composer at x {composer.X:F0} width {ComposerArea.ActualWidth:F0}");
     }
 
+    private static Microsoft.UI.Xaml.Controls.Primitives.ScrollBar? FindVerticalScrollBar(DependencyObject root)
+    {
+        for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is Microsoft.UI.Xaml.Controls.Primitives.ScrollBar { Orientation: Orientation.Vertical } bar) return bar;
+            if (child is ItemsRepeater) continue; // the transcript itself holds no scrollbar of the viewer's
+            if (FindVerticalScrollBar(child) is { } found) return found;
+        }
+        return null;
+    }
+
     private bool IsChatAtEnd() =>
         _chatScroller is null || _chatScroller.VerticalOffset >= _chatScroller.ScrollableHeight - ChatFollowSlop;
 
@@ -171,7 +241,11 @@ public sealed partial class MainWindow
             // last token: scrolling to a stale end and correcting a frame later was the jitter.
             _chatScroller.UpdateLayout();
             if (_chatScroller.VerticalOffset < _chatScroller.ScrollableHeight - 0.5)
-                _chatScroller.ChangeView(null, _chatScroller.ScrollableHeight, null, disableAnimation: true);
+            {
+                _chatOwnScroll = true;
+                if (!_chatScroller.ChangeView(null, _chatScroller.ScrollableHeight, null, disableAnimation: true))
+                    _chatOwnScroll = false; // refused: no ViewChanged will come to clear it
+            }
         });
     }
 }

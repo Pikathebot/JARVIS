@@ -351,7 +351,12 @@
                         <!-- A 720 px reading column, centred; the scroll bar stays at the surface's edge.
                              An ItemsRepeater, not a ListView: a ListViewItem takes the pointer press
                              for its own press/drag handling, so text in a message could not be
-                             drag-selected or copied (device 2026-10-20). -->
+                             drag-selected or copied (device 2026-10-20).
+                             VerticalCacheLength is large enough to lay out every row: virtualized, the
+                             list guessed unrealized rows' heights from an average that changed as rows
+                             near the end were realized, so the extent flipped ~3760 <-> ~4320 DIP several
+                             times a second near the bottom and threw the view ~600 DIP up (traced
+                             2026-10-21). A thread holds a few pages of 80 rows; laying them all out is cheap. -->
                         <ScrollViewer
                             x:Name="MessageScroll"
                             Grid.Row="1"
@@ -364,6 +369,7 @@
                         <ItemsRepeater
                             x:Name="MessageList"
                             HorizontalAlignment="Left"
+                            VerticalCacheLength="10000"
                             ItemsSource="{x:Bind ChatViewModel.Messages}">
                             <ItemsRepeater.Layout>
                                 <StackLayout Orientation="Vertical" />

@@ -289,6 +289,10 @@ public sealed partial class MainWindow : Window
         };
         settingsKey.Invoked += (_, args) => { args.Handled = true; OpenSettings(null); };
         RootGrid.KeyboardAccelerators.Add(settingsKey);
+        // No hint tooltip: by default an accelerator shows as a tooltip on its element, and this
+        // element is the whole window -- a "Ctrl + ," popup appeared wherever the pointer rested
+        // and never left, since the pointer never leaves the window's root (device 2026-10-21).
+        RootGrid.KeyboardAcceleratorPlacementMode = Microsoft.UI.Xaml.Input.KeyboardAcceleratorPlacementMode.Hidden;
 
         Closed += (_, _) =>
         {

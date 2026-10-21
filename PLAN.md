@@ -2389,6 +2389,35 @@ yet on the iPad. `tailscale serve --bg http://127.0.0.1:8005` set up 10-21 (`htt
   `POST /api/remote/pair` are open. :8000 (the desktop) is untouched.
 - **Pairing:** Settings -> Remote shows a 6-character code (10 min, one live at a time, dropped after 10 wrong
   guesses) with a QR of `https://<host>/m/#pair=CODE` (segno, added to requirements). The phone trades it for a
+**Chat scroll fight (desktop, 10-21; built, NOT re-tested on device):** the user couldn't scroll to the bottom of
+a long thread ("it jitters to above again"). UI Automation on the running app: stuck at 84.9% with later messages
+below; a programmatic jump to 60% snapped back to the end. Two causes in `MainWindow.ChatScroll.cs`: (1) scrolled up,
+the view stayed bottom-anchored (`VerticalAnchorRatio=1`, from 4.17b), so each row the virtualizing ItemsRepeater laid
+out below at a height other than its estimate moved the view back up; (2) a jump or scrollbar drag left "follow the
+end" on until it finished, and the content growing meanwhile queued a scroll back down. Now `SetChatFollow` sets the
+anchor with the state (1 while following, 0 otherwise -- also keeps scroll-back insertions in place), and any scroll
+not started by us (`_chatOwnScroll` marks ours) lets go of the end as soon as it leaves it, even mid-drag.
+**NOT FIXED on device** (user after restart, 10-21: "still having the same issues"). Next: confirm the running build
+has the change (AppX layout time vs source), re-run the UIA probes (scratchpad `uia_chat.ps1` / `uia_wheel.ps1`:
+scroll %, view %, wheel notches) and log `VerticalAnchorRatio` / offset / extent per ViewChanged to find what moves
+the view; candidates left: the thread's scroll-back (`LoadOlderThreadAsync` near the top), the 4 s head check reload,
+or giving up virtualization (`VerticalCacheLength`) so the extent stops changing.
+**Traced and fixed 10-21 evening -- DEVICE-VERIFIED (user: "its fixed"); trace removed.** The
+running build did have the change; a temporary per-event trace (`jarvis-scroll.log` beside the exe, `TraceChatScroll`)
+showed two real causes: (1) the virtualizing ItemsRepeater's extent flipped ~3760 <-> ~4320 DIP several times a second
+near the bottom (unrealized rows' heights guessed from an average that changed as end rows were realized), throwing the
+view ~600 DIP up -- the "jitters to above"; (2) ViewChanged also fires for anchoring/re-measure shifts (71 DIP off the end
+with nobody scrolling), and treating those as the user flipped following and the anchor ratio, which moved it again.
+Now `MessageList` has `VerticalCacheLength="10000"` (every row laid out; a thread is a few pages of 80), and only real
+input -- wheel, keys, the scrollbar's `Scroll`, `DirectManipulation*` -- decides following; while following, any other
+shift is put back at the end. With it: extent steady, scrolls land exactly at the end.
+**"Ctrl + ," popup that never left (10-21; fixed, DEVICE-VERIFIED):** the Settings accelerator sits on
+`RootGrid`, and WinUI shows an accelerator as a hover tooltip on its element -- here the whole window, which the pointer
+never leaves. `RootGrid.KeyboardAcceleratorPlacementMode = Hidden`; the shortcut itself still works.
+**Android gotcha (10-21):** the CMF phone couldn't open `https://msi.taild6d645.ts.net/m/` while the tailnet itself
+was fine (`tailscale ping` 6 ms direct). Cause: Android **Private DNS** set to a hostname overrides Tailscale's
+MagicDNS, so `.ts.net` names don't resolve; set it to Off or Automatic. (Chrome's "Use secure DNS" with a fixed
+provider does the same.)
   token; only its SHA-256 is kept in `data/remote.json`. Paired devices listed with Remove (signs out at once).
   iPadOS keeps a Home Screen app's storage apart from Safari's, so on iPad: add to Home Screen first, type the code there.
 - **Remote turns:** forced into the Freeform thread (session, FREEFORM, no project/attachments/model override);
