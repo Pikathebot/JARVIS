@@ -255,7 +255,7 @@ public sealed partial class MainWindow : Window
         ExtendTitleBar();
         SetUpChatFollow();
         SetUpComposerWatch();
-        // The toolbar capsules float over the frosted toolbar band, one layer up (4.20).
+        // The toolbar capsules float on the reading surface's top edge, one layer up.
         foreach (var capsule in new[] { SidebarCapsule, StatusCapsule, ToolsCapsule })
         {
             capsule.Layer = Jarvis_Glass.GlassLayers.ToolbarCapsule;
@@ -448,7 +448,9 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(RightPanel, 2);
             RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
             RightPanel.Width = double.NaN;
-            RightPanel.Margin = new Thickness(PanelGap, ToolbarHeight, 0, 0);
+            // Docked, it runs to the window's top like the chat, the caption buttons on its top edge.
+            RightPanel.Margin = new Thickness(PanelGap, 0, 0, 0);
+            RightPanel.Padding = new Thickness(0, ToolbarHeight - PanelGap, 0, 0);
             Canvas.SetZIndex(RightPanel, 0);
             RightPanel.ClearValue(Jarvis_Glass.GlassSlab.LayerProperty);
         }
@@ -460,6 +462,7 @@ public sealed partial class MainWindow : Window
             RightPanel.Width = Math.Min(PanelWidth, Math.Max(240, available - 24));
             // Floating, it starts below the toolbar so the button that closes it stays reachable.
             RightPanel.Margin = new Thickness(0, ToolbarHeight, 0, 0);
+            RightPanel.Padding = new Thickness(0);
             Canvas.SetZIndex(RightPanel, 10);
             RightPanel.Layer = 3;
         }

@@ -2531,3 +2531,9 @@ now be 420 DIPs wide -- at the minimum it ran edge to edge, labels clipped on th
 button under the traffic lights, Create cut off. Now `MaxWidth="460"`, stretched, `Margin="16,56,16,16"` (clear of
 the caption row). Snapshot-verified at 630, 960 and 1920 px. The alert text faintly visible through a sheet is the deliberate 8%
 backdrop fade, not a bug. Design system v19.
+**Band removed 2026-10-21 (user: "it looks odd... either remove it or enhance it"; built, snapshot-verified, user:
+"for now good" 10-21; docked inspector and narrow widths not looked at).** A pill over a slab of the same width, 8 DIP apart, read as three pieces of glass. Now
+`MessagesSlab` spans the caption row too (`Grid.RowSpan=2`, `Padding` top 40, so the transcript still starts below the
+capsules), the toolbar capsules float on its top edge (layer 2, `Canvas.ZIndex=1` so the slab never takes their
+clicks), and a docked inspector also runs to the top (margin 0, padding 40) so the caption buttons sit on its glass.
+A floating inspector still starts at 48. Design system AppLayout item 2 + preview amended, v25.

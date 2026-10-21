@@ -249,24 +249,7 @@
                 </Grid>
             </glass:GlassSlab>
 
-            <!-- Chat column: the toolbar in the caption row, then the reading surface. -->
-            <!--
-                The toolbar band: a frosted strip behind the capsules, from the sidebar's edge to the
-                window's. Without it the caption row was clear, and the window behind showed through
-                sharp between the capsules (4.20: another app's title and icons sat beside the model
-                pill). Behind everything here, and it takes no clicks; the capsules float over it
-                one layer up (GlassLayers.ToolbarCapsule).
-            -->
-            <glass:GlassSlab
-                x:Name="ToolbarBand"
-                Grid.Column="1"
-                Grid.ColumnSpan="2"
-                Height="40"
-                VerticalAlignment="Top"
-                IsHitTestVisible="False"
-                Material="Regular"
-                SlabCornerRadius="20" />
-
+            <!-- Chat column: the reading surface, full height, with the toolbar floating on its top edge. -->
             <Grid x:Name="ChatColumn" Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="40" />
@@ -274,11 +257,13 @@
                 </Grid.RowDefinitions>
 
                 <!--
-                    Toolbar: clear-glass capsules floating in the caption row, no slab behind
-                    them. The right margin leaves the system caption buttons their room; it drops
-                    to 0 while the inspector is docked, when they sit over the inspector's column.
+                    Toolbar: clear-glass capsules floating on the reading surface's top edge, one
+                    layer up (GlassLayers.ToolbarCapsule), so they refract it: iOS 26's toolbar
+                    over content. Drawn above the slab (ZIndex) so the slab never takes their clicks.
+                    The right margin leaves the system caption buttons their room; it drops to 0
+                    while the inspector is docked, when they sit on the inspector's top edge.
                 -->
-                <Grid x:Name="TitleBarRow" Grid.Row="0" Margin="0,0,85,0" ColumnSpacing="8">
+                <Grid x:Name="TitleBarRow" Grid.Row="0" Canvas.ZIndex="1" Margin="0,0,85,0" ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
@@ -330,10 +315,13 @@
                 </Grid>
 
                 <!--
-                    The reading surface: one thick slab. Nothing on it is glass except the
-                    composer's field: no glass on glass behind the text.
+                    The reading surface: one thick slab, from the window's top to its bottom like the
+                    sidebar. Nothing on it is glass except the composer's field and the toolbar
+                    capsules on its top edge, above the text (padding). It used to start below the
+                    caption row, with a separate frosted pill behind the capsules: three pieces of
+                    glass where iOS has two (user, 2026-10-21: "it looks odd").
                 -->
-                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="1" Margin="0,8,0,0" Material="Thick" SlabCornerRadius="{StaticResource RadiusPanel}">
+                <glass:GlassSlab x:Name="MessagesSlab" Grid.Row="0" Grid.RowSpan="2" Padding="0,40,0,0" Material="Thick" SlabCornerRadius="{StaticResource RadiusPanel}">
                     <Grid x:Name="SurfaceContent">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
