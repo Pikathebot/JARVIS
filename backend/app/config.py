@@ -225,6 +225,8 @@ class Settings(BaseSettings):
     bark_server_script: str = Field(default="scripts/bark_server.py", alias="BARK_SERVER_SCRIPT")
     bark_model_dir: str = Field(default="tools/bark-pro", alias="BARK_MODEL_DIR")
     bark_port: int = Field(default=8006, alias="BARK_PORT")
+    # Stopped after this long unused on the CPU (~3.4 GB of RAM while it runs); 0 = never.
+    bark_idle_seconds: float = Field(default=300.0, alias="BARK_IDLE_SECONDS")
 
     # The local model runtime. llama.cpp is the only one; routing decisions carry this name.
     model_runtime: str = Field(default="llama_cpp", alias="MODEL_RUNTIME")

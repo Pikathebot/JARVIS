@@ -157,6 +157,80 @@ def test_gpu_falls_back_to_whisper_gpu_when_bark_cannot_start(monkeypatch):
     assert t.vram_mb == 0.0
 
 
+class _AliveProcess:
+    pid = 0
+
+    def __init__(self):
+        self.code = None
+
+    def poll(self):
+        return self.code
+
+    def terminate(self):
+        self.code = 0
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _sidecar(monkeypatch, idle_seconds=300.0):
+    from app.voice.bark_sidecar import BarkSidecar
+
+    bark = BarkSidecar(port=18006)
+    bark.idle_seconds = idle_seconds
+    monkeypatch.setattr(type(bark), "available", property(lambda self: True))
+    return bark
+
+
+def test_bark_cold_start_never_blocks_an_utterance(monkeypatch):
+    # Device 2026-10-23: the first utterance waited 106 s for Bark to start and froze the backend.
+    import threading
+
+    import numpy as np
+
+    bark = _sidecar(monkeypatch)
+    release, started = threading.Event(), []
+
+    def slow_start(device=None):
+        started.append(device)
+        release.wait(5)
+        bark._process, bark.device = _AliveProcess(), "cpu"
+        return True
+
+    monkeypatch.setattr(bark, "ensure_running", slow_start)
+    for _ in range(3):  # each raises at once (Whisper answers); only one start is begun
+        with pytest.raises(RuntimeError, match="starting"):
+            bark.transcribe(np.zeros(16000, np.float32))
+    assert len(started) == 1
+    release.set()
+    for _ in range(100):
+        if bark.is_ready() and not bark._starting:
+            break
+        threading.Event().wait(0.02)
+    assert bark.is_ready()
+
+
+def test_bark_stops_after_idle_on_cpu_but_not_on_gpu(monkeypatch):
+    import time
+
+    bark = _sidecar(monkeypatch, idle_seconds=60.0)
+    bark._process, bark.device = _AliveProcess(), "cpu"
+    bark._last_used = time.time()
+    assert bark.stop_if_idle() is False  # just used
+    bark._last_used = time.time() - 61
+    bark.device = "cuda"
+    assert bark.stop_if_idle() is False  # voice mode owns the GPU server
+    bark.device = "cpu"
+    assert bark.stop_if_idle() is True
+    assert not bark.is_running() and bark.device is None
+
+
+def test_bark_idle_stop_can_be_turned_off(monkeypatch):
+    bark = _sidecar(monkeypatch, idle_seconds=0)
+    bark._process, bark.device, bark._last_used = _AliveProcess(), "cpu", 0.0
+    assert bark.stop_if_idle() is False and bark.is_running()
+
+
 # --- API Integration Tests with FastAPI app ---
 
 @pytest.mark.anyio

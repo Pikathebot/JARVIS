@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 from typing import Any, Optional
@@ -84,7 +85,8 @@ async def listen(
         )
 
     fmt = (file.filename or "audio.webm").rsplit(".", 1)[-1].lower()
-    result = get_transcriber().transcribe_audio_bytes(data, format=fmt)
+    # On a worker thread: Bark's first start blocks 8-30 s and would freeze every other request.
+    result = await asyncio.to_thread(get_transcriber().transcribe_audio_bytes, data, format=fmt)
     transcript = (result.get("text") or "").strip()
 
     # transcribe_audio_bytes strips wake-word prefixes for convenience; the
