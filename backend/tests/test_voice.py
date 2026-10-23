@@ -93,6 +93,70 @@ def test_gpu_whisper_failure_leaves_the_cpu_model_serving(monkeypatch):
     assert t.use_gpu(False) is True
 
 
+class _FakeBark:
+    def __init__(self, text="jarvis open chrome", fail=False):
+        self.text, self.fail, self.device, self.vram_mb, self.stopped = text, fail, None, 0.0, False
+
+    def transcribe(self, samples):
+        if self.fail:
+            raise RuntimeError("Bark sidecar unavailable")
+        return self.text
+
+    def ensure_running(self, device=None):
+        if self.fail:
+            return False
+        self.device, self.vram_mb = device or "cpu", 1400.0 if device == "cuda" else 0.0
+        return True
+
+    def stop(self):
+        self.stopped, self.device, self.vram_mb = True, None, 0.0
+
+
+def _bark_transcriber(monkeypatch, fake):
+    import numpy as np
+
+    from app.config import settings
+    from app.voice import transcriber as tmod
+
+    monkeypatch.setattr(settings, "stt_engine", "bark")
+    monkeypatch.setattr(tmod, "get_bark_sidecar", lambda: fake)
+    monkeypatch.setattr(tmod, "decode_audio", lambda data: np.zeros(16000, np.float32))
+    return AudioTranscriber(model_size="tiny.en")
+
+
+def test_bark_is_the_main_engine_and_strips_the_wake_word(monkeypatch):
+    t = _bark_transcriber(monkeypatch, _FakeBark("jarvis, open chrome"))
+    res = t.transcribe_audio_bytes(b"x" * 64, format="webm")
+    assert res["engine"] == "bark"
+    assert res["text"] == "open chrome"
+    assert res["raw_text"] == "jarvis, open chrome"
+    assert t._whisper_model is None  # Whisper was never loaded
+
+
+def test_whisper_answers_when_bark_fails(monkeypatch):
+    t = _bark_transcriber(monkeypatch, _FakeBark(fail=True))
+    monkeypatch.setattr(t, "_transcribe_whisper", lambda data, fmt: {"text": "from whisper", "engine": "whisper"})
+    assert t.transcribe_audio_bytes(b"x" * 64, format="webm")["engine"] == "whisper"
+
+
+def test_bark_gpu_reports_vram_and_stops_with_voice_mode(monkeypatch):
+    fake = _FakeBark()
+    t = _bark_transcriber(monkeypatch, fake)
+    assert t.use_gpu(True) is True
+    assert fake.device == "cuda" and t.vram_mb == 1400.0
+    assert t.use_gpu(False) is True
+    assert fake.stopped and t.vram_mb == 0.0
+
+
+def test_gpu_falls_back_to_whisper_gpu_when_bark_cannot_start(monkeypatch):
+    import faster_whisper
+
+    t = _bark_transcriber(monkeypatch, _FakeBark(fail=True))
+    monkeypatch.setattr(faster_whisper, "WhisperModel", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no cuda")))
+    assert t.use_gpu(True) is False
+    assert t.vram_mb == 0.0
+
+
 # --- API Integration Tests with FastAPI app ---
 
 @pytest.mark.anyio

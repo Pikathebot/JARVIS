@@ -712,3 +712,19 @@ Everything above makes Jarvis *capable*. This layer is what makes it behave like
     button under the traffic lights, Create cut off. Now `MaxWidth="460"`, stretched, `Margin="16,56,16,16"` (clear of
     the caption row). Snapshot-verified at 630, 960 and 1920 px. The alert text faintly visible through a sheet is the deliberate 8%
     backdrop fade, not a bug. Design system v19.
+
+## Bark 3.0 Pro as the main speech-to-text engine (2026-10-22)
+Replaces Whisper as the first choice; Whisper stays as the fallback. Asked for by the user from the model card (Open ASR
+average 4.29 % vs Whisper large-v3 6.04 %, AMI 7.2 vs 13.6 %); **not compared on the user's own voice** (user chose to skip it).
+- `tools/bark-pro` (1.25 GB, CC-BY-4.0). Runs in `tools/laya-venv` (torch 2.11 + transformers 5.18 `ParakeetForTDT`; `librosa`
+  added to that venv with `uv pip`), so the backend venv stays torch-free. `scripts/bark_server.py` on port 8006 takes raw
+  16 kHz float32 samples; the backend decodes webm/mp4/wav with PyAV (`faster_whisper.audio.decode_audio`). Recordings over 30 s are
+  cut at the quietest point near the edge (47 s test clip: 5.8 s on CPU, all 8 sentences kept).
+- `AudioTranscriber.transcribe_audio_bytes`: Bark first; any failure (not installed, start failed, HTTP error) logs a warning and
+  Whisper answers. A failed start isn't retried for 60 s. `use_gpu(True)` (voice mode) restarts the sidecar on CUDA and reports
+  its VRAM to the governor; `use_gpu(False)` / game mode stops it (next utterance cold-starts it on the CPU, ~30 s the first time
+  in the end-to-end run, so that first utterance after voice mode is slow). If Bark can't start on the GPU, Whisper's GPU model loads as before.
+- Measured (SAPI-spoken test clip, 6 s): CPU fp32 0.8 s, CUDA bf16 0.37 s / 1256 MiB reserved. Output has casing and punctuation.
+- Verified by tests (1247 pass) and a real end-to-end run on the CPU. **Unverified on device:** the GPU path inside voice mode
+  with the fast model + Laya loaded (VRAM headroom), the phone mic route, wake-word hit rate on real speech, and the first-utterance delay.
+

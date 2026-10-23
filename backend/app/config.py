@@ -217,6 +217,15 @@ class Settings(BaseSettings):
     whisper_cuda_dll_dir: str = Field(default="tools/laya-venv/Lib/site-packages/torch/lib",
                                       alias="WHISPER_CUDA_DLL_DIR")
 
+    # Bark 3.0 Pro (Underdog, a Parakeet-TDT 0.6B fine-tune; English only) is the main speech-to-text
+    # engine, a sidecar in the Laya venv (scripts/bark_server.py). CPU by default, CUDA bf16
+    # (~1.3 GB) while voice mode is on. Whisper above is the fallback when it can't answer.
+    stt_engine: str = Field(default="bark", alias="STT_ENGINE")  # "bark" | "whisper"
+    bark_python: str = Field(default="tools/laya-venv/Scripts/python.exe", alias="BARK_PYTHON")
+    bark_server_script: str = Field(default="scripts/bark_server.py", alias="BARK_SERVER_SCRIPT")
+    bark_model_dir: str = Field(default="tools/bark-pro", alias="BARK_MODEL_DIR")
+    bark_port: int = Field(default=8006, alias="BARK_PORT")
+
     # The local model runtime. llama.cpp is the only one; routing decisions carry this name.
     model_runtime: str = Field(default="llama_cpp", alias="MODEL_RUNTIME")
 
