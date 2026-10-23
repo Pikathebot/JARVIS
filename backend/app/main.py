@@ -1094,7 +1094,7 @@ async def voice_transcribe(file: Optional[UploadFile] = File(None)):
     if file:
         data = await file.read()
         fmt = file.filename.split(".")[-1] if file.filename else "wav"
-        res = transcriber.transcribe_audio_bytes(data, format=fmt)
+        res = await asyncio.to_thread(transcriber.transcribe_audio_bytes, data, format=fmt)
         return res
     return {"success": False, "text": "", "error": "No audio file provided"}
 

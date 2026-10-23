@@ -3,9 +3,15 @@ Bark sidecar: the main speech-to-text engine (Underdog Bark 3.0 Pro), a torch pr
 
 Like Laya it lives in ``tools/laya-venv`` so the backend's venv stays small; this starts
 ``scripts/bark_server.py`` there and sends it 16 kHz mono float32 samples over loopback HTTP.
-It runs on the CPU (~0.8 s for a 6 s clip, cold-started on first use) and moves to CUDA bf16
-(~0.4 s, ~1.3 GB) while voice mode is on -- ``AudioTranscriber.use_gpu`` asks for that. Its VRAM
-is reported through ``vram_mb`` so the governor counts it as ours.
+It runs on the CPU (~0.8 s for a 6 s clip) and moves to CUDA bf16 (~0.4 s, ~1.3 GB) while voice
+mode is on -- ``AudioTranscriber.use_gpu`` asks for that. Its VRAM is reported through ``vram_mb``
+so the governor counts it as ours.
+
+On the CPU it holds ~3.4 GB of RAM (fp32 weights + torch; ~7 GB committed), measured 2026-10-23 --
+bf16 on this CPU is 35-50x slower and int8 dynamic quantisation larger, so the size stays. Hence it
+is never waited for: an utterance that finds it not ready starts it in the background and Whisper
+answers (a cold start is 25 s, 106 s on a device short of RAM, and it once froze the backend), and
+it stops after ``bark_idle_seconds`` unused. On the GPU, voice mode owns its lifetime.
 
 Whisper (``AudioTranscriber``) is the fallback: every method here either works or says it
 didn't, and the caller falls through.
@@ -62,6 +68,11 @@ class BarkSidecar:
         self._client = httpx.Client(timeout=request_timeout)
         self._recent: list[str] = []
         self._failed_at = 0.0  # a start that failed isn't retried on every utterance
+        self.idle_seconds = settings.bark_idle_seconds
+        self._last_used = 0.0
+        self._starting = False
+        self._start_guard = threading.Lock()
+        self._watcher: Optional[threading.Thread] = None
 
     @property
     def available(self) -> bool:
@@ -70,8 +81,13 @@ class BarkSidecar:
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
+    def is_ready(self) -> bool:
+        """Running and answered its health check (``device`` is set only then)."""
+        return self.is_running() and self.device is not None
+
     def status(self) -> dict[str, Any]:
-        return {"available": self.available, "running": self.is_running(), "device": self.device,
+        return {"available": self.available, "running": self.is_running(), "starting": self._starting,
+                "device": self.device, "idle_seconds": self.idle_seconds,
                 "port": self.port, "model": str(self.model_dir), "vram_mb": round(self.vram_mb)}
 
     def _drain(self, stream) -> None:
@@ -149,12 +165,55 @@ class BarkSidecar:
                     self.vram_mb = float(reserved) + _CUDA_CONTEXT_MB if reserved else 0.0
                     logger.info("Bark sidecar ready in %.1fs on %s (%.0f MiB VRAM)",
                                 time.time() - started, device, self.vram_mb)
+                    self._last_used = time.time()
+                    self._watch_idle()
                     return True
                 time.sleep(0.25)
             logger.warning("Bark sidecar not healthy after %.0fs; stopping it.", self.startup_timeout)
             self._stop_process()
             self._failed_at = time.time()
             return False
+
+    def start_in_background(self, device: Optional[str] = None) -> None:
+        """``ensure_running`` on its own thread; a no-op while a start is already under way."""
+        with self._start_guard:
+            if self._starting:
+                return
+            self._starting = True
+
+        def run() -> None:
+            try:
+                self.ensure_running(device)
+            finally:
+                self._starting = False
+
+        threading.Thread(target=run, name="bark-start", daemon=True).start()
+
+    def _watch_idle(self) -> None:
+        if self.idle_seconds <= 0 or (self._watcher is not None and self._watcher.is_alive()):
+            return
+        self._watcher = threading.Thread(target=self._idle_loop, name="bark-idle", daemon=True)
+        self._watcher.start()
+
+    def _idle_loop(self) -> None:
+        while self.is_running():
+            time.sleep(min(30.0, max(0.05, self.idle_seconds / 4)))
+            self.stop_if_idle()
+
+    def stop_if_idle(self) -> bool:
+        """Stop a CPU server unused for ``idle_seconds``. On the GPU voice mode decides."""
+        if self.idle_seconds <= 0 or self.device != "cpu" or time.time() - self._last_used < self.idle_seconds:
+            return False
+        if not self._lock.acquire(blocking=False):  # a start or stop is under way
+            return False
+        try:
+            if self.device != "cpu" or time.time() - self._last_used < self.idle_seconds:
+                return False
+            logger.info("Bark sidecar idle for %.0fs; stopping it.", self.idle_seconds)
+            self._stop_process()
+            return True
+        finally:
+            self._lock.release()
 
     def _reap_stale(self) -> None:
         """A Bark server left by a backend that died: on Windows a new one would bind behind it."""
@@ -194,10 +253,14 @@ class BarkSidecar:
             self._stop_process()
 
     def transcribe(self, samples: np.ndarray) -> str:
-        """Text for 16 kHz mono float32 ``samples``. Raises on any failure (not running, server
-        error): the caller falls back to Whisper."""
-        if not self.ensure_running():
-            raise RuntimeError("Bark sidecar unavailable")
+        """Text for 16 kHz mono float32 ``samples``. Raises on any failure (not ready yet, server
+        error): the caller falls back to Whisper. Not ready = start it in the background, never wait."""
+        self._last_used = time.time()
+        if not self.is_ready():
+            if not self.available:
+                raise RuntimeError("Bark sidecar unavailable")
+            self.start_in_background()
+            raise RuntimeError("Bark sidecar is starting; Whisper answers meanwhile")
         r = self._client.post(f"{self.base_url}/transcribe",
                               content=np.ascontiguousarray(samples, dtype="<f4").tobytes())
         r.raise_for_status()

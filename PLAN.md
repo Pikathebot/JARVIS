@@ -2402,3 +2402,88 @@ both devices before committing to (2).
 - **The choice to make then:** web app (no upkeep, weakest offline) / native + free account (best features, weekly
   refresh, automatable) / native + paid ($99/yr, no upkeep). Claude's suggestion at the time: native Android first
   (buildable here), iPad decided after the xtool test.
+
+### 4.22 Bark speech-to-text and the calendar fix: device test (2026-10-23) -- COMMITTED, UNVERIFIED ON DEVICE
+**Voice mode PAUSED 2026-10-23 (user) until 4.24, a lean engine for Bark.** Steps 3-7 below wait for it; the calendar
+check (8) still stands.
+Bark 3.0 Pro is committed (3bb08df; record in `docs/MILESTONES.md`); the calendar's yearly repeat and "sept 19" dates
+are committed too (70bfa91, 98154fa). Not pushed. The user is testing; restart through `Start Jarvis.bat` first and keep
+`backend.log` open. What to check:
+1. **First utterance, voice mode off:** up to ~30 s the first time (Bark cold-starts on the CPU). Log:
+   `Bark sidecar ready in …s on cpu`, then `Transcribed audio (… bytes, bark)`. `falling back to Whisper` = send the
+   warning above it.
+2. **Accuracy:** a few normal sentences with names and numbers; casing and punctuation should be there. Better or worse
+   than Whisper?
+3. **Voice mode on (the risky one):** fast model + Laya + Bark on the GPU together. Log: Bark restarts `on cuda`
+   (~1,256 MiB); watch for a governor eviction or downgrade notice; talk for a minute and watch reply speed.
+4. **Wake word:** at the start of a sentence several times, normal distance; roughly how often it catches it.
+5. **Voice mode off again:** the next utterance cold-starts Bark on the CPU; how long it feels.
+6. **Phone mic:** one voice message from the phone app; it should transcribe and get a spoken reply.
+7. **Game mode** (optional) while voice mode is on: Bark stops (`Bark sidecar stopped.`).
+8. **Calendar:** add a birthday as "sept 19"; check a later year's agenda shows it; check Google Calendar shows one
+   repeating event, not copies, after the next sync.
+
+**Device test 2026-10-23 ~10:18 -- first utterance froze the backend.** `/api/voice/listen` (and `/voice/transcribe`
+in `main.py`) called `transcribe_audio_bytes` on the event loop, so Bark's cold start blocked every request: the app
+saw the backend as dead. The start took **106.5 s** (expected ~30) because RAM was down to ~260 MB free: the Bark
+process held **6.9 GB private / 3.1 GB working set** for a 1.25 GB model loaded as fp32 -- not understood yet, measure
+(after load vs after a long clip) with Jarvis otherwise idle. **Fixed, uncommitted:** both calls now `asyncio.to_thread`
+(the phone route already did).
+**Memory measured (same day, standalone, synthetic + a 17 s spoken clip):** importing torch alone commits 2.5 GB
+(0.66 GB resident -- the CUDA DLLs load even for CPU); loading the fp32 model -> 6.8 GB committed / 3.1 GB resident;
+after clips 7.4 / 3.5 GB. bf16 on this CPU: 1.9 GB resident but 35-50x slower (62 s for 17 s) -- out. int8 dynamic
+quantisation: 5 GB resident and slower -- out. Loading bf16 then `.float()`: no gain. So Bark on the CPU costs ~3.4 GB of
+RAM while it runs, and it was never stopped. **Fixed, uncommitted:** it is never waited for (an utterance that finds it
+not ready starts it in the background and Whisper answers that one) and it stops after `BARK_IDLE_SECONDS` (300) unused
+on the CPU; on the GPU voice mode owns it. End-to-end on a spare port: first call returned in 0.00 s, ready 28 s later,
+correct transcript, stopped 23 s after last use (idle set to 20 s). So after 5 quiet minutes the next utterance is
+Whisper's, and Bark takes over ~30 s later. Once up, transcripts: "Hey Jarvis." (wake hit), "hey jorgush", "Hello, Jervis."
+(misses), and five clips of 400-600 KB came back **empty** -- watch whether Bark drops real speech.
+
+### 4.23 Thinking shown like Claude's, and the right panel reworked (raised by the user 2026-10-23) -- NOT STARTED
+**The ask (user):** "You know how Claude shows the thinking process -- I want the thinking process to be like that in this
+app too, and we can remove the reasoning and activity stuff in the panel too (we need to work on that panel)."
+
+**What there is today:** the main model thinks every turn (`MAIN_THINKING_EVERY_TURN`, default on); the backend splits
+`<think>` into `reasoning` SSE events. The client shows that text only in the right panel's **Reasoning** tab
+(`MainWindow.xaml` `ReasoningPage`, with a dot on the tab strip while it streams). Tool steps already show inline in the
+message bubble (`MessageBubbleControl` `ToolStepsHost`, one line each that opens for detail) and again in the panel's
+**Activity** tab. The panel's tabs: Artifacts | Files | Reasoning | Context | Activity.
+
+**Direction (to agree with the user before building):**
+- Thinking goes **inline, above the answer, in the message bubble**, like Claude: while it streams, a short live line
+  ("Thinking…", with the latest summary or the last line of thought) that can be opened; when the answer starts, it
+  collapses to one line ("Thought for 6 s") that opens to the full text. Tool steps sit in the same flow, in the order
+  they happened (thinking -> tool -> thinking -> answer), so one block tells the story of the turn.
+- Saved with the message, so it is still there after a reload (check what the store keeps of `reasoning` today).
+- Same on the phone app (`static/m/`) and the HUD, or say why not.
+- **Remove the Reasoning and Activity tabs** from the right panel (and the reasoning-streaming dot).
+
+**The panel itself -- to discuss with the user:** what's left is Artifacts | Files | Context. Questions: is Context
+worth a tab (or a line in the header / a popover)? Does the panel open on its own when an artifact is made, and close
+when empty? Does it fit the Workspace-as-Projects discussion (4.18), where a project's files, instructions and memories
+might live? Do that discussion first, then design.
+
+**Design system:** a new inline Thinking component (collapsed/streaming/open states) and the panel's new tab set go
+into the Design System artifact in the same piece of work.
+
+### 4.24 A lean speech-to-text engine for Bark (raised by the user 2026-10-23) -- QUEUED, after the app work ahead of it
+**Why:** Bark 3.0 Pro on PyTorch costs ~3.4 GB of RAM on the CPU and a 25-30 s start (most of it importing torch), where
+Whisper `small.en` on CTranslate2 int8 is a fraction of that (4.22 has the measurements). Bark's accuracy is the reason
+to keep it; PyTorch is the cost. **Until this is done, voice mode is paused** (the user's call): no voice-mode device
+testing, Bark stays as built (background start + 5-minute idle stop, Whisper meanwhile).
+
+**In order -- stop at the first that is good enough:**
+1. **ONNX int8 through an existing C++ runtime.** Bark is a Parakeet-TDT 0.6B fine-tune; sherpa-onnx (on ONNX Runtime) already
+   runs NVIDIA's Parakeet-TDT in int8 on the CPU. Export Bark's weights to ONNX (encoder + decoder/joiner as sherpa-onnx
+   expects), quantize to int8, and run it from the backend venv (sherpa-onnx has Python wheels -- no torch, maybe no
+   sidecar at all). Measure against today: RAM (3.4 GB), start (~26 s), 17 s clip (1.8 s), and accuracy on the same clip
+   plus real recordings of the user (names, "Jarvis").
+2. **Our own C++ engine** (the user asked whether Claude could write one): yes, feasible -- a ggml-based runner in the style
+   of whisper.cpp / llama.cpp for the FastConformer encoder + TDT decoder, int8/q8 weights, CPU and CUDA. A big piece of
+   work (the encoder's conv/attention blocks, mel features, the TDT greedy decode, a weight converter, tests against the
+   PyTorch output) and only worth it if (1) fails or is too slow. Upside: we own it, it fits the llama.cpp tooling already
+   here, and the same engine could serve later models.
+3. **A smaller Bark variant** if neither helps: Underdog Bark 3.0 (base), -Clean and -Plus exist next to -Pro on
+   Hugging Face (ConwayResearch). Their sizes and accuracy are unchecked -- read each model card (parameters, WER) first;
+   a variant is only lighter if it has fewer parameters or ships quantized weights.
