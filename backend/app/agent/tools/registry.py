@@ -396,6 +396,7 @@ class CalendarArgs(BaseModel):
     when: str = Field(default="", description="'tomorrow 3pm', '2026-10-20 15:00'; a day alone = all day. Agenda: 'today', 'this week', 'this year'")
     duration: str = Field(default="", description="'1h', '30m'; default 1h")
     event: str = Field(default="", description="Its id, or some of its words (move, delete, find)")
+    repeat: str = Field(default="", description="'yearly' or empty (add)")
 
 
 class EmailArgs(BaseModel):

@@ -72,6 +72,8 @@ def _body(ev: dict[str, Any]) -> dict[str, Any]:
         body["end"] = {"dateTime": _aware(datetime.fromisoformat(ev["end"]))}
     else:
         body["start"], body["end"] = {"date": ev["start"]}, {"date": ev["end"]}
+    if ev.get("repeat") == "yearly":
+        body["recurrence"] = ["RRULE:FREQ=YEARLY"]
     return body
 
 
@@ -165,8 +167,9 @@ def sync() -> dict[str, int]:
                 logger.warning("Calendar sync of %s failed: %s", ev.get("id"), exc)
                 n["failed"] += 1
                 keep.append(ev)
+        series = {ev["gid"] for ev in keep if ev.get("repeat") and ev.get("gid")}  # Jarvis owns these
         for gid, g in remote.items():  # new at Google
-            if gid not in seen:
+            if gid not in seen and g.get("recurringEventId") not in series:
                 ev = {"id": ce.new_id(keep), "gid": gid, "dirty": False, "updated": time.time(), **_fields(g)}
                 keep.append(ev)
                 n["created_here"] += 1
