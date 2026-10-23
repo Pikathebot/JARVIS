@@ -2467,6 +2467,39 @@ might live? Do that discussion first, then design.
 **Design system:** a new inline Thinking component (collapsed/streaming/open states) and the panel's new tab set go
 into the Design System artifact in the same piece of work.
 
+### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
+**The ask (user):** "Since I am a college student -- integration of competitive programming websites like LeetCode and
+other useful integrations that might help me."
+
+**Competitive programming (APIs to verify before building -- terms, rate limits, what needs a login):**
+- **LeetCode:** no official API; the site's own GraphQL endpoint (`leetcode.com/graphql`) serves the daily problem, a
+  user's public profile/solved counts/streak, recent accepted submissions and contest rating without a login. Anything
+  private (all submissions, notes) needs the user's session cookie -- avoid; stay on public data.
+- **Codeforces:** official public API (`codeforces.com/api/`): upcoming contests, user rating/history, submissions,
+  problemset by tag and rating.
+- **AtCoder / CodeChef / others:** AtCoder has community APIs (kenkoooo AtCoder Problems); CodeChef has little that is
+  public. **clist.by** aggregates contests from most judges (needs a free API key) -- one source for "what's on this week".
+- **Which judges the user actually uses, and their handles:** ask before building.
+
+**What Jarvis would do with it (to agree with the user):**
+- "What's today's LeetCode daily?" / "any contests this weekend?" -- a tool answering from those APIs.
+- Contests onto the calendar (the existing `calendar` tool + Google sync), with a reminder before each.
+- Progress: solved counts, streak, rating trend; a line in the day briefing ("daily not done yet, Codeforces Round at 20:05").
+- Practice help: pick a problem by topic and difficulty, explain an approach or review the user's solution **without
+  handing over the answer unless asked** (a skill, not always-on text -- prompt-prefix budget).
+- Contest mode: during a live contest Jarvis doesn't solve the contest's problems (judges' rules), says so.
+
+**Other student integrations to discuss (pick with the user, don't build all):**
+- The college's LMS -- Google Classroom (API, fits the Google sign-in already there), Moodle or Canvas (both have REST
+  APIs; depends on the college): assignments and due dates into tasks/calendar, announcements in the briefing.
+- Timetable: classes as a repeating calendar (needs weekly repeat; 4.22's calendar has yearly only).
+- GitHub: profile/repos/issues beyond the local git tools (public API, optional token).
+- Papers/notes: arXiv / Semantic Scholar search through `research`; flashcards/spaced repetition from notes.
+- Focus timer (Pomodoro) tied to Game-mode-style "don't disturb".
+
+**Constraints:** each new tool = the four registration points (CLAUDE.md) and costs prompt-head budget in Freeform; prefer
+one `coding` tool with actions (like `calendar`) over many. Network data is untrusted (taint rules apply).
+
 ### 4.24 A lean speech-to-text engine for Bark (raised by the user 2026-10-23) -- QUEUED, after the app work ahead of it
 **Why:** Bark 3.0 Pro on PyTorch costs ~3.4 GB of RAM on the CPU and a 25-30 s start (most of it importing torch), where
 Whisper `small.en` on CTranslate2 int8 is a fraction of that (4.22 has the measurements). Bark's accuracy is the reason
