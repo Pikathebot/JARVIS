@@ -352,7 +352,9 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # WORKSPACE 35000 -> 36000 on 2026-10-19 for the email tool (PLAN 4.16 phase D; the user chose raising
 # the limit over merging the git tools or trimming descriptions).
 # WORKSPACE 36000 -> 37000 on 2026-10-20 for recall (PLAN 4.18 phase 3; the user chose raising again).
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25500, "WORKSPACE": 37000}
+# FREEFORM 25500 -> 25700 on 2026-10-22 for the calendar's yearly repeat (one optional field; the user
+# chose raising over trimming descriptions, as before).
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25700, "WORKSPACE": 37000}
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])
