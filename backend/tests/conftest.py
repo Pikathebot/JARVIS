@@ -22,6 +22,8 @@ os.environ.setdefault("JARVIS_MEMORY_BIN_PATH", os.path.join(os.path.dirname(_TE
 # The in-app compare's draw is random: a test turn must never start one (tests that need it set the
 # rate), and a vote never lands in the user's real preference file.
 os.environ.setdefault("COMPARE_RATE", "0")
+# Bark is a real GPU/CPU sidecar process; tests that want it fake the sidecar themselves.
+os.environ.setdefault("STT_ENGINE", "whisper")
 # Freeform's file tools work on the user's home folder; a test turn must never touch the real one.
 os.environ.setdefault("FREEFORM_FILES_ROOT", os.path.join(os.path.dirname(_TEST_DB), "freeform-home"))
 os.makedirs(os.environ["FREEFORM_FILES_ROOT"], exist_ok=True)

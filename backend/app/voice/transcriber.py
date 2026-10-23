@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 import numpy as np
 
+from app.voice.bark_sidecar import decode_audio, get_bark_sidecar
+
 logger = logging.getLogger("jarvis.voice.transcriber")
 
 
@@ -19,12 +21,13 @@ def _repo_path(path_str: str) -> Path:
 
 class AudioTranscriber:
     """
-    Speech-to-Text transcription engine powered by local Whisper.
+    Speech-to-Text. Bark 3.0 Pro (``BarkSidecar``) is the main engine; local Whisper is the
+    fallback and answers whenever Bark can't (not installed, failed to start, errored).
 
-    A CPU model always serves; a larger GPU model (see ``Settings.whisper_gpu_model``) can be
-    loaded beside it with :meth:`use_gpu` -- voice mode does so while the 9B is unloaded and
-    there is VRAM for it. Its measured VRAM is reported through ``vram_mb`` so the governor
-    counts it as ours.
+    :meth:`use_gpu` moves the engine onto the card -- voice mode does so while the 9B is unloaded
+    and there is VRAM for it: Bark on CUDA, or, if that can't start, Whisper's larger GPU model
+    (``Settings.whisper_gpu_model``) beside the CPU one. The measured VRAM is reported through
+    ``vram_mb`` so the governor counts it as ours.
     """
 
     def __init__(self, model_size: Optional[str] = None, gpu_model: Optional[str] = None):
@@ -54,10 +57,32 @@ class AudioTranscriber:
                 return None
         return self._whisper_model
 
+    def _use_bark_gpu(self, on: bool) -> bool:
+        from app.config import settings
+
+        if settings.stt_engine != "bark":
+            return False
+        bark = get_bark_sidecar()
+        if not on:
+            if bark.device == "cuda":
+                bark.stop()  # the next utterance cold-starts it on the CPU
+            return True
+        if bark.ensure_running("cuda"):
+            self.vram_mb = bark.vram_mb
+            return True
+        return False
+
     def use_gpu(self, on: bool) -> bool:
         """Load (or drop) the GPU model. Blocking; call off the event loop. False when it
         couldn't load -- the CPU model keeps serving."""
         with self._gpu_lock:
+            if self._use_bark_gpu(on):
+                if not on:
+                    self.vram_mb = 0.0
+                    if self._gpu_model is None:
+                        return True
+                else:
+                    return True
             if not on:
                 if self._gpu_model is not None:
                     self._gpu_model = None
@@ -94,13 +119,45 @@ class AudioTranscriber:
                 self.vram_mb = 0.0
                 return False
 
+    @staticmethod
+    def _strip_wake_word(full_text: str) -> str:
+        lower = full_text.lower()
+        wake_words = ["hey jarvis", "ok jarvis", "okay jarvis", "hello jarvis", "jarvis"]
+        for w in wake_words:
+            if lower.startswith(w):
+                return full_text[len(w):].strip().lstrip(",.?! ")
+        return full_text
+
     def transcribe_audio_bytes(self, audio_data: bytes, format: str = "webm") -> dict[str, Any]:
         """
-        Transcribe raw audio bytes (webm, wav, etc.) into clean text.
+        Transcribe raw audio bytes (webm, wav, etc.) into clean text: Bark first, Whisper if
+        Bark can't answer.
         """
         if not audio_data or len(audio_data) == 0:
             return {"text": "", "duration_seconds": 0.0, "confidence": 0.0, "format": format}
 
+        from app.config import settings
+
+        if settings.stt_engine == "bark":
+            try:
+                samples = decode_audio(audio_data)
+                full_text = get_bark_sidecar().transcribe(samples)
+                cleaned = self._strip_wake_word(full_text)
+                logger.info("Transcribed audio (%d bytes, bark): '%s'", len(audio_data), cleaned or full_text)
+                return {
+                    "text": cleaned or full_text,
+                    "raw_text": full_text,
+                    "duration_seconds": round(len(samples) / 16000.0, 2),
+                    "language": "en",
+                    "confidence": 0.95,
+                    "format": format,
+                    "engine": "bark",
+                }
+            except Exception as e:
+                logger.warning("Bark transcription failed, falling back to Whisper: %s", e)
+        return self._transcribe_whisper(audio_data, format)
+
+    def _transcribe_whisper(self, audio_data: bytes, format: str) -> dict[str, Any]:
         model = self._get_model()
         if model is None:
             return {"text": "", "duration_seconds": 0.0, "confidence": 0.0, "format": format, "error": "Whisper unavailable"}
@@ -126,13 +183,7 @@ class AudioTranscriber:
             full_text = " ".join([seg.text.strip() for seg in segments]).strip()
             
             # Clean wake-word prefixes
-            lower = full_text.lower()
-            wake_words = ["hey jarvis", "ok jarvis", "okay jarvis", "hello jarvis", "jarvis"]
-            cleaned = full_text
-            for w in wake_words:
-                if lower.startswith(w):
-                    cleaned = full_text[len(w):].strip().lstrip(",.?! ")
-                    break
+            cleaned = self._strip_wake_word(full_text)
 
             logger.info("Transcribed audio (%d bytes): '%s'", len(audio_data), cleaned or full_text)
             return {
@@ -141,7 +192,8 @@ class AudioTranscriber:
                 "duration_seconds": getattr(info, "duration", 0.0),
                 "language": getattr(info, "language", "en"),
                 "confidence": 0.95,
-                "format": format
+                "format": format,
+                "engine": "whisper",
             }
         except Exception as e:
             logger.error("Whisper transcription error: %s", e)
