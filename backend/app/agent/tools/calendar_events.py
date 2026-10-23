@@ -26,6 +26,7 @@ LOCK = threading.RLock()  # the Google sync edits calendar.json under the same l
 _OFF_RECORD = "Not saved: this is an off-the-record conversation, and nothing from it is kept."
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 _LIST_MAX = 25
+_LOOKAHEAD_DAYS = 366 * 10  # how far "the next event" is looked for past an empty span
 
 
 def store_path() -> Path:
@@ -94,7 +95,30 @@ def label(ev: dict[str, Any]) -> str:
     else:
         span = f"{s:%a %d %b %H:%M}-{e:%H:%M}"
     where = f" @ {ev['location']}" if ev.get("location") else ""
-    return f"{ev['id']}: {span} {ev['title']}{where}"
+    again = " (every year)" if ev.get("repeat") else ""
+    return f"{ev['id']}: {span} {ev['title']}{where}{again}"
+
+
+def _occurrences(ev: dict[str, Any], lo: datetime, hi: datetime) -> list[dict[str, Any]]:
+    """The event itself, or for a yearly one, each year's copy that overlaps [lo, hi). Copies keep
+    the series' id, so an id from the agenda still names the series."""
+    if ev.get("repeat") != "yearly":
+        return [ev]
+    s, length = start_dt(ev), end_dt(ev) - start_dt(ev)
+    out = []
+    for year in range(lo.year, hi.year + 1):
+        try:
+            at = s.replace(year=year)
+        except ValueError:  # 29 Feb in a year without one
+            at = s.replace(year=year, day=28)
+        if at < hi and at + length > lo:
+            out.append({**ev, "start": _stamp(at, is_all_day(ev)), "end": _stamp(at + length, is_all_day(ev))})
+    return out
+
+
+def _in_range(events: list[dict[str, Any]], lo: datetime, hi: datetime) -> list[dict[str, Any]]:
+    return sorted((o for e in _live(events) for o in _occurrences(e, lo, hi) if start_dt(o) < hi and end_dt(o) > lo),
+                  key=start_dt)
 
 
 _DAY_RE = re.compile(r"\b(today|tonight|tomorrow|(?:next\s+)?(?:" + "|".join(_WEEKDAYS) + r")|\d{4}-\d{2}-\d{2})\b")
@@ -111,14 +135,33 @@ def _day(word: str, now: datetime) -> date:
     return date.fromisoformat(word)
 
 
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH_DAY_RE = re.compile(r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?\s+(\d{1,2})\b")
+_DAY_MONTH_RE = re.compile(r"\b(\d{1,2})\s+(" + "|".join(_MONTHS) + r")[a-z]*\.?\b")
+
+
+def _spell_date(text: str, now: datetime) -> str:
+    """'sept 19' or '19 sep' -> '2026-09-19' in this year (a year-less date is this year's); an
+    impossible one is left as it was, so the caller's error still names it."""
+    def iso(month: str, day: str, original: str) -> str:
+        try:
+            return f"{date(now.year, _MONTHS.index(month) + 1, int(day)):%Y-%m-%d}"
+        except ValueError:
+            return original
+
+    text = _MONTH_DAY_RE.sub(lambda m: iso(m.group(1), m.group(2), m.group(0)), text)
+    return _DAY_MONTH_RE.sub(lambda m: iso(m.group(2), m.group(1), m.group(0)), text)
+
+
 def parse_when(when: str, now: Optional[datetime] = None) -> tuple[Optional[datetime], bool, str]:
     """(start, all_day, error). "tomorrow 3pm", "3pm on friday", "2026-10-20 15:00", "in 2 hours";
-    a day alone ("friday", "2026-10-20") is an all-day event."""
+    a day alone ("friday", "2026-10-20", "sept 19") is an all-day event."""
     from app.agent.tools.reminders import parse_when as clock
 
     now = now or _now()
     text = " ".join(str(when or "").lower().replace(",", " ").split())
     text = re.sub(r"(\d{4}-\d{2}-\d{2})t(?=\d)", r"\1 ", text)
+    text = _spell_date(text, now)
     bad = (None, False, f"Error: couldn't read the time '{when}'. Use e.g. 'tomorrow 3pm', 'friday 10:00', "
                         "'2026-10-20 15:00', or a day alone for all day.")
     if not text:
@@ -216,16 +259,17 @@ def _match(events: list[dict[str, Any]], key: str, now: datetime) -> tuple[Optio
 # --- the tool ---------------------------------------------------------------------------------
 
 def calendar(action: str = "agenda", title: str = "", when: str = "", duration: str = "", event: str = "",
-             session_id: Optional[str] = None) -> str:
+             repeat: str = "", session_id: Optional[str] = None) -> str:
     """
     The user's calendar (synced with Google Calendar): the agenda for a day or week, or find, add, move or delete an event.
 
     Args:
         action: agenda, find, add, move or delete.
         title: What the event is (add), or its new name (move).
-        when: When (add, move): 'tomorrow 3pm', 'friday 10:00', '2026-10-20 15:00'; a day alone = all day. For agenda: 'today', 'tomorrow', 'friday', 'this week', 'this month' or 'this year'.
+        when: When (add, move): 'tomorrow 3pm', 'friday 10:00', '2026-10-20 15:00'; a day alone = all day, e.g. '2026-09-19' or 'sept 19'. For agenda: 'today', 'tomorrow', 'friday', 'this week', 'this month' or 'this year'.
         duration: How long (add, move): '1h', '30m', '1h30m'. Default 1 hour.
         event: Which event (move, delete): its id from the agenda, or some of its words. For find: the words to look for.
+        repeat: 'yearly' (add) for a birthday or anniversary that comes back every year; empty = once.
     """
     act = str(action or "agenda").strip().lower()
     if act not in ("agenda", "find", "add", "move", "delete"):
@@ -233,13 +277,17 @@ def calendar(action: str = "agenda", title: str = "", when: str = "", duration: 
     from app.google.calendar_sync import maybe_sync, sync_soon
 
     maybe_sync()  # Google's side first, when signed in (at most once a minute; never raises)
-    out = _calendar(act, title, when, duration, event, session_id)
+    out = _calendar(act, title, when, duration, event, repeat, session_id)
     if act in ("add", "move", "delete") and not out.startswith(("Error", "Not saved", "Already")):
         sync_soon()  # and this change to Google, in the background
     return out
 
 
-def _calendar(act: str, title: str, when: str, duration: str, event: str, session_id: Optional[str]) -> str:
+_REPEATS = {"": "", "yearly": "yearly", "every year": "yearly", "annually": "yearly", "year": "yearly"}
+
+
+def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat: str,
+              session_id: Optional[str]) -> str:
     now = _now()
     with LOCK:
         state = load()
@@ -253,12 +301,12 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, sessio
             if err:
                 return err
             end = start + timedelta(days=days)
-            hits = sorted((e for e in _live(events) if start_dt(e) < end and end_dt(e) > start), key=start_dt)
+            hits = _in_range(events, start, end)
             fmt = "%a %d %b %Y" if days > 31 else "%a %d %b"
             span = f"{start:%a %d %b}" if days == 1 else f"{start:{fmt}} - {end - timedelta(days=1):{fmt}}"
             if not hits:
                 # Device 2026-10-19: after "nothing this week" the model said birthdays weren't stored at all.
-                later = sorted((e for e in _live(events) if start_dt(e) >= end), key=start_dt)
+                later = _in_range(events, end, end + timedelta(days=_LOOKAHEAD_DAYS))
                 return f"Nothing on the calendar for {span}." + (f" The next event is {label(later[0])}." if later else "")
             more = f"\n(and {len(hits) - _LIST_MAX} more)" if len(hits) > _LIST_MAX else ""
             return f"{span}:\n" + "\n".join(f"- {label(e)}" for e in hits[:_LIST_MAX]) + more
@@ -285,9 +333,13 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, sessio
             span, err = parse_duration(duration)
             if err:
                 return err
+            if str(repeat or "").strip().lower() not in _REPEATS:
+                return f"Error: repeat must be 'yearly' or empty, not '{repeat}'."
             end = at + (timedelta(days=1) if all_day else span or timedelta(hours=1))
             ev = {"id": new_id(events), "title": name, "start": _stamp(at, all_day), "end": _stamp(end, all_day),
                   "location": "", "gid": "", "dirty": True, "updated": time.time()}
+            if _REPEATS[str(repeat or "").strip().lower()]:
+                ev["repeat"] = "yearly"
             dup = next((e for e in _live(events) if e["title"].lower() == name.lower() and e["start"] == ev["start"]), None)
             if dup is not None:
                 return f"Already on the calendar: {label(dup)}."

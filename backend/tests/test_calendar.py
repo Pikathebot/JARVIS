@@ -322,3 +322,32 @@ def test_agenda_reads_longer_spans_and_names_the_next_event(cal):
     assert ce.calendar("agenda", when="this year").startswith("Mon 19 Oct 2026 - Mon 18 Oct 2027:")
     assert ce.calendar("agenda", when="next 3 days") == "Nothing on the calendar for Mon 19 Oct - Wed 21 Oct. " \
         "The next event is " + ce.label(_events()[0]) + "."
+
+
+# --- all-day dates by name and yearly birthdays (2026-10-22) ---
+
+def test_month_name_dates_are_all_day_this_year():
+    assert ce.parse_when("sept 19", NOW) == (datetime(2026, 9, 19), True, "")
+    assert ce.parse_when("19 dec", NOW) == (datetime(2026, 12, 19), True, "")
+    assert ce.parse_when("feb 30", NOW)[2].startswith("Error")
+
+
+def test_yearly_birthday_is_all_day_and_comes_back_next_year(cal):
+    out = ce.calendar("add", title="Madesh's birthday", when="sept 19", repeat="yearly")
+    assert out.startswith("Added e") and "Sat 19 Sep, all day Madesh's birthday (every year)" in out
+    assert "Madesh's birthday (every year)" in ce.calendar("agenda", when="2027-09-19")
+    assert "Nothing on the calendar" in ce.calendar("agenda", when="2027-09-20")
+
+
+def test_repeat_must_be_yearly_or_empty(cal):
+    assert ce.calendar("add", title="x", when="tomorrow", repeat="monthly").startswith("Error")
+
+
+def test_yearly_series_is_pushed_as_a_recurrence_and_its_copies_are_not_imported(google):
+    ce.calendar("add", title="Madesh's birthday", when="2026-10-26", repeat="yearly")
+    calendar_sync.sync()
+    master = next(g for g in google.events.values() if g["summary"] == "Madesh's birthday")
+    assert master["recurrence"] == ["RRULE:FREQ=YEARLY"]
+    google.add("Madesh's birthday", "2026-10-26", "2026-10-27", recurringEventId=master["id"])
+    assert calendar_sync.sync()["created_here"] == 0
+    assert len(_events()) == 1
