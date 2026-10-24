@@ -354,7 +354,11 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # WORKSPACE 36000 -> 37000 on 2026-10-20 for recall (PLAN 4.18 phase 3; the user chose raising again).
 # FREEFORM 25500 -> 25700 on 2026-10-22 for the calendar's yearly repeat (one optional field; the user
 # chose raising over trimming descriptions, as before).
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 25700, "WORKSPACE": 37000}
+# FREEFORM 25700 -> 25800 on 2026-10-24 for get_system_status(about='games'|'apps') (one optional field,
+# PLAN 4.23c), following the user's choice above for the same case.
+# FREEFORM 25800 -> 26300 on 2026-10-24 for list_directory back in Freeform (the user's call, after the
+# Ornith re-eval found no cost: 28/30 with it, 24/30 without; PLAN 4.23c).
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 26300, "WORKSPACE": 37000}
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])

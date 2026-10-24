@@ -27,13 +27,25 @@ def fixed_drives_line() -> str:
     return ("drives: " + ", ".join(parts)) if parts else ""
 
 
-def get_system_status() -> str:
+def get_system_status(about: str = "") -> str:
     """
     Measure the machine right now: GPU load, VRAM used/total and temperature, RAM, CPU, free disk,
     battery, which local model is loaded, and any heavy external apps. Call this whenever the
     user asks about system usage, resources, performance, temperatures, or what is loaded — the
     figures it returns are the only hardware numbers you may quote.
+
+    Args:
+        about: '' for the hardware status, 'games' or 'apps' for what is installed.
     """
+    what = (about or "").strip().lower()
+    if what in ("games", "game"):
+        from app.agent.tools.installed import installed_games
+
+        return installed_games()
+    if what in ("apps", "app", "programs"):
+        from app.agent.tools.installed import installed_apps
+
+        return installed_apps()
     try:
         from app.awareness.briefing import system_state_line
         from app.main import awareness_monitor

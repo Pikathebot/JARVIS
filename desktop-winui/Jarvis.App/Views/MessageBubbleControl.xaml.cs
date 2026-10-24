@@ -54,7 +54,11 @@ public sealed partial class MessageBubbleControl : UserControl
     /// indefinitely, long after the message has finished streaming. Re-rendering only when an
     /// input actually changed is what breaks it.
     /// </summary>
-    private (string Content, bool Streaming, int ToolSteps, int Confirmations, string? Model, string? Compare, bool Voted)? _rendered;
+    private (string Content, bool Streaming, int Trace, int Confirmations, string? Model, string? Compare, bool Voted)? _rendered;
+
+    /// <summary>The trace the steps were last built from: the answer streaming re-renders the
+    /// bubble ~10 times a second, and rebuilding the steps each time closed any the user opened.</summary>
+    private (ChatMessage Message, int Version, int Steps)? _builtTrace;
 
     public MessageBubbleControl()
     {
@@ -101,6 +105,7 @@ public sealed partial class MessageBubbleControl : UserControl
         // previous one may be reused.
         _streamingText = null;
         _rendered = null;
+        _builtTrace = null;
         RenderNow();
     }
 
@@ -121,6 +126,8 @@ public sealed partial class MessageBubbleControl : UserControl
                 DispatcherQueue.TryEnqueue(RenderNow);
                 break;
 
+            // A tool step or a stretch of thinking began or finished.
+            case nameof(ChatMessage.TraceVersion):
             case nameof(ChatMessage.Content):
                 DispatcherQueue.TryEnqueue(
                     _message?.IsStreaming == true ? ScheduleRender : RenderNow);
@@ -157,7 +164,7 @@ public sealed partial class MessageBubbleControl : UserControl
         if (message is null) return;
 
         var signature = (message.Mark == ThreadMark.None ? message.Content : message.MarkText, message.IsStreaming,
-                         message.ToolSteps.Count, message.PendingConfirmations.Count, message.Model,
+                         message.TraceVersion + message.ToolSteps.Count, message.PendingConfirmations.Count, message.Model,
                          message.CompareAlternative, message.CompareVoted);
         if (_rendered == signature) return;
         _rendered = signature;
@@ -168,6 +175,7 @@ public sealed partial class MessageBubbleControl : UserControl
         DayDivider.Visibility = Visibility.Collapsed;
         EpisodeMarker.Visibility = Visibility.Collapsed;
         DigestCard.Visibility = Visibility.Collapsed;
+        CompactedCard.Visibility = Visibility.Collapsed;
 
         if (message.Mark != ThreadMark.None)
         {
@@ -243,8 +251,23 @@ public sealed partial class MessageBubbleControl : UserControl
                 DigestDetail.Text = message.MarkDetail;
                 SetDigestOpen(false);
                 break;
+            case ThreadMark.Compacted:
+                CompactedCard.Visibility = Visibility.Visible;
+                CompactedTitle.Text = message.MarkText;
+                CompactedHost.Content = MarkdownRenderer.Render(message.MarkDetail, false, false);
+                SetCompactedOpen(false);
+                break;
         }
     }
+
+    private void SetCompactedOpen(bool open)
+    {
+        CompactedDetail.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        CompactedChevron.Glyph = open ? "" : ""; // chevron down / right
+    }
+
+    private void CompactedToggle_Click(object sender, RoutedEventArgs e) =>
+        SetCompactedOpen(CompactedDetail.Visibility != Visibility.Visible);
 
     private void SetDigestOpen(bool open)
     {
@@ -319,17 +342,30 @@ public sealed partial class MessageBubbleControl : UserControl
         }
     }
 
+    /// <summary>The turn as it happened (PLAN 4.23): each stretch of thinking before the tool
+    /// step it led to, the last one before the answer.</summary>
     private void RenderToolSteps(ChatMessage message)
     {
-        if (message.ToolSteps.Count == 0)
+        var trace = (message, message.TraceVersion, message.ToolSteps.Count);
+        if (_builtTrace == trace) return;
+        _builtTrace = trace;
+
+        if (message.ToolSteps.Count == 0 && message.Thinking.Count == 0)
         {
             ToolStepsHost.Visibility = Visibility.Collapsed;
+            ToolStepsHost.Items.Clear();
             return;
         }
         ToolStepsHost.Visibility = Visibility.Visible;
         ToolStepsHost.Items.Clear();
-        foreach (var step in message.ToolSteps)
+        for (var i = 0; i <= message.ToolSteps.Count; i++)
         {
+            foreach (var segment in message.Thinking.Where(t => t.BeforeStep == i && !string.IsNullOrWhiteSpace(t.Text)))
+            {
+                ToolStepsHost.Items.Add(new ThinkingCard(segment));
+            }
+            if (i == message.ToolSteps.Count) break;
+            var step = message.ToolSteps[i];
             ToolStepsHost.Items.Add(ToolStepText.Memory(step) is { } line
                 ? new MemoryLineCard(step, line, UndoMemory)
                 : new ToolStepCard(step));

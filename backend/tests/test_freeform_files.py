@@ -25,11 +25,12 @@ def _ctx(**extra):
     return {"chat_mode": "FREEFORM", "workspace_path": str(Path(settings.workspace_path)), "session_id": "s", **extra}
 
 
-def test_freeform_offers_three_file_tools_and_nothing_project_bound():
+def test_freeform_offers_four_file_tools_and_nothing_project_bound():
     names = {t.__name__ for t in tools_for_space("FREEFORM")}
-    assert {"read_file", "find_files", "write_file"} <= names
-    # all six cost unrelated Freeform turns (eval 2026-10-18), so the user trimmed them to three
-    assert not names & {"list_directory", "grep_in_files", "patch_file"}
+    assert {"read_file", "find_files", "write_file", "list_directory"} <= names
+    # all six cost unrelated Freeform turns (eval 2026-10-18, Defiant), so the user trimmed them to three;
+    # list_directory came back 2026-10-24 (Ornith: no cost found, PLAN 4.23c)
+    assert not names & {"grep_in_files", "patch_file"}
     assert not names & {"delete_file", "execute_command", "git_status", "create_artifact"}
 
 
@@ -39,7 +40,8 @@ def test_relative_paths_resolve_in_the_users_folders(home):
     out = execute_tool("find_files", {"pattern": "*", "root_dir": "Downloads"}, _ctx())
     assert "big.bin" in out and "small.txt" in out
     assert execute_tool("read_file", {"file_path": "Downloads/small.txt"}, _ctx()).strip().endswith("hi")
-    assert execute_tool("list_directory", {"directory_path": "Downloads"}, _ctx()).startswith("Error")
+    listed = execute_tool("list_directory", {"directory_path": "Downloads"}, _ctx())
+    assert "big.bin" in listed and "small.txt" in listed
 
 
 def test_find_files_can_list_the_biggest_first(home):

@@ -75,6 +75,19 @@ class ToolOutcome:
 PostHook = Callable[[ToolOutcome], Optional[str]]
 
 
+def clean_text(text: str) -> str:
+    """
+    The text with lone surrogates replaced. Windows file names can hold them (an unpaired UTF-16
+    half, read back as ``\\udcxx``); they can't be encoded as UTF-8, so a ``find_files`` on ``C:\\``
+    failed the history write and then the next request to the model (2026-10-23, PLAN 4.23c).
+    """
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def truncate_oversized(outcome: ToolOutcome, max_chars: Optional[int] = None) -> Optional[str]:
     """
     Built-in post hook: cap a result at ``max_chars`` keeping the first and last parts, since
@@ -136,7 +149,7 @@ class ToolPipeline:
                 result = await asyncio.wait_for(asyncio.to_thread(native), timeout=limit)
             else:
                 raise ValueError("ToolPipeline.run needs either native or coroutine")
-            outcome.result = str(result)
+            outcome.result = clean_text(str(result))
         except asyncio.TimeoutError:
             outcome.timed_out = True
             outcome.result = (

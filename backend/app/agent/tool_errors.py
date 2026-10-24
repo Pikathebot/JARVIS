@@ -42,7 +42,7 @@ NEXT_STEP = {
     "unavailable": "Next: don't call it again this turn; tell the user it can't run here and why.",
     "not_permitted": "Next: don't retry it; tell the user what was refused.",
     "bad_input": "Next: fix the argument the error names and call it once more; never repeat the same call.",
-    "not_found": "Next: check the name or path once (find_files or list_directory for files); "
+    "not_found": "Next: check the name or path once (list_directory shows a folder, find_files finds by name); "
                  "if it still isn't there, tell the user.",
     "other": "Next: try one different approach at most; if that fails too, tell the user what failed.",
 }

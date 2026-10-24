@@ -72,6 +72,34 @@
         </StackPanel>
 
         <!--
+            "Conversation compacted" (PLAN 4.25, design system "Thread"): a day-divider-style line
+            whose label opens the summary the model goes on from, rendered as markdown on a card.
+        -->
+        <StackPanel x:Name="CompactedCard" Visibility="Collapsed" Margin="0,16,0,8" Spacing="8">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Rectangle Height="1" VerticalAlignment="Center" Fill="{ThemeResource SeparatorBrush}" />
+                <Button x:Name="CompactedToggle" Grid.Column="1" Click="CompactedToggle_Click" Padding="8,3"
+                        Background="Transparent" BorderThickness="0" CornerRadius="{StaticResource RowCornerRadius}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE81C;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="CompactedTitle" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
+                        <FontIcon x:Name="CompactedChevron" Style="{StaticResource JarvisIcon}" Glyph="&#xE76C;" FontSize="10" Foreground="{ThemeResource LabelTertiaryBrush}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Rectangle Grid.Column="2" Height="1" VerticalAlignment="Center" Fill="{ThemeResource SeparatorBrush}" />
+            </Grid>
+            <Border x:Name="CompactedDetail" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Center"
+                    CornerRadius="{StaticResource CardCornerRadius}" Background="{ThemeResource FillTertiaryBrush}" Padding="16,12">
+                <ContentPresenter x:Name="CompactedHost" />
+            </Border>
+        </StackPanel>
+
+        <!--
             User message: a right-aligned accent bubble. Plain XAML on the reading surface,
             not glass: nothing on the surface is glass but the composer.
         -->

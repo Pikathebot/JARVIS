@@ -30,7 +30,8 @@ def test_the_status_tool_is_offered_in_every_space():
 
 def test_status_tool_is_registered_low_risk_and_argless():
     assert TOOL_FUNCTIONS["get_system_status"] is get_system_status
-    assert TOOL_SCHEMAS["get_system_status"].model_fields == {}
+    # one optional field, what is installed (PLAN 4.23c); called bare it measures the hardware
+    assert set(TOOL_SCHEMAS["get_system_status"].model_fields) == {"about"}
     decision = evaluate_tool_permission("get_system_status", {})
     assert decision.allowed is True and decision.risk_tier == RiskTier.LOW_RISK
 

@@ -127,6 +127,15 @@ def _thinking_override(thinking: Optional[bool]) -> dict[str, Any]:
     return {"chat_template_kwargs": {"enable_thinking": bool(thinking)}}
 
 
+def _main_slot() -> dict[str, Any]:
+    """
+    Chat requests run on slot 0, where the conversation's prefix is cached. With more than one
+    slot llama-server otherwise picks one by prompt similarity, and slot 1 belongs to the thinking
+    narrator (``thinking_narrator``, PLAN 4.23).
+    """
+    return {"id_slot": 0} if settings.llama_parallel > 1 else {}
+
+
 def _sanitize_messages_for_jinja(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Sanitizes conversation messages for Qwen3.5 Jinja chat template.
@@ -372,6 +381,7 @@ class LlamaCppProvider(ModelProvider):
             "stream": False,
             **sampling,
             **_thinking_override(thinking),
+            **_main_slot(),
         }
         if settings.llama_max_tokens > 0:
             # One reply's thinking + answer. Without a cap a thinking loop ran until the 32k
@@ -475,6 +485,7 @@ class LlamaCppProvider(ModelProvider):
             "stream": True,
             **sampling,
             **_thinking_override(thinking),
+            **_main_slot(),
         }
         if settings.llama_max_tokens > 0:
             # One reply's thinking + answer. Without a cap a thinking loop ran until the 32k

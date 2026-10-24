@@ -7,16 +7,39 @@ from app.agent.tools.file_kinds import CLUTTER_DIRS, count_entries, file_facts
 
 LIST_CAP = 200
 
+
+def list_drives() -> str:
+    """This PC's drives with their free space ("what's on each drive" started with no way to
+    name them, PLAN 4.23c)."""
+    import shutil
+    import string
+
+    lines = []
+    for letter in string.ascii_uppercase:
+        root = f"{letter}:\\"
+        if not os.path.exists(root):
+            continue
+        try:
+            usage = shutil.disk_usage(root)
+            lines.append(f"  {root}  {usage.free / 1024 ** 3:,.0f} GB free of {usage.total / 1024 ** 3:,.0f} GB")
+        except OSError:
+            lines.append(f"  {root}  (not ready)")
+    if not lines:
+        return "Error: no drives found."
+    return "\n".join([f"Drives on this PC ({len(lines)}):", *lines, "List one with list_directory, e.g. directory_path='D:\\'."])
+
+
 def list_directory(directory_path: str = ".", workspace_path: Optional[str] = None, allow_outside: bool = False) -> str:
     """
-    List files and folders in a directory (in the workspace; a folder outside it asks the user first).
-    Always use this tool when the user asks to list, view, or explore directory contents.
+    List the files and folders in one folder, or this PC's drives with directory_path='drives'. Use it when the user asks to list, view, or explore a folder.
 
     Args:
-        directory_path: Relative directory path within the project (e.g. '.', 'docs', 'backend'). Defaults to '.'.
+        directory_path: The folder ('.', 'docs', 'D:\\Games'), or 'drives'. Defaults to '.'.
         workspace_path: Optional active project workspace root boundary.
     """
     raw_path = str(directory_path or ".").strip() or "."
+    if raw_path.lower() in ("drives", "this pc", "my computer"):
+        return list_drives()
     path, ws_root, err = resolve_tool_path(raw_path, workspace_path, allow_outside, what="Directory")
     if err:
         return err

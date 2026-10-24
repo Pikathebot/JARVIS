@@ -232,6 +232,56 @@ function stepRow(name, args, status, result) {
   return wrap;
 }
 
+/** One stretch of thinking (PLAN 4.23): "Thinking…" (or the narrator's words) while it streams,
+    "Thought for 6 s" after, opening to the text -- as the desktop's ThinkingCard. */
+function thinkRow(initial) {
+  const wrap = el("div");
+  const row = el("button", "think touch-footnote");
+  row.setAttribute("aria-expanded", "false");
+  const lbl = el("span", "lbl");
+  row.append(lbl, icon("chev", "i chev"));
+  const detail = el("div", "think-detail touch-footnote"); detail.hidden = true;
+  let text = initial || "", started = Date.now(), live = initial === undefined;
+  const label = (s) => { lbl.textContent = s; };
+  label(live ? "Thinking…" : "Thought process");
+  row.classList.toggle("live", live);
+  detail.textContent = text.trim();
+  row.addEventListener("click", () => {
+    detail.hidden = !detail.hidden;
+    row.setAttribute("aria-expanded", String(!detail.hidden));
+    if (!detail.hidden) detail.textContent = text.trim();
+  });
+  wrap.append(row, detail);
+  wrap.live = () => live;
+  wrap.add = (delta) => { text += delta; if (!detail.hidden) detail.textContent = text.trim(); };
+  wrap.status = (s) => { if (live && s) label(`${s}…`); };
+  wrap.finish = () => {
+    if (!live) return;
+    live = false; row.classList.remove("live");
+    const secs = (Date.now() - started) / 1000;
+    label(secs < 1 ? "Thought for a moment" : secs < 60 ? `Thought for ${Math.round(secs)} s`
+      : `Thought for ${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s`);
+  };
+  return wrap;
+}
+
+/** "Conversation compacted · 09:30" (PLAN 4.25): a divider whose label opens the summary the
+    model goes on from -- as the desktop's compacted card. */
+function compactRow(summary, at) {
+  const wrap = el("div", "compacted");
+  const row = el("button", "compact-line touch-footnote");
+  row.setAttribute("aria-expanded", "false");
+  row.append(el("span", "lbl", `Conversation compacted · ${clock(at)}`), icon("chev", "i chev"));
+  const detail = el("div", "compact-detail text touch-footnote"); detail.hidden = true;
+  renderMarkdown(detail, summary || "");
+  row.addEventListener("click", () => {
+    detail.hidden = !detail.hidden;
+    row.setAttribute("aria-expanded", String(!detail.hidden));
+  });
+  wrap.append(row, detail);
+  return wrap;
+}
+
 function assistantTurn() {
   const turn = el("div", "asst");
   const img = el("img"); img.src = MARK; img.alt = "";
@@ -275,8 +325,11 @@ function buildRows(rows, prevDay) {
     steps = [];
   };
   for (const r of rows) {
+    if (r.name === "compaction") { flushSteps(); out.push(compactRow(r.content, r.created_at)); continue; }
     if (r.role === "system" || r.is_summary) continue;
     if (r.role === "tool") {
+      // the thinking that led to the call is stored on it (PLAN 4.23)
+      if (r.reasoning_content && r.reasoning_content.trim()) steps.push(thinkRow(r.reasoning_content));
       steps.push(stepRow(r.name || "tool", storedArgs(r), /^error/i.test(r.content || "") ? "error" : "success", r.content));
       continue;
     }
@@ -294,6 +347,7 @@ function buildRows(rows, prevDay) {
       const turn = assistantTurn();
       steps.forEach((s) => turn.steps.append(s));
       steps = [];
+      if (r.reasoning_content && r.reasoning_content.trim()) turn.steps.append(thinkRow(r.reasoning_content));
       if (r.content && r.content.trim()) renderMarkdown(turn.text, r.content);
       else turn.text.remove();
       out.push(turn.node);
@@ -636,18 +690,27 @@ function turnView(turn, own) {
   const view = { ended: false, get text() { return text; } };
   const paint = () => { const follow = nearBottom(); renderMarkdown(turn.text, text); if (follow) toBottom(); };
   turn.text.classList.add("caret");
+  const endThinking = () => { if (turn.thinking) { turn.thinking.finish(); turn.thinking = null; } };
   view.handle = (ev, d) => {
     switch (ev) {
-      case "reasoning":   // the model thinks before it answers: say so instead of a bare caret
-        if (!text && !turn.thinking) {
-          turn.thinking = el("div", "touch-footnote meta", "Thinking…");
-          turn.col.insertBefore(turn.thinking, turn.text);
-        }
+      case "reasoning":   // thinking streams inline, in order with the tool steps (PLAN 4.23)
+        if (!turn.thinking) { turn.thinking = thinkRow(); turn.steps.append(turn.thinking); }
+        turn.thinking.add(d.delta || "");
         break;
+      case "thinking_status":
+        if (turn.thinking) turn.thinking.status(d.text);
+        break;
+      case "compacted": {   // after the last turn: above the new message; /compact: above the reply
+        const row = compactRow(d.summary, d.at || Date.now() / 1000);
+        const before = !d.manual && turn.node.previousSibling && turn.node.previousSibling.classList.contains("user")
+          ? turn.node.previousSibling : turn.node;
+        transcript.insertBefore(row, before);
+        break;
+      }
       case "token": case "text_delta":
-        if (turn.thinking) { turn.thinking.remove(); turn.thinking = null; }
+        endThinking();
         text += d.delta || d.content || ""; paint(); break;
-      case "tool_start": { const row = stepRow(d.tool, d.args, "running"); running.push(row); turn.steps.append(row); paint(); break; }
+      case "tool_start": { endThinking(); const row = stepRow(d.tool, d.args, "running"); running.push(row); turn.steps.append(row); paint(); break; }
       case "tool_end": {
         const row = running.shift() || (() => { const r = stepRow(d.tool, d.args, "running"); turn.steps.append(r); return r; })();
         row.setStatus(d.status === "success" ? "success" : "error", d.result || d.summary);
@@ -674,7 +737,7 @@ function turnView(turn, own) {
     }
   };
   view.finish = () => {
-    if (turn.thinking) { turn.thinking.remove(); turn.thinking = null; }
+    endThinking();
     turn.text.classList.remove("caret");
     if (!text && view.ended) turn.text.remove();
     if (!view.ended) loadEpisodes();

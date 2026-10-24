@@ -195,15 +195,8 @@ class ThreadKeeper:
 
             if open_ep is None:
                 return done
-            # 3. fold ahead, between turns, with a real summary
-            rows = self.episodes.visible_rows(self.session_id, open_ep)
-            if self.episodes.needs_fold(rows, FOLD_AHEAD_RATIO):
-                keep_from = self.episodes.fold_point(rows)
-                if 0 < keep_from < len(rows):
-                    record = await write_record(provider, rows[:keep_from], prior_note=open_ep.get("fold_note"))
-                    if record is not None:
-                        open_ep, _ = self.episodes.fold(open_ep, rows, note=fold_note_from(record))
-                        done.append(f"folded {open_ep['id']}")
+            # 3. (folding ahead moved to app.memory.compaction, PLAN 4.25: it runs after the turn
+            # whose request passed 80% of the window, with a Claude Code-style summary)
             # 4. a digest built while its records were pending
             if open_ep.get("digest") and "summary pending" in open_ep["digest"]:
                 fresh = build_digest(self.store, self.session_id, open_ep["started_at"], exclude_id=open_ep["id"])

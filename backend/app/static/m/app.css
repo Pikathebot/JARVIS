@@ -171,6 +171,27 @@ svg.spin { animation: spin 1.2s linear infinite; }
 .step-detail { padding: 4px 12px 6px; display: flex; flex-direction: column; gap: 2px; }
 .step-detail .data { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; max-height: 220px; overflow-y: auto; }
 
+/* Conversation compacted (PLAN 4.25): the day divider's hairlines around a label that opens the summary */
+.compacted { margin: 16px 0 8px; display: flex; flex-direction: column; gap: 8px; }
+.compact-line { display: flex; align-items: center; gap: 8px; min-height: 44px; background: none; border: 0;
+  color: var(--label-secondary); padding: 0; width: 100%; }
+.compact-line::before, .compact-line::after { content: ""; flex: 1; height: 1px; background: var(--separator); }
+.compact-line .chev { width: 12px; height: 12px; color: var(--label-tertiary); transition: transform .2s; }
+.compact-line[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.compact-detail { background: var(--fill-tertiary); border-radius: var(--radius-14); padding: 12px 14px; }
+
+/* Thinking (PLAN 4.23): a quiet line, no fill, that opens to the text under a hairline rule */
+.think { min-height: 30px; padding: 0; background: none; border: 0; color: var(--label-secondary);
+  display: flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; text-align: left; }
+.think .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.think .chev { width: 12px; height: 12px; color: var(--label-tertiary); transition: transform .2s; }
+.think[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.think.live .lbl { animation: breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .45; } }
+.think-detail { margin: 0 0 4px 5px; padding: 2px 0 2px 12px; border-left: 2px solid var(--separator);
+  color: var(--label-secondary); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+  max-height: 320px; overflow-y: auto; }
+
 /* Approval card */
 .card { border-radius: var(--radius-14); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
   padding: 12px; display: flex; flex-direction: column; gap: 6px; }

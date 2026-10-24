@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     llama_ctx_size_fast: int = Field(default=8192, alias="LLAMA_CTX_SIZE_FAST")
     # Tokens per model reply (thinking included); 0 = no cap.
     llama_max_tokens: int = Field(default=8192, alias="LLAMA_MAX_TOKENS")
+    # Tokens of thinking per reply before llama-server ends it (--reasoning-budget); 0 = no limit.
+    llama_reasoning_budget: int = Field(default=4096, alias="LLAMA_REASONING_BUDGET")
+    # llama-server slots. Every chat request is pinned to slot 0 (its cached prefix); slot 1 is the
+    # thinking narrator's (PLAN 4.23). The KV pool is unified across slots, so 2 costs no VRAM.
+    llama_parallel: int = Field(default=2, alias="LLAMA_PARALLEL")
+    # A few words on what the model is doing while it thinks, from slot 1 (app/agent/thinking_narrator.py).
+    thinking_narrator_enabled: bool = Field(default=True, alias="THINKING_NARRATOR_ENABLED")
+    thinking_narrator_interval_s: float = Field(default=3.0, alias="THINKING_NARRATOR_INTERVAL_S")
     # In-app compare (PLAN 4.13 #8): share of eligible replies that get a second take; 0 = off.
     compare_rate: float = Field(default=1 / 15, alias="COMPARE_RATE")
     # Where Freeform's file tools work (relative paths resolve here); empty = the user's home folder.
@@ -267,9 +275,11 @@ class Settings(BaseSettings):
     context_tier3_max_chunks: int = Field(default=5, alias="CONTEXT_TIER3_MAX_CHUNKS")
     context_tier4_max_messages: int = Field(default=20, alias="CONTEXT_TIER4_MAX_MESSAGES")
     # The one continuing Freeform thread (PLAN 4.18, app/memory/thread.py): a gap this long opens
-    # a new episode; an episode's history past this many tokens folds its oldest half once.
+    # a new episode; an episode's history past this many tokens folds its oldest half once, mid-turn
+    # -- only the safety net now: compaction (app/memory/compaction.py, PLAN 4.25) summarizes first,
+    # after a turn that passes 80% of the window (~18k tokens of history beside the head and tools).
     thread_episode_gap_hours: float = Field(default=3.0, alias="THREAD_EPISODE_GAP_HOURS")
-    thread_episode_budget_tokens: int = Field(default=16000, alias="THREAD_EPISODE_BUDGET_TOKENS")
+    thread_episode_budget_tokens: int = Field(default=22000, alias="THREAD_EPISODE_BUDGET_TOKENS")
     context_include_summary: bool = Field(default=True, alias="CONTEXT_INCLUDE_SUMMARY")
 
     # Backward compatibility properties

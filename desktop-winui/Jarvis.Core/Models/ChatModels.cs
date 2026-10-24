@@ -18,6 +18,8 @@ public enum ThreadMark
     Day,
     Episode,
     Digest,
+    /// <summary>"Conversation compacted" (PLAN 4.25): opens to the summary the model goes on from.</summary>
+    Compacted,
 }
 
 public enum ToolStatus
@@ -58,6 +60,45 @@ public sealed class PendingConfirmation
     public string? RiskTier { get; set; }
 
     public string? Reason { get; set; }
+}
+
+/// <summary>One stretch of the model's thinking in a turn (PLAN 4.23), shown inline in the
+/// message in the order it happened: thinking, a tool call, thinking again, the answer.
+/// <see cref="BeforeStep"/> is how many tool steps came before it.</summary>
+public partial class ThinkingSegment : ObservableObject
+{
+    public int BeforeStep { get; set; }
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.Now;
+
+    [ObservableProperty]
+    public partial string Text { get; set; }
+
+    /// <summary>The narrator's latest line while it thinks; null when none came.</summary>
+    [ObservableProperty]
+    public partial string? Status { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsActive { get; set; }
+
+    /// <summary>How long it thought, once it stopped; null for history (not stored).</summary>
+    [ObservableProperty]
+    public partial double? Seconds { get; set; }
+
+    /// <summary>Whether its text is showing: kept here so a re-rendered bubble keeps it open.</summary>
+    public bool IsOpen { get; set; }
+
+    public ThinkingSegment()
+    {
+        Text = "";
+    }
+
+    /// <summary>The thinking stopped (a call or the answer began).</summary>
+    public void Finish()
+    {
+        if (!IsActive) return;
+        IsActive = false;
+        Seconds = (DateTimeOffset.Now - StartedAt).TotalSeconds;
+    }
 }
 
 /// <summary>A single turn in the chat transcript. Client-side model, not sent to the backend as-is.
@@ -107,6 +148,14 @@ public partial class ChatMessage : ObservableObject
     public long? EpisodeId { get; set; }
 
     public List<ToolStep> ToolSteps { get; set; } = new();
+
+    /// <summary>The turn's thinking, in stretches between its tool steps (PLAN 4.23).</summary>
+    public List<ThinkingSegment> Thinking { get; set; } = new();
+
+    /// <summary>Bumped when a tool step or a stretch of thinking is added or a step finishes, so
+    /// the bubble rebuilds the turn's steps (the lists themselves don't notify).</summary>
+    [ObservableProperty]
+    public partial int TraceVersion { get; set; }
     public string? Model { get; set; }
     public string? Provider { get; set; }
 
@@ -120,6 +169,52 @@ public partial class ChatMessage : ObservableObject
     public TurnMetrics? Metrics { get; set; }
     public List<string> ActiveSkills { get; set; } = new();
     public List<PendingConfirmation> PendingConfirmations { get; set; } = new();
+
+    /// <summary>A chunk of streamed thinking: onto the open stretch, or a new one after a tool step.</summary>
+    public void AppendThinking(string delta)
+    {
+        if (string.IsNullOrEmpty(delta)) return;
+        ReasoningContent += delta;
+        var open = Thinking.Count > 0 && Thinking[^1].IsActive ? Thinking[^1] : null;
+        if (open is null)
+        {
+            open = new ThinkingSegment { BeforeStep = ToolSteps.Count, IsActive = true };
+            Thinking.Add(open);
+            TraceVersion++;
+        }
+        open.Text += delta;
+    }
+
+    /// <summary>The narrator's line for the stretch being thought now.</summary>
+    public void SetThinkingStatus(string text)
+    {
+        if (Thinking.Count > 0 && Thinking[^1].IsActive && !string.IsNullOrWhiteSpace(text))
+        {
+            Thinking[^1].Status = text;
+        }
+    }
+
+    /// <summary>The thinking stopped: the answer started, a call began or the turn ended.</summary>
+    public void EndThinking()
+    {
+        if (Thinking.Count > 0 && Thinking[^1].IsActive) Thinking[^1].Finish();
+    }
+
+    public void StartToolStep(ToolStep step)
+    {
+        EndThinking();
+        ToolSteps.Add(step);
+        TraceVersion++;
+    }
+
+    public void EndToolStep(string tool, string status, object? result)
+    {
+        var step = ToolSteps.LastOrDefault(s => s.Tool == tool && s.Status == ToolStatus.Running);
+        if (step is null) return;
+        step.Status = status == "success" ? ToolStatus.Success : ToolStatus.Error;
+        step.Result = result;
+        TraceVersion++;
+    }
 
     /// <summary>Removes a decided confirmation and announces the change, so the bubble showing
     /// its card re-renders and drops the approve/deny buttons for it.</summary>

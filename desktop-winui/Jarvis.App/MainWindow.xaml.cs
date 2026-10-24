@@ -123,18 +123,9 @@ public sealed partial class MainWindow : Window
                     if (ChatViewModel.LatestRetrieval?.ChunksUsed.Count > 0) AutoOpenInspector(ContextTab);
                 });
             }
-            else if (args.PropertyName == nameof(ChatViewModel.ActiveReasoningMessage))
-            {
-                DispatcherQueue.TryEnqueue(RebindReasoningMessage);
-            }
-            else if (args.PropertyName == nameof(ChatViewModel.IsReasoningStreaming))
-            {
-                DispatcherQueue.TryEnqueue(UpdateReasoningBadge);
-            }
         };
 
         AwarenessTrayHost.Content = new Views.AwarenessTray(AwarenessViewModel);
-        ChatViewModel.ActivitySteps.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshActivityList);
 
         VoiceViewModel.PropertyChanged += (_, args) =>
         {
@@ -698,7 +689,7 @@ public sealed partial class MainWindow : Window
     // ------------------------------------------------------------------ inspector auto-open
 
     private const int ArtifactsTab = 0;
-    private const int ContextTab = 3;
+    private const int ContextTab = 2;
     private string? _inspectorAutoOpenedFor;
 
     /// <summary>Opens the inspector on <paramref name="tab"/> the first time a chat has
@@ -733,86 +724,13 @@ public sealed partial class MainWindow : Window
         catch { /* the next poll puts the switch back to what the backend says */ }
     }
 
-    private void RefreshActivityList()
-    {
-        ActivityStepsList.Items.Clear();
-        foreach (var step in ChatViewModel.ActivitySteps)
-        {
-            // Status as icon + word + colour, on a tertiary-fill row.
-            var kind = Themes.StatusStyle.FromStepStatus(step.Status);
-            var statusBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Themes.StatusStyle.ColorOf(kind));
-
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            row.Children.Add(new FontIcon
-            {
-                Style = Themes.JarvisTheme.Style("JarvisIcon"),
-                Glyph = Themes.StatusStyle.GlyphOf(kind, inProgress: kind == Themes.StatusKind.Warning),
-                FontSize = 12,
-                Foreground = statusBrush,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            row.Children.Add(new TextBlock { Text = step.Tool, Style = Themes.JarvisTheme.Style("BodyText"), VerticalAlignment = VerticalAlignment.Center });
-            row.Children.Add(new TextBlock { Text = step.Status, Style = Themes.JarvisTheme.Style("CaptionEmphasisText"), Foreground = statusBrush, VerticalAlignment = VerticalAlignment.Center });
-
-            var card = new Border
-            {
-                Background = Themes.JarvisTheme.Brush("FillTertiary"),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(8, 6, 8, 6),
-                Child = row,
-            };
-            ActivityStepsList.Items.Add(card);
-        }
-    }
-
-    private Jarvis.Core.Models.ChatMessage? _boundReasoningMessage;
-
-    /// <summary>Follows ChatViewModel.ActiveReasoningMessage as it switches between the in-flight
-    /// streaming message and the last-completed one, resubscribing to that message's own
-    /// PropertyChanged so the tab updates live token-by-token while reasoning streams -- the panel
-    /// never opens itself for this, only the badge (UpdateReasoningBadge) reacts.</summary>
-    private void RebindReasoningMessage()
-    {
-        if (_boundReasoningMessage is not null)
-        {
-            _boundReasoningMessage.PropertyChanged -= OnReasoningMessagePropertyChanged;
-        }
-
-        _boundReasoningMessage = ChatViewModel.ActiveReasoningMessage;
-        if (_boundReasoningMessage is not null)
-        {
-            _boundReasoningMessage.PropertyChanged += OnReasoningMessagePropertyChanged;
-        }
-
-        UpdateReasoningText();
-    }
-
-    private void OnReasoningMessagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(Jarvis.Core.Models.ChatMessage.ReasoningContent))
-        {
-            DispatcherQueue.TryEnqueue(UpdateReasoningText);
-        }
-    }
-
-    private void UpdateReasoningText()
-    {
-        var text = _boundReasoningMessage?.ReasoningContent;
-        ReasoningText.Text = string.IsNullOrEmpty(text) ? "No reasoning for this turn yet." : text;
-    }
-
     private void RightPanelTabs_SelectionChanged(object sender, RoutedEventArgs e)
     {
-        var pages = new[] { ArtifactsPage, FilesPage, ReasoningPage, ContextPage, ActivityPage };
+        var pages = new[] { ArtifactsPage, FilesPage, ContextPage };
         for (var i = 0; i < pages.Length; i++)
         {
             pages[i].Visibility = i == RightPanelTabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
         }
-    }
-
-    private void UpdateReasoningBadge()
-    {
-        ReasoningBadge.Visibility = ChatViewModel.IsReasoningStreaming ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateContextTab()
