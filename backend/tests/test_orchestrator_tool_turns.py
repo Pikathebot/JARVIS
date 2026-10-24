@@ -328,7 +328,9 @@ def test_turn_metrics_from_llama_server_timings():
     p = m.payload([{"tool": "read_file"}])
     # first-token time and prompt / cache from round one; speed over every round
     assert p == {"rounds": 2, "tools": 1, "ttft_ms": 413, "tokens_per_second": 27.0,
-                 "prompt_tokens": 1630, "cached_tokens": 1400, "nets": ["claim-checked"]}
+                 "prompt_tokens": 1630, "cached_tokens": 1400, "peak_tokens": p["peak_tokens"],
+                 "nets": ["claim-checked"]}
+    assert p["peak_tokens"] >= 1630  # the largest request of the turn (PLAN 4.25)
     assert TurnMetrics().payload([])["tokens_per_second"] is None  # a provider without timings
 
 

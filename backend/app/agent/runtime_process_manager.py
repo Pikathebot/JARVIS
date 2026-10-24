@@ -31,6 +31,10 @@ def _vram_used_mb() -> Optional[float]:
         return None
 
 
+# Injected before the end-of-thinking tag when the budget runs out.
+REASONING_BUDGET_MESSAGE = " That's enough thinking; time to answer the user or make the call it needs."
+
+
 def _reasoning_flag_from_kwargs(kwargs_json: Optional[str]) -> Optional[str]:
     """Extracts an `enable_thinking` bool out of a chat-template-kwargs JSON string and maps it to
     llama-server's `--reasoning on|off` flag. Returns None (leave --reasoning unset, i.e. 'auto')
@@ -422,8 +426,13 @@ class RuntimeProcessManager:
             "--port", str(self.port),
             "--ctx-size", str(ctx_size),
             "--n-gpu-layers", str(self.gpu_layers),
-            "--parallel", "1",
+            "--parallel", str(max(1, settings.llama_parallel)),
         ]
+        if settings.llama_parallel > 1:
+            # One KV pool for both slots, so the chat keeps the whole --ctx-size. The help says
+            # unified is the default, but the server came up with kv_unified = 'false' and split
+            # 32k into two 16k slots: a 16.5k-token thread was refused (2026-10-24, PLAN 4.23).
+            cmd.append("--kv-unified")
         if not self.use_mmap:
             cmd.append("--no-mmap")
         if projector is not None:
@@ -453,6 +462,12 @@ class RuntimeProcessManager:
         reasoning_flag = _reasoning_flag_from_kwargs(kwargs_for_alias)
         if reasoning_flag is not None:
             cmd.extend(["--reasoning", reasoning_flag])
+        if reasoning_flag != "off" and settings.llama_reasoning_budget > 0:
+            # Thinking stops here and the model is told to answer: on 2026-10-24 a looping think ran
+            # 8,192 tokens (the whole reply cap) with no answer. The orchestrator's LoopWatch catches
+            # most loops sooner; this is the hard stop.
+            cmd.extend(["--reasoning-budget", str(settings.llama_reasoning_budget),
+                        "--reasoning-budget-message", REASONING_BUDGET_MESSAGE])
         return cmd
 
     def estimate_launch_cost_mb(self, model: Path, projector: Optional[Path], ctx_size: int) -> float:

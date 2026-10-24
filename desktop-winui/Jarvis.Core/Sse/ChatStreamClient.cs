@@ -185,6 +185,12 @@ public sealed class ChatStreamClient
                 case "reasoning":
                     callbacks.OnReasoning?.Invoke(Deserialize<SseReasoningEvent>(frame.Data));
                     break;
+                case "thinking_status":
+                    callbacks.OnThinkingStatus?.Invoke(Deserialize<SseThinkingStatusEvent>(frame.Data));
+                    break;
+                case "compacted":
+                    callbacks.OnCompacted?.Invoke(Deserialize<SseCompactedEvent>(frame.Data));
+                    break;
                 case "tool_draft":
                     callbacks.OnToolDraft?.Invoke(Deserialize<SseToolDraftEvent>(frame.Data));
                     break;

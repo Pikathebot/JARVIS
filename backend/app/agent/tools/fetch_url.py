@@ -111,6 +111,12 @@ def fetch_url(url: str, max_chars: int = 8000, offset: int = 0) -> str:
     if not clean_url:
         return "Error: URL cannot be empty."
 
+    # "C:\...\steam.exe" became "https://C:\..." and failed as "Invalid port" (PLAN 4.23c).
+    if re.match(r"^(?:[A-Za-z]:[\\/]|\\\\|file:)", clean_url) or (clean_url.startswith("/") and "://" not in clean_url):
+        return (
+            f"Error: '{clean_url}' is a file or folder on this PC, not a web page. "
+            "Use read_file for a file, or find_files to look inside a folder."
+        )
     if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
         clean_url = "https://" + clean_url
 

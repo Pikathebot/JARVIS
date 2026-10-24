@@ -28,6 +28,10 @@ from app.agent.permissions import (
     build_confirmation_prompt,
 )
 from app.agent.validator import validate_tool_call, CallHistory, ValidationResult
+from app.agent.thinking_narrator import narrator_for
+from app.agent.thinking_loop import LoopWatch, capped as thinking_capped
+from app.memory.turn_fit import fit_messages, tools_tokens
+from app.memory import compaction
 from app.agent.confirmations import get_confirmation_registry
 from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
@@ -74,9 +78,30 @@ _ARGLESS_ANNOUNCEMENT = re.compile(
 
 
 _FUNCTION_TAG = re.compile(
-    r"<function(?:\s+name\s*=\s*[\"']?|\s*=\s*)(?P<name>[A-Za-z_][\w]*)[\"']?\s*>(?P<body>[\s\S]*?)</function>",
+    r"(?:<tool_call>\s*)?<function(?:\s+name\s*=\s*[\"']?|\s*=\s*)(?P<name>[A-Za-z_][\w]*)[\"']?\s*>(?P<body>[\s\S]*?)</function>(?:\s*</tool_call>)?",
     re.IGNORECASE,
 )
+# Qwen's XML call format inside a <function=x> body: <parameter=filter_name>steam</parameter>.
+_PARAMETER_TAG = re.compile(r"<parameter\s*=\s*(?P<name>[A-Za-z_]\w*)\s*>(?P<value>[\s\S]*?)</parameter>", re.IGNORECASE)
+
+
+def _function_tag_args(body: str) -> dict[str, Any]:
+    """A <function> body's arguments: JSON, or <parameter=...> tags (values as JSON where they parse)."""
+    params = list(_PARAMETER_TAG.finditer(body))
+    if params:
+        args: dict[str, Any] = {}
+        for p in params:
+            value = p.group("value").strip()
+            try:
+                args[p.group("name")] = json.loads(value)
+            except Exception:
+                args[p.group("name")] = value
+        return args
+    try:
+        parsed = json.loads(body) if body else {}
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 # A tool call written out as text on a turn that offered no tools: it can't run, and the raw
 # markup must not stand as the reply.
@@ -168,15 +193,10 @@ def extract_tool_calls_from_text(content: str) -> tuple[str, list[dict[str, Any]
     # 0. XML-ish <function name="x">{args}</function> / <function=x>...</function>: MiniCPM on the
     # tool-less fast slot wrote `<function name="get_system_status"></function>` as its whole reply.
     for m in _FUNCTION_TAG.finditer(content):
-        body = (m.group("body") or "").strip()
-        try:
-            fn_args = json.loads(body) if body else {}
-        except Exception:
-            fn_args = {}
         extracted.append({
             "id": f"call_{uuid.uuid4().hex[:8]}",
             "type": "function",
-            "function": {"name": m.group("name"), "arguments": fn_args if isinstance(fn_args, dict) else {}},
+            "function": {"name": m.group("name"), "arguments": _function_tag_args((m.group("body") or "").strip())},
         })
     if extracted:
         return _FUNCTION_TAG.sub("", content).strip(), extracted
@@ -348,6 +368,17 @@ _NUDGE_FINAL = (
     "That's enough tool use for this request. Answer the user now from the tool results above, "
     "without calling any more tools. If they don't fully answer the question, say what you found "
     "and what is still missing."
+)
+# Thinking that looped or hit the cap: asked again with thinking off (see thinking_loop.py).
+_NUDGE_THINKING_LOOP = (
+    "(Automatic note, not from the user: your thinking went in circles and was stopped. Don't think it "
+    "through again. Answer the user's last message now in a few sentences, or make the one tool call it "
+    "needs; if it is unclear what they mean, ask them.)"
+)
+# The final answer was still a call, twice: say so plainly rather than show the call.
+_STUCK_REPLY = (
+    "I got stuck repeating the same step, so I stopped there. Tell me what to try next, or ask "
+    "again a different way."
 )
 _NUDGE_REPEAT = (
     "You just made that exact call and its result is above; calling it again won't change it. "
@@ -549,6 +580,9 @@ class TurnMetrics:
         self.ttft_ms: Optional[float] = None
         self.prompt_tokens: Optional[int] = None
         self.cached_tokens: Optional[int] = None
+        # the largest request of the turn, as the server counted it (cached + new + reply): what
+        # the compaction trigger reads (PLAN 4.25)
+        self.peak_tokens: Optional[int] = None
         self.gen_tokens = 0
         self.gen_ms = 0.0
         self.nets: list[str] = []
@@ -563,6 +597,9 @@ class TurnMetrics:
                 self.prompt_tokens = self.cached_tokens + int(timings.get("prompt_n") or 0)
         self.gen_tokens += int(timings.get("predicted_n") or 0)
         self.gen_ms += float(timings.get("predicted_ms") or 0.0)
+        if timings.get("prompt_n") is not None:
+            size = int(timings.get("cache_n") or 0) + int(timings.get("prompt_n") or 0) + int(timings.get("predicted_n") or 0)
+            self.peak_tokens = max(self.peak_tokens or 0, size)
 
     def payload(self, tools_used: list[Any]) -> dict[str, Any]:
         return {
@@ -572,6 +609,7 @@ class TurnMetrics:
             "tokens_per_second": round(self.gen_tokens * 1000.0 / self.gen_ms, 1) if self.gen_ms > 0 else None,
             "prompt_tokens": self.prompt_tokens,
             "cached_tokens": self.cached_tokens,
+            "peak_tokens": self.peak_tokens,
             "nets": list(self.nets),
         }
 
@@ -848,9 +886,9 @@ def workspace_file_listing(workspace_path: Path | str, limit: int = WORKSPACE_LI
 
 def freeform_turn_note() -> str:
     return (
-        "SPACE: Freeform conversation, no project. find_files, read_file and write_file work on the "
-        f"user's own folders, rooted at {freeform_root()}: a relative path like 'Downloads' or "
-        "'Documents/notes.txt' resolves there (find_files with pattern '*' lists a folder). Saving a file "
+        "SPACE: Freeform conversation, no project. list_directory, find_files, read_file and write_file "
+        f"work on the user's own folders, rooted at {freeform_root()}: a relative path like 'Downloads' or "
+        "'Documents/notes.txt' resolves there; list_directory('drives') lists the drives. Saving a file "
         "asks the user once. Running commands, deleting or editing files in place, git and artifacts need "
         "a Workspace: if asked for those, say so plainly. Never write a tool call out as text."
     )
@@ -905,7 +943,20 @@ class AgentOrchestrator:
         kept in process memory only (see ``app.memory.ephemeral``)."""
         return isinstance(self.memory_store, EphemeralMemoryStore)
 
-    def _persist_tool_result(self, session_id: str, call_id: str, name: str, args: Any, result: str) -> None:
+    @staticmethod
+    def _fit_to_window(messages: list[dict[str, Any]], tools: Optional[list[Any]], model: str,
+                       metrics: "TurnMetrics") -> list[dict[str, Any]]:
+        """The request cut to fit the model's window, tools priced in (``turn_fit``): a turn's tool
+        results grow it after the context was budgeted (2026-10-24: 6.5k budgeted, 16.5k sent)."""
+        window = settings.llama_ctx_size_fast if model == "fast" else settings.llama_ctx_size_main
+        fitted, done = fit_messages(messages, window, tools_tokens(tools), settings.context_reserved_output_tokens)
+        if done:
+            metrics.nets.append("fit-window")
+        return fitted
+
+    def _persist_tool_result(
+        self, session_id: str, call_id: str, name: str, args: Any, result: str, reasoning: Optional[str] = None
+    ) -> None:
         """
         Keep a tool call and a capped copy of its result in history, so what a tool found is
         still known next turn (a file read, then "now change the second section" used to find
@@ -925,7 +976,9 @@ class AgentOrchestrator:
             "function": {"name": name, "arguments": args if isinstance(args, dict) else {}},
         }
         try:
-            self.memory_store.append_message(session_id, role="tool", content=text, name=name, tool_calls=[call])
+            self.memory_store.append_message(
+                session_id, role="tool", content=text, name=name, tool_calls=[call], reasoning_content=reasoning
+            )
         except Exception as e:
             logger.warning("Could not store the %s result in history: %s", name, e)
 
@@ -1500,6 +1553,7 @@ class AgentOrchestrator:
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
             max_context_tokens=resolved_ctx_tokens,
+            tools_tokens=tools_tokens(combined_tools),
             vision=vision,
         )
 
@@ -2060,6 +2114,16 @@ class AgentOrchestrator:
                 "fallback_used": False, "compaction_performed": None, "active_skills": [], "tools_used": [],
             }}
             return
+
+        # Compaction (PLAN 4.25): "/compact [focus]" now, or the news that one ran after the last turn.
+        focus = compaction.parse_command(user_message)
+        if focus is not None and not self.is_ephemeral:
+            async for ev in self._compact_now(active_session_id, focus):
+                yield ev
+            return
+        notice = compaction.take_notice(active_session_id)
+        if notice:
+            yield {"event": "compacted", "data": notice}
         approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
 
         parked = paused_turns.take(active_session_id, approved_action_ids)
@@ -2242,6 +2306,9 @@ class AgentOrchestrator:
                 turn_directive = "\n\n".join(d for d in (turn_directive, NO_PASSAGES_NOTE) if d)
 
         # 4. Strict Tier-Based Token Budgeting
+        # A compacted Workspace session: its summary plus the rows after it (the thread's own fold
+        # already does this for Freeform).
+        ws_history = None if thread_ctx is not None or self.is_ephemeral else             compaction.workspace_history(self.memory_store, active_session_id)
         vision = self._slot_has_vision("fast" if is_fast else "main", decision.provider)
         attachments = await self._describe_images_if_blind(attachments, vision)
         context_pkg = self.context_manager.build_context(
@@ -2255,9 +2322,10 @@ class AgentOrchestrator:
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
             max_context_tokens=resolved_ctx_tokens,
+            tools_tokens=tools_tokens(combined_tools),
             vision=vision,
-            history_rows=thread_ctx.rows if thread_ctx else None,
-            history_preamble=thread_ctx.preamble if thread_ctx else None,
+            history_rows=thread_ctx.rows if thread_ctx else (ws_history[0] if ws_history else None),
+            history_preamble=thread_ctx.preamble if thread_ctx else (ws_history[1] if ws_history else None),
         )
 
         # 5. Emit retrieval_context SSE event for UI observability
@@ -2334,6 +2402,14 @@ class AgentOrchestrator:
                         target_provider, decision.model,
                         _with_system_prompt(context_pkg.system_prompt, context_pkg.messages), answer or "",
                         combined_tools, self.memory_store, active_session_id, thread_ctx.episode["id"])
+                # Past 80% of the window: summarize in the background before the next turn.
+                peak = ((ev.get("data") or {}).get("metrics") or {}).get("peak_tokens")
+                if (not self.is_ephemeral and decision.provider == "llama_cpp" and not is_fast
+                        and compaction.should_compact(peak, compaction.window_for(decision.model))):
+                    logger.info("Turn reached %s tokens of %d; compacting %s in the background.",
+                                peak, compaction.window_for(decision.model), active_session_id)
+                    compaction.schedule(self.memory_store, target_provider, active_session_id, decision.model,
+                                        self.context_manager.token_counter)
             yield ev
 
         if rag_trace_record is not None:
@@ -2346,6 +2422,27 @@ class AgentOrchestrator:
 
         if cue == "save" and finished and not saved_in_turn:
             self._start_memory_capture(target_provider, decision.model, user_message, tool_context)
+
+    async def _compact_now(self, session_id: str, focus: str):
+        """``/compact [focus]``: compact the conversation now and say so. Nothing is stored for the
+        command itself but the marker the compaction writes."""
+        yield {"event": "tool_start", "data": {"tool": "compact", "args": {"focus": focus} if focus else {}}}
+        notice = await compaction.compact(self.memory_store, self.provider, session_id, model="main",
+                                          focus=focus or None, manual=True,
+                                          counter=self.context_manager.token_counter)
+        yield {"event": "tool_end", "data": {"tool": "compact", "args": {}, "status": "success" if notice else "error",
+                                             "result": "Compacted." if notice else "Nothing to compact yet."}}
+        if notice:
+            yield {"event": "compacted", "data": notice}
+            reply = "Compacted. I'll go on from the summary and the last exchange; everything above is still here for you."
+        else:
+            reply = "There's nothing to compact yet: the conversation since the last summary is one exchange."
+        yield {"event": "token", "data": {"delta": reply}}
+        yield {"event": "done", "data": {
+            "response": reply, "reasoning": "", "model": "main", "provider": "code", "status": "completed",
+            "session_id": session_id, "route_reason": "Compacted on request (/compact).", "fallback_used": False,
+            "compaction_performed": notice, "active_skills": [], "tools_used": [],
+        }}
 
     def _upgrade_search(self, name: str, args: dict[str, Any], tools: Optional[list[Any]],
                         tool_ctx: Optional[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
@@ -2475,6 +2572,7 @@ class AgentOrchestrator:
         final_nudge = _NUDGE_FINAL  # the loop ran out of rounds unless a repeat says otherwise
         nudged = False
         claim_checked = False
+        thinking_loop_retried = False
         metrics = TurnMetrics()
         first_round = 0
         if resume is not None:
@@ -2493,6 +2591,7 @@ class AgentOrchestrator:
                 resume = None
             else:
                 logger.info("Offering %d tools to '%s': %s", len(tools or []), model, self._tool_names(tools))
+                messages = self._fit_to_window(messages, tools, model, metrics)
                 stream_gen = provider.stream_chat(
                     model=model,
                     messages=messages,
@@ -2504,23 +2603,44 @@ class AgentOrchestrator:
                 done_event = None
                 accumulated_tool_calls = []
                 accumulated_reasoning: list[str] = []
+                narrator = narrator_for(provider, model, thinking)
+                loop_watch = LoopWatch()
 
-                async for ev in stream_gen:
-                    event_type = ev.get("event")
-                    if event_type == "text_delta":
-                        yield {"event": "token", "data": {"delta": ev.get("content", "")}}
-                    elif event_type == "reasoning_delta":
-                        accumulated_reasoning.append(ev.get("content", ""))
-                        yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
-                    elif event_type == "tool_draft":
-                        yield {"event": "tool_draft", "data": {"tool": ev.get("tool", "tool"), "args_delta": ev.get("args_delta", "")}}
-                    elif event_type == "tool_call":
-                        accumulated_tool_calls.append(ev.get("tool_call"))
-                    elif event_type == "done":
-                        done_event = ev
-                    elif event_type == "error":
-                        yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
-                        return
+                try:
+                    async for ev in stream_gen:
+                        event_type = ev.get("event")
+                        if event_type == "text_delta":
+                            if narrator:
+                                narrator.stop()
+                            yield {"event": "token", "data": {"delta": ev.get("content", "")}}
+                        elif event_type == "reasoning_delta":
+                            accumulated_reasoning.append(ev.get("content", ""))
+                            yield {"event": "reasoning", "data": {"delta": ev.get("content", "")}}
+                            if narrator:
+                                narrator.feed(ev.get("content", ""))
+                                line = narrator.take()
+                                if line:
+                                    yield {"event": "thinking_status", "data": {"text": line}}
+                            if loop_watch.feed(ev.get("content", "")):
+                                # Repeating itself: stop the round here (closing the stream stops
+                                # the server) rather than run on to the reply cap.
+                                break
+                        elif event_type == "tool_draft":
+                            if narrator:
+                                narrator.stop()
+                            yield {"event": "tool_draft", "data": {"tool": ev.get("tool", "tool"), "args_delta": ev.get("args_delta", "")}}
+                        elif event_type == "tool_call":
+                            accumulated_tool_calls.append(ev.get("tool_call"))
+                        elif event_type == "done":
+                            done_event = ev
+                        elif event_type == "error":
+                            yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
+                            return
+                finally:
+                    if narrator:
+                        narrator.stop()
+                    if loop_watch.looping:
+                        await stream_gen.aclose()
 
                 raw_done = done_event.get("raw", {}) if done_event else {}
                 metrics.add_round(raw_done)
@@ -2528,6 +2648,19 @@ class AgentOrchestrator:
                 tool_calls = accumulated_tool_calls or raw_done.get("tool_calls")
                 full_reasoning = "".join(accumulated_reasoning) or raw_done.get("reasoning", "") or ""
                 self._log_model_reply(model, content, tool_calls)
+
+                if not tool_calls and not content.strip() and not thinking_loop_retried and (
+                        loop_watch.looping or thinking_capped(raw_done.get("timings"), settings.llama_max_tokens)):
+                    # Thinking that looped or ran to the cap: its text is no use to send back (the
+                    # ordinary nudge below appends it, and the model went straight back into the
+                    # loop), so ask once more with thinking off (2026-10-24).
+                    thinking_loop_retried = True
+                    why = "repeating itself" if loop_watch.looping else "ran to the reply cap"
+                    logger.info("Model '%s' thinking %s with no answer; asking again with thinking off.", model, why)
+                    metrics.nets.append("thinking-loop")
+                    thinking = False
+                    messages.append({"role": "user", "content": _NUDGE_THINKING_LOOP})
+                    continue
 
                 replaced = False
                 if not tools:
@@ -2707,6 +2840,9 @@ class AgentOrchestrator:
             messages.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
             if content.strip() and not replaying:
                 said.append(content.strip())
+            # This round's thinking goes on its first stored call, so a reopened chat shows the turn
+            # in order (thinking, call, thinking, answer). The replay into the prompt ignores it.
+            round_reasoning = full_reasoning or None
             for tc in normalized_tool_calls:
                 t_name = tc["name"]
                 t_args = tc["args"]
@@ -2760,7 +2896,8 @@ class AgentOrchestrator:
                     "name": t_name,
                     "content": self._tool_message_content(t_name, result_str, model)
                 })
-                self._persist_tool_result(session_id, t_id, t_name, t_args, result_str)
+                self._persist_tool_result(session_id, t_id, t_name, t_args, result_str, reasoning=round_reasoning)
+                round_reasoning = None
         else:
             logger.warning("Max tool iterations reached (%d); asking '%s' for the answer.", max_iterations, model)
             metrics.nets.append("rounds-spent")
@@ -2769,6 +2906,7 @@ class AgentOrchestrator:
         # the cached prompt prefix holds (the template renders them in the head); a model that still
         # calls one gets a plain completion without tools instead.
         messages.append({"role": "user", "content": final_nudge})
+        messages = self._fit_to_window(messages, tools, model, metrics)
         content, reasoning_parts, called = "", [], False
         async for ev in provider.stream_chat(model=model, messages=messages, tools=tools if tools else None,
                                              profile=profile, thinking=thinking):
@@ -2787,11 +2925,22 @@ class AgentOrchestrator:
             elif kind == "error":
                 yield {"event": "error", "data": {"error": ev.get("message", "Stream error")}}
                 return
-        content = extract_tool_calls_from_text(content)[0] if content else content
-        if called or not content.strip():
+        # A call written out as text here can't run, and what's left around it is its run-up ("let me
+        # look at the drives"): ask once more without tools, and show that instead of what streamed.
+        # 2026-10-23 the raw <tool_call> reached the user twice (PLAN 4.23c).
+        content, text_calls = extract_tool_calls_from_text(content) if content else (content, [])
+        replaced = bool(text_calls)
+        if text_calls:
+            logger.info("Model '%s' wrote a call as text in its final answer; asking again without tools.", model)
+            metrics.nets.append("final-text-call")
+        if called or text_calls or not content.strip():
             synth = await provider.chat(model=model, messages=messages, profile=profile, thinking=False)
-            content = (synth.get("message", {}).get("content", "") or "").strip() or "".join(reasoning_parts).strip()
-            yield {"event": "token", "data": {"delta": content}}
+            content = (synth.get("message", {}).get("content", "") or "").strip()
+            content, again = extract_tool_calls_from_text(content) if content else (content, [])
+            if again or not content.strip():
+                content = "".join(reasoning_parts).strip() if not again and not replaced else _STUCK_REPLY
+            if not replaced:
+                yield {"event": "token", "data": {"delta": content}}
         full_reasoning = "".join(reasoning_parts)
         self.memory_store.append_message(
             session_id, role="assistant", content=content, reasoning_content=full_reasoning or None
@@ -2811,6 +2960,7 @@ class AgentOrchestrator:
                 "active_skills": active_skills or [],
                 "tools_used": tools_used,
                 "metrics": metrics.payload(tools_used),
+                "replace_content": replaced,
             }
         }
 

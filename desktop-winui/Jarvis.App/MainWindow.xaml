@@ -477,9 +477,8 @@
                             </Button>
                         </Grid>
                         <Grid Grid.Row="1" Margin="12,8,12,0">
-                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Reasoning|Context|Activity" SelectionChanged="RightPanelTabs_SelectionChanged" />
-                            <!-- Reasoning-is-streaming badge, top-right of the tab strip. -->
-                            <Ellipse x:Name="ReasoningBadge" Width="6" Height="6" Fill="{ThemeResource AccentBrush}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0" Visibility="Collapsed" />
+                            <!-- Thinking and tool steps show inline in the message now (PLAN 4.23). -->
+                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Context" SelectionChanged="RightPanelTabs_SelectionChanged" />
                         </Grid>
                         <Grid Grid.Row="2">
                             <Grid x:Name="ArtifactsPage" Visibility="Visible">
@@ -539,12 +538,6 @@
                                 </ListView>
                             </Grid>
                             </Grid>
-                            <Grid x:Name="ReasoningPage" Visibility="Collapsed">
-                            <ScrollViewer Padding="12">
-                                <TextBlock x:Name="ReasoningText" Text="No reasoning for this turn yet."
-                                           TextWrapping="Wrap" Style="{StaticResource DataText}" />
-                            </ScrollViewer>
-                            </Grid>
                             <Grid x:Name="ContextPage" Visibility="Collapsed">
                             <ScrollViewer Padding="12">
                                 <StackPanel Spacing="10">
@@ -572,17 +565,6 @@
                                         </ItemsControl.ItemsPanel>
                                     </ItemsControl>
                                 </StackPanel>
-                            </ScrollViewer>
-                            </Grid>
-                            <Grid x:Name="ActivityPage" Visibility="Collapsed">
-                            <ScrollViewer Padding="12">
-                                <ItemsControl x:Name="ActivityStepsList">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <StackPanel Spacing="6" />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                </ItemsControl>
                             </ScrollViewer>
                             </Grid>
                         </Grid>

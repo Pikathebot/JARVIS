@@ -308,7 +308,7 @@ class RemindersArgs(BaseModel):
 
 
 class GetSystemStatusArgs(BaseModel):
-    pass
+    about: Optional[Literal["games", "apps"]] = Field(default=None, description="List installed games or apps instead")
 
 
 class GitStatusArgs(BaseModel):
@@ -546,7 +546,7 @@ WORKSPACE_BOUND_TOOLS = frozenset({
     "delete_file", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
     "git_status", "git_diff", "git_log", "git_commit", "git_switch",
     "git_restore", "git_push", "git_pull",
-    "list_directory", "grep_in_files", "patch_file",
+    "grep_in_files", "patch_file",
 })
 
 

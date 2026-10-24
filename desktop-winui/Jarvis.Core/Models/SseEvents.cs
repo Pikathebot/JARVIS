@@ -18,6 +18,22 @@ public sealed class SseReasoningEvent
     public string Delta { get; set; } = "";
 }
 
+/// <summary>The conversation was compacted (PLAN 4.25): the model goes on from this summary and the
+/// last exchanges. <see cref="Manual"/> = asked for with /compact; otherwise it ran after the last turn.</summary>
+public sealed class SseCompactedEvent
+{
+    public string Summary { get; set; } = "";
+    public double At { get; set; }
+    public bool Manual { get; set; }
+}
+
+/// <summary>A few words on what the model is doing while it thinks ("Checking the calendar for
+/// Friday"), from llama-server's second slot -- backend/app/agent/thinking_narrator.py.</summary>
+public sealed class SseThinkingStatusEvent
+{
+    public string Text { get; set; } = "";
+}
+
 public sealed class SseToolDraftEvent
 {
     public string Tool { get; set; } = "";

@@ -111,19 +111,17 @@ async def test_a_digest_built_while_pending_is_refreshed_once_the_record_exists(
 
 
 @pytest.mark.asyncio
-async def test_fold_ahead_between_turns_with_a_summary(store):
-    eps = ThreadEpisodes(store, budget_tokens=400)
+async def test_the_keeper_no_longer_folds_ahead(store):
+    # Folding ahead moved to app.memory.compaction (PLAN 4.25): after a turn past 80% of the
+    # window, with a Claude Code-style summary. The keeper only writes records and digests now.
+    eps = ThreadEpisodes(store, budget_tokens=100_000)
     eps.context(THREAD_SESSION_ID)
     for i in range(10):
         _say(store, f"question {i} " + "word " * 15, f"answer {i} " + "word " * 15)
     keeper, _ = _keeper(store, FakeProvider(["Long chat"]), episodes=eps)
     did = await keeper.tick(now=time.time() + QUIET_SECONDS + 5)
-    assert any(d.startswith("folded") for d in did)
-    ep = store.open_episode(THREAD_SESSION_ID)
-    assert ep["fold_note"].startswith("[Earlier in this episode (folded): The user talked about long chat.")
-    # The next turn needs no fold of its own and carries the summary.
-    ctx = eps.context(THREAD_SESSION_ID)
-    assert not ctx.folded_now and "long chat" in ctx.preamble
+    assert not any(d.startswith("folded") for d in did)
+    assert not store.open_episode(THREAD_SESSION_ID).get("fold_note")
 
 
 def test_the_first_episode_of_the_day_carries_the_briefing(store):

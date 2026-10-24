@@ -904,6 +904,7 @@ def run_meta(a: argparse.Namespace, head: str, tools: dict[str, list[dict[str, A
         "rules_override": eval_io.file_sha(a.rules) if a.rules else "",
         "skills_override": a.skills,
         "tools_dropped": a.drop_tools,
+        "tools_added": a.add_tools,
         "nets_off": sorted(NETS_OFF), "pre_research": "pre-research" not in NETS_OFF,
         "max_rounds": MAX_ROUNDS, "max_tokens": MAX_TOKENS,
         "sampling": {k: v for k, v in SAMPLING.items() if k != "seed"},
@@ -932,6 +933,8 @@ def main() -> None:
     ap.add_argument("--no-pre-research", action="store_true", help="same as --no-net pre-research")
     ap.add_argument("--drop-tools", default="", metavar="SPACE:a,b",
                     help="leave these tools out of a space's offered set, e.g. FREEFORM:read_file,write_file")
+    ap.add_argument("--add-tools", default="", metavar="SPACE:a,b",
+                    help="offer these registry tools in a space that leaves them out, e.g. FREEFORM:list_directory")
     a = ap.parse_args()
     if not a.model.is_file():  # llama-server would exit at once and the stdout wait never return
         raise SystemExit(f"no model file at {a.model}")
@@ -955,6 +958,18 @@ def main() -> None:
         space, _, names = a.drop_tools.partition(":")
         drop = {n.strip() for n in names.split(",") if n.strip()}
         tools[space.upper()] = [t for t in tools[space.upper()] if t["function"]["name"] not in drop]
+    if a.add_tools:
+        # Offer a tool another space has, in registry order (PLAN 4.23c: list_directory in Freeform).
+        from app.agent.tools.registry import AVAILABLE_TOOLS
+        from app.agent.tool_schema import convert_tool_to_openai_schema
+
+        space, _, names = a.add_tools.partition(":")
+        add = {n.strip() for n in names.split(",") if n.strip()}
+        have = {t["function"]["name"] for t in tools[space.upper()]}
+        order = [f.__name__ for f in AVAILABLE_TOOLS]
+        extra = [convert_tool_to_openai_schema(f) for f in AVAILABLE_TOOLS if f.__name__ in add - have]
+        tools[space.upper()] = sorted(tools[space.upper()] + [t for t in extra if t],
+                                      key=lambda t: order.index(t["function"]["name"]))
     meta = run_meta(a, head, tools)
     print(f"{len(tasks)} tasks x {a.repeats}; slot {SLOT}; head prompt {len(head)} chars (sha {meta['head_sha']}); "
           f"tools freeform {len(tools['FREEFORM'])} / workspace {len(tools['WORKSPACE'])}; "

@@ -36,6 +36,9 @@ def _replay_units(stored: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     units: list[list[dict[str, Any]]] = []
     for msg in stored:
         role = msg.get("role", "user")
+        if msg.get("name") == "compaction":
+            # the compaction divider (PLAN 4.25): the summary rides as the preamble instead
+            continue
         if role == "tool":
             calls = msg.get("tool_calls") or []
             call = calls[0] if calls and isinstance(calls[0], dict) else None
@@ -300,6 +303,7 @@ class ContextManager:
         turn_directive: Optional[str] = None,
         history_rows: Optional[list[dict[str, Any]]] = None,
         history_preamble: Optional[str] = None,
+        tools_tokens: int = 0,
     ) -> ContextPackage:
         """
         Main entrypoint: Assembles strict tier-budgeted context package.
@@ -326,6 +330,9 @@ class ContextManager:
         ``history_preamble`` (the episode's digest / fold note) rides after the user's words on the
         first user message of that history -- or on the current message when there is none yet --
         so it is byte-identical on every turn of the episode.
+
+        ``tools_tokens`` is what the offered tool schemas cost (``turn_fit.tools_tokens``): the
+        template renders them into the head, so they come out of the budget before the history.
         """
         # 1. Budget Resolution (Amendment 2: Model context window resolution)
         total_window = max_context_tokens or settings.llama_ctx_size_main
@@ -357,7 +364,7 @@ class ContextManager:
             tier1_tokens += self.token_counter.count(turn_context_text) + 4
         if turn_directive and turn_directive.strip():
             tier1_tokens += self.token_counter.count(turn_directive.strip())
-        remaining_budget -= tier1_tokens
+        remaining_budget -= tier1_tokens + max(0, tools_tokens)
 
         # -------------------------------------------------------------
         # Tier 2: User Prompt + Attached Files (ALWAYS RESERVED with Safeguard)
@@ -568,13 +575,15 @@ class ContextManager:
                 "content": tier2_full_user_text
             })
 
-        total_input_tokens = self.token_counter.count_messages(final_messages)
+        # the schemas ride in the head too: the server counts them, so the report does
+        total_input_tokens = self.token_counter.count_messages(final_messages) + max(0, tools_tokens)
 
         budget_report = {
             "total_context_window": total_window,
             "reserved_output_tokens": reserved_output,
             "available_input_budget": input_budget,
             "tier1_system_tokens": tier1_tokens,
+            "tools_tokens": max(0, tools_tokens),
             "tier2_user_tokens": tier2_tokens,
             "tier3_rag_tokens": tier3_tokens,
             "tier4_history_tokens": tier4_tokens,
@@ -587,9 +596,10 @@ class ContextManager:
         }
 
         logger.info(
-            "Context assembled: %d tokens (Tier1: %d, Tier2: %d, Tier3: %d, Tier4: %d) | Chunks: %d used, %d dropped",
+            "Context assembled: %d tokens (Tier1: %d, tools: %d, Tier2: %d, Tier3: %d, Tier4: %d) | Chunks: %d used, %d dropped",
             total_input_tokens,
             tier1_tokens,
+            max(0, tools_tokens),
             tier2_tokens,
             tier3_tokens,
             tier4_tokens,

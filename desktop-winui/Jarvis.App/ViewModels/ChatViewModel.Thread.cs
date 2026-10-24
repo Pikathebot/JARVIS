@@ -92,16 +92,12 @@ public partial class ChatViewModel
         });
         return new ChatStreamCallbacks
         {
-            OnToken = e => Post(() => answer.Content += e.Delta),
-            OnReasoning = e => Post(() => answer.ReasoningContent += e.Delta),
-            OnToolStart = e => Post(() => answer.ToolSteps.Add(new ToolStep { Tool = e.Tool, Args = e.Args, Status = ToolStatus.Running })),
-            OnToolEnd = e => Post(() =>
-            {
-                var step = answer.ToolSteps.LastOrDefault(s => s.Tool == e.Tool && s.Status == ToolStatus.Running);
-                if (step is null) return;
-                step.Status = e.Status == "success" ? ToolStatus.Success : ToolStatus.Error;
-                step.Result = e.Result;
-            }),
+            OnToken = e => Post(() => { answer.EndThinking(); answer.Content += e.Delta; }),
+            OnReasoning = e => Post(() => answer.AppendThinking(e.Delta)),
+            OnThinkingStatus = e => Post(() => answer.SetThinkingStatus(e.Text)),
+            OnCompacted = e => Post(() => { if (IsThread) InsertCompacted(e, answer); }),
+            OnToolStart = e => Post(() => answer.StartToolStep(new ToolStep { Tool = e.Tool, Args = e.Args, Status = ToolStatus.Running })),
+            OnToolEnd = e => Post(() => answer.EndToolStep(e.Tool, e.Status, e.Result)),
             // The approval belongs to the device that asked: shown here as words, not buttons,
             // so the same action can't be approved twice.
             OnConfirmationRequired = e => Post(() =>
@@ -115,6 +111,7 @@ public partial class ChatViewModel
                 if (!string.IsNullOrEmpty(e.Response) && (e.ReplaceContent || string.IsNullOrEmpty(answer.Content))) answer.Content = e.Response;
                 answer.Model = e.Model;
                 answer.Provider = e.Provider;
+                answer.EndThinking();
                 answer.IsStreaming = false;
             }),
             OnError = e => Post(() => { answer.Content += $"\n\nSomething went wrong: {e.Error}"; answer.IsStreaming = false; }),

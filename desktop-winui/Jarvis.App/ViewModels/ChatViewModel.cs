@@ -73,20 +73,6 @@ public partial class ChatViewModel : ObservableObject
     [ObservableProperty]
     public partial SseRetrievalContextEvent? LatestRetrieval { get; set; }
 
-    /// <summary>Powers the right panel's Activity tab: a running trace of tool calls for the
-    /// active session (not cleared between turns, only on NewChat/LoadSession).</summary>
-    public ObservableCollection<ActivityStep> ActivitySteps { get; } = new();
-
-    /// <summary>Powers the right panel's Reasoning tab: whichever assistant message is currently
-    /// streaming, or the most recently completed one otherwise. Never auto-opens the panel --
-    /// callers only use this to render content into a tab the user may or may not have open, and
-    /// <see cref="IsReasoningStreaming"/> to drive a passive badge on that tab's header.</summary>
-    [ObservableProperty]
-    public partial ChatMessage? ActiveReasoningMessage { get; set; }
-
-    [ObservableProperty]
-    public partial bool IsReasoningStreaming { get; set; }
-
     public event Action<ChatMessage>? MessageCompleted;
 
     /// <summary>Short spoken acknowledgements for things that resolve without a model turn
@@ -334,10 +320,7 @@ public partial class ChatViewModel : ObservableObject
         _abort?.Cancel();
         Messages.Clear();
         PendingConfirmations.Clear();
-        ActivitySteps.Clear();
         LatestRetrieval = null;
-        ActiveReasoningMessage = null;
-        IsReasoningStreaming = false;
         Error = null;
     }
 
@@ -380,46 +363,78 @@ public partial class ChatViewModel : ObservableObject
 
     /// <summary>Stored rows as transcript items. Stored tool rows come before the answer they led
     /// to: they go back on it as its tool steps, so a reopened chat shows its tool rows,
-    /// "Remembered: ..." lines and screenshots as they were. Sets <see cref="ActiveReasoningMessage"/>
-    /// to the last answer.</summary>
-    private List<ChatMessage> MapHistory(IEnumerable<Dictionary<string, object?>> raw)
+    /// "Remembered: ..." lines and screenshots as they were. A tool row's thinking (the round that
+    /// made the call) goes before its step, the answer's after the last one (PLAN 4.23).</summary>
+    private static List<ChatMessage> MapHistory(IEnumerable<Dictionary<string, object?>> raw)
     {
         var items = new List<ChatMessage>();
         var steps = new List<ToolStep>();
+        var thinking = new List<ThinkingSegment>();
         foreach (var entry in raw)
         {
             var msg = MapRawMessage(entry);
+            if (msg.Role == MessageRole.System && ReadString(entry, "name") == "compaction")
+            {
+                items.Add(CompactedMark(msg.Content, msg.CreatedAt));
+                continue;
+            }
             if (msg.Role == MessageRole.Tool)
             {
+                if (!string.IsNullOrWhiteSpace(msg.ReasoningContent))
+                {
+                    thinking.Add(new ThinkingSegment { BeforeStep = steps.Count, Text = msg.ReasoningContent });
+                }
                 steps.Add(MapToolStep(entry));
                 continue;
             }
             if (steps.Count > 0)
             {
+                var owner = msg;
                 if (msg.Role != MessageRole.Assistant)
                 {
                     // tools that ran in a turn which ended without an answer (a confirmation)
-                    items.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
-                    items[^1].ToolSteps.AddRange(steps);
+                    owner = new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true };
+                    items.Add(owner);
                 }
-                else
-                {
-                    msg.ToolSteps.AddRange(steps);
-                }
+                owner.ToolSteps.AddRange(steps);
+                owner.Thinking.InsertRange(0, thinking);
                 steps.Clear();
+                thinking.Clear();
+            }
+            if (msg.Role == MessageRole.Assistant && msg.HasStructuredReasoning)
+            {
+                msg.Thinking.Add(new ThinkingSegment { BeforeStep = msg.ToolSteps.Count, Text = msg.ReasoningContent });
             }
             items.Add(msg);
-            if (msg.Role == MessageRole.Assistant)
-            {
-                ActiveReasoningMessage = msg;
-            }
         }
         if (steps.Count > 0)
         {
             items.Add(new ChatMessage { Role = MessageRole.Assistant, HasStructuredReasoning = true });
             items[^1].ToolSteps.AddRange(steps);
+            items[^1].Thinking.AddRange(thinking);
         }
         return items;
+    }
+
+    /// <summary>The "Conversation compacted" divider (PLAN 4.25), opening to the summary.</summary>
+    internal static ChatMessage CompactedMark(string summary, DateTimeOffset at) => new()
+    {
+        Role = MessageRole.System,
+        Mark = ThreadMark.Compacted,
+        CreatedAt = at,
+        MarkText = $"Conversation compacted · {at.LocalDateTime:HH:mm}",
+        MarkDetail = summary,
+    };
+
+    /// <summary>A compaction this turn reported: after the last turn (it goes above the new
+    /// message), or /compact (above the reply).</summary>
+    private void InsertCompacted(SseCompactedEvent e, ChatMessage reply)
+    {
+        var mark = CompactedMark(e.Summary, e.At > 0 ? FromUnix(e.At) : DateTimeOffset.Now);
+        var at = Messages.IndexOf(reply);
+        if (at < 0) return;
+        if (!e.Manual && at > 0 && Messages[at - 1].Role == MessageRole.User) at--;
+        Messages.Insert(at, mark);
     }
 
     private static ChatMessage MapRawMessage(Dictionary<string, object?> entry)
@@ -524,13 +539,13 @@ public partial class ChatViewModel : ObservableObject
         var newTopic = TakeNewTopic();
         _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
         Messages.Add(_streamingMessage);
-        ActiveReasoningMessage = _streamingMessage;
-        IsReasoningStreaming = false;
 
         var callbacks = new ChatStreamCallbacks
         {
             OnToken = e => Post(() => AppendToken(e.Delta)),
-            OnReasoning = e => Post(() => AppendReasoning(e.Delta)),
+            OnReasoning = e => Post(() => _streamingMessage?.AppendThinking(e.Delta)),
+            OnThinkingStatus = e => Post(() => _streamingMessage?.SetThinkingStatus(e.Text)),
+            OnCompacted = e => Post(() => { if (_streamingMessage is { } reply) InsertCompacted(e, reply); }),
             OnToolStart = e => Post(() => AddToolStep(e.Tool, e.Args, ToolStatus.Running)),
             OnToolEnd = e => Post(() => CompleteToolStep(e.Tool, e.Status, e.Result)),
             OnConfirmationRequired = e => Post(() => HandleConfirmationRequired(e)),
@@ -574,39 +589,15 @@ public partial class ChatViewModel : ObservableObject
     private void AppendToken(string delta)
     {
         if (_streamingMessage is null) return;
+        _streamingMessage.EndThinking();
         _streamingMessage.Content += delta;
     }
 
-    private void AppendReasoning(string delta)
-    {
-        if (_streamingMessage is null) return;
-        _streamingMessage.ReasoningContent += delta;
-        IsReasoningStreaming = true;
-    }
+    private void AddToolStep(string tool, Dictionary<string, object?> args, ToolStatus status) =>
+        _streamingMessage?.StartToolStep(new ToolStep { Tool = tool, Args = args, Status = status });
 
-    private void AddToolStep(string tool, Dictionary<string, object?> args, ToolStatus status)
-    {
-        _streamingMessage?.ToolSteps.Add(new ToolStep { Tool = tool, Args = args, Status = status });
-        ActivitySteps.Add(new ActivityStep { Type = "tool_call", Tool = tool, Status = "running", Args = args });
-    }
-
-    private void CompleteToolStep(string tool, string status, object? result)
-    {
-        var step = _streamingMessage?.ToolSteps.LastOrDefault(s => s.Tool == tool && s.Status == ToolStatus.Running);
-        if (step is not null)
-        {
-            step.Status = status == "success" ? ToolStatus.Success : ToolStatus.Error;
-            step.Result = result;
-        }
-
-        var resultText = result switch
-        {
-            null => null,
-            string s => s,
-            _ => System.Text.Json.JsonSerializer.Serialize(result),
-        };
-        ActivitySteps.Add(new ActivityStep { Type = "tool_result", Tool = tool, Status = status, Result = resultText });
-    }
+    private void CompleteToolStep(string tool, string status, object? result) =>
+        _streamingMessage?.EndToolStep(tool, status, result);
 
     private void HandleConfirmationRequired(SseConfirmationRequiredEvent e)
     {
@@ -625,12 +616,12 @@ public partial class ChatViewModel : ObservableObject
             // The backend ends the stream here without a "done" event, so this is the turn's
             // completion: the caret has to go, and the spoken "say yes to proceed, or no to
             // cancel" prompt is only spoken through MessageCompleted.
+            _streamingMessage.EndThinking();
             _streamingMessage.IsStreaming = false;
             _streamingMessage.Model = e.Model;
             _streamingMessage.Provider = e.Provider;
             var finished = _streamingMessage;
             _streamingMessage = null;
-            IsReasoningStreaming = false;
             MessageCompleted?.Invoke(finished);
         }
     }
@@ -644,6 +635,7 @@ public partial class ChatViewModel : ObservableObject
         if (forgot) _ = LoadThreadAsync();
         else if (IsThread) _ = RefreshEpisodesAfterTurnAsync();
         if (_streamingMessage is null) return;
+        _streamingMessage.EndThinking();
         _streamingMessage.IsStreaming = false;
         _streamingMessage.Model = e.Model;
         _streamingMessage.Provider = e.Provider;
@@ -660,16 +652,8 @@ public partial class ChatViewModel : ObservableObject
         {
             _streamingMessage.Content = e.Response;
         }
-        // Defensive: the client's own accumulation should already match, but fall back to the
-        // backend's final tally if a delta was ever dropped (mirrors the Content fallback above).
-        if (!string.IsNullOrEmpty(e.Reasoning) && string.IsNullOrEmpty(_streamingMessage.ReasoningContent))
-        {
-            _streamingMessage.ReasoningContent = e.Reasoning;
-        }
         var finished = _streamingMessage;
         _streamingMessage = null;
-        ActiveReasoningMessage = finished;
-        IsReasoningStreaming = false;
         MessageCompleted?.Invoke(finished);
     }
 
@@ -723,9 +707,9 @@ public partial class ChatViewModel : ObservableObject
         Error = message;
         if (_streamingMessage is not null)
         {
+            _streamingMessage.EndThinking();
             _streamingMessage.IsStreaming = false;
         }
-        IsReasoningStreaming = false;
     }
 
     private void Post(Action action)
