@@ -67,6 +67,7 @@ first; a live instance locks the build output.
 - [**docs/MILESTONES.md**](docs/MILESTONES.md): what was built, why, and what was measured.
 - [**docs/USER_GUIDE.md**](docs/USER_GUIDE.md): spaces, voice, permissions, custom skills.
 
-The other files in `docs/` (ARCHITECTURE, API_REFERENCE, AI_AGENT_CONTEXT, the GOVERNOR and STAGE specs and the
-Build plan) are historical design specs from before the WinUI client and the current models; they are kept for
-their reasoning, not as a description of the system. Where they disagree with CLAUDE.md, CLAUDE.md wins.
+[**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md), [**docs/API_REFERENCE.md**](docs/API_REFERENCE.md) and
+[**docs/AI_AGENT_CONTEXT.md**](docs/AI_AGENT_CONTEXT.md) describe the system as it is now. The GOVERNOR and STAGE
+specs, the Build plan and GLASS_RENDERING are historical design notes from before the WinUI client and the current
+models, kept for their reasoning. Where any doc disagrees with CLAUDE.md, CLAUDE.md wins.
