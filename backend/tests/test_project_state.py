@@ -232,3 +232,60 @@ async def test_a_chat_reads_project_md_once_and_the_next_chat_sees_edits(ws, api
     assert "Always say pineapple." in first and "--- Project State" in first
     assert first == second, "the head changed mid-chat"
     assert "Wiring the head" not in first and "Wiring the head" in new_chat
+
+
+# --- the PROJECT.md safety net (project_capture, 2026-10-25) ---
+
+@pytest.mark.parametrize("message,cued", [
+    # the 10-25 message, verbatim: the model planned to record it and never did
+    ("actually its written crct but for some reason you are picking not correctly thats fine first we will look into "
+     "orver's lore next we will look into the battle system we have also decided that songs carry both the cutscene "
+     "and the story", True),
+    ("we decided to drop the crafting system", True),
+    ("let's go with Godot for this", True),
+    ("the boss fight is done now", True),
+    ("what does the lore doc say about Orver?", False),
+    ("read the design document", False),
+])
+def test_project_cue(message, cued):
+    from app.agent.project_capture import project_cue
+    assert project_cue(message) is cued
+
+
+class _Recorder:
+    def __init__(self, calls):
+        self.calls, self.kwargs = calls, None
+
+    async def chat(self, **kwargs):
+        self.kwargs = kwargs
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": args}}
+            for i, (name, args) in enumerate(self.calls)]}}
+
+
+@pytest.mark.asyncio
+async def test_capture_records_each_change_the_model_names(ws):
+    from app.agent.project_capture import capture_project_state
+    provider = _Recorder([
+        ("project_state", {"action": "add_next", "text": "Work out Orver's lore"}),
+        ("project_state", {"action": "add_next", "text": "Design the battle system"}),
+        ("project_state", {"action": "add_decision", "text": "Songs carry both the cutscenes and the story"}),
+    ])
+    ctx = {"workspace_path": ws, "project_id": "p-cap", "session_id": "s", "chat_mode": "WORKSPACE"}
+    results = await capture_project_state(provider, "main", "first lore, next battle system; songs carry the story", ctx)
+    assert results == ["Added to Next.", "Added to Next.", "Added to Decisions."]
+    sections = _sections(ws, "p-cap")
+    assert sections["Next"] == ["- [ ] Work out Orver's lore", "- [ ] Design the battle system"]
+    assert any("Songs carry" in line for line in sections["Decisions"])
+    assert provider.kwargs["tool_choice"] == "required" and provider.kwargs["thinking"] is False
+
+
+@pytest.mark.asyncio
+async def test_capture_skip_and_no_project_change_nothing(ws):
+    from app.agent.project_capture import capture_project_state
+    ctx = {"workspace_path": ws, "project_id": "p-skip", "session_id": "s", "chat_mode": "WORKSPACE"}
+    assert await capture_project_state(_Recorder([("nothing_to_record", {})]), "main", "we decided nothing", ctx) == []
+    assert ps.read(ws, "p-skip") == ""
+    unused = _Recorder([])
+    assert await capture_project_state(unused, "main", "we decided x", {**ctx, "project_id": None}) == []
+    assert unused.kwargs is None

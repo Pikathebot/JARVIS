@@ -2533,6 +2533,25 @@ Record (what went wrong, the fixes, the Ornith re-eval of `list_directory`, the 
 - The Freeform eval runs every task with thinking off, while the live main model thinks every turn.
 - `get_system_status(about='games')` lists Steam apps (Blender, Wallpaper Engine) as games: Steam's manifests don't say.
 
+### 4.26 PROJECT.md not updated, and llama-server's RAM (device report 2026-10-25) -- BUILT 2026-10-25, UNCOMMITTED, unverified on device
+
+The user lined up "first Orver's lore, next the battle system" and said "we have also decided that songs carry both
+the cutscene and the story"; two tries, PROJECT.md unchanged. Ornith's thinking planned the `project_state` call, read
+the design document first and never came back to it. Meanwhile the governor unloaded the model every few seconds from
+09:32 (system RAM 98.5%; llama-server 14.8 GB committed).
+- **PROJECT.md safety net** (`agent/project_capture.py`, the `memory_capture` pattern): a Workspace turn whose message
+  settles or orders work (`project_cue`) and ends with no `project_state` call gets one forced side request after the
+  reply (`project_state` per change, or `nothing_to_record`), shown the message and PROJECT.md as it is. The tool's
+  description also says to record first, before reading or answering.
+- **llama-server flags** (measured on a test server, live flags, 2026-10-25): the host prompt cache (`--cache-ram`,
+  default 8192 MiB) grew ~320 MB per prompt swap; 6.6 GB at load + 8.2 GB cache = the 14.8 GB seen. Worse, with
+  `--kv-unified` a task on slot 1 (the narrator) saved and **cleared** slot 0 ("cache idle slots"), so the turn after
+  every narrated turn re-read the whole chat (13.7k tokens, 14 s). Now `--cache-ram 2048` (`LLAMA_CACHE_RAM_MB`) and
+  `--no-cache-idle-slots`: narrator and side requests both leave the chat prefix reusable (17 tokens re-read), 7.1 GB
+  committed after the test vs 7.6 GB and still growing.
+- Unverified on device: the capture writing the right lines on a real message; RAM staying down over a long session;
+  turn latency after narrated turns. Takes a model restart (next launch of the app).
+
 ### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
 **The ask (user):** "Since I am a college student -- integration of competitive programming websites like LeetCode and
 other useful integrations that might help me."

@@ -161,6 +161,20 @@ def test_two_slots_share_one_kv_pool(monkeypatch, tmp_path):
     assert "--kv-unified" not in pm._build_cmd(Path("llama-server.exe"), tmp_path / "m.gguf", "main", 32768, None)
 
 
+def test_narrator_keeps_the_chat_prefix_and_the_prompt_cache_is_capped(monkeypatch, tmp_path):
+    # 2026-10-25: the default cache (8 GB) reached 14.8 GB committed and 98.5% RAM, and each slot-1
+    # task cleared slot 0, so the next turn re-read the whole conversation.
+    from pathlib import Path
+
+    from app.agent.runtime_process_manager import RuntimeProcessManager
+
+    pm = RuntimeProcessManager()
+    monkeypatch.setattr(settings, "llama_parallel", 2)
+    monkeypatch.setattr(settings, "llama_cache_ram_mb", 2048)
+    cmd = pm._build_cmd(Path("llama-server.exe"), tmp_path / "m.gguf", "main", 32768, None)
+    assert "--no-cache-idle-slots" in cmd and cmd[cmd.index("--cache-ram") + 1] == "2048"
+
+
 def test_thinking_has_a_budget_on_the_server(monkeypatch, tmp_path):
     from pathlib import Path
 

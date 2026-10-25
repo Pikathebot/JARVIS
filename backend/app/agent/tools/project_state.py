@@ -33,7 +33,7 @@ def project_state(
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> str:
-    """Update this project's PROJECT.md as its state changes: current work, next steps, what got done, decisions.
+    """Update this project's PROJECT.md as its state changes: current work, next steps, what got done, decisions. Record it first, before reading or answering.
     """
     if not project_id:
         return "Error: this conversation has no project, so there is no PROJECT.md."
