@@ -253,14 +253,15 @@ def test_project_cue(message, cued):
 
 
 class _Recorder:
+    """One call per request, as llama-server answers a forced choice; then nothing_to_record."""
     def __init__(self, calls):
-        self.calls, self.kwargs = calls, None
+        self.calls, self.kwargs, self.requests = list(calls), None, 0
 
     async def chat(self, **kwargs):
-        self.kwargs = kwargs
+        self.kwargs, self.requests = kwargs, self.requests + 1
+        name, args = self.calls.pop(0) if self.calls else ("nothing_to_record", {})
         return {"message": {"role": "assistant", "content": "", "tool_calls": [
-            {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": args}}
-            for i, (name, args) in enumerate(self.calls)]}}
+            {"id": f"c{self.requests}", "type": "function", "function": {"name": name, "arguments": args}}]}}
 
 
 @pytest.mark.asyncio
@@ -278,6 +279,8 @@ async def test_capture_records_each_change_the_model_names(ws):
     assert sections["Next"] == ["- [ ] Work out Orver's lore", "- [ ] Design the battle system"]
     assert any("Songs carry" in line for line in sections["Decisions"])
     assert provider.kwargs["tool_choice"] == "required" and provider.kwargs["thinking"] is False
+    assert provider.requests == 4  # three changes, then nothing left
+    assert provider.kwargs["messages"][-1]["content"].startswith("Added to Decisions.")
 
 
 @pytest.mark.asyncio
