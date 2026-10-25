@@ -29,7 +29,7 @@ Principles that have held up:
 - **The backend decides meaning, the client renders.** The seam is plain HTTP + SSE.
 - **One channel for anything unprompted** (`AwarenessMonitor.emit`).
 
-## 1. Architecture as it actually runs (2026-09-23)
+## 1. Architecture as it actually runs (updated 2026-10-25)
 
 ```
  WinUI 3 app (Jarvis.App + Jarvis.Core + Jarvis.Glass)
@@ -38,36 +38,40 @@ Principles that have held up:
    v
  FastAPI :8000 ── orchestrator ── tool selection ─ router ─ permissions ─ tool pipeline
    |                   |                                               (worker thread, timeouts)
-   |                   ├── llama-server :8001  main: Qwen3.5-9B IQ3_XXS + Q8_0 mmproj, 32k ctx
+   |                   ├── llama-server :8001  main: Ornith 1.5 9B IQ3_XXS + its mmproj, 32k ctx
    |                   |                       fast: MiniCPM5-2B Q4_K_M (text-only)
    |                   ├── captioner  :8002  SmolVLM-500M, CPU, only for models without vision
    |                   └── RAG ── embedder :8003  nomic-embed-text-v1.5, CPU ── FTS5 + Qdrant(local)
    ├── governor (NVML/psutil + per-process GPU counters) ── launch ladder, eviction
    ├── awareness monitor ── rules, routines, proactive actions ── SSE /api/awareness/stream
-   ├── voice: faster-whisper tiny.en (CPU) in, Kokoro-82M (CPU) out, wake word + follow-up window
+   ├── voice: Bark 3.0 Pro (sidecar, CPU or CUDA) in, faster-whisper small.en fallback; Kokoro-82M (CPU) out; wake word + follow-up window
    └── SQLite (SQLModel + Alembic) + per-project workspace trees + JSON state in data/
 ```
 
 | Area | What runs | Notes |
 |---|---|---|
 | Inference | `llama-server.exe` build 10689, `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--no-mmap`, `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
-| Main model | Qwen3.5-9B UD-IQ3_XXS + Q8_0 projector @ 32k | ~5.0 GB; 25-29 tok/s decode. Chosen over Q3_K_XL (+4.7% PPL) because the real desktop holds ~2.3 GB VRAM. |
+| Main model | Ornith 1.5 9B IQ3_XXS + its mmproj @ 32k (since 2026-10-20; Defiant is the fallback) | Chosen by eval and blind votes, see 4.17c. Live model is whatever `data/models.json` names. |
 | Fast model | MiniCPM5-2B Q4_K_M | 5/5 on the tool-chain bench, 2.5x faster than the 4B. EN/ZH only, no vision. |
 | Model choice | `data/models.json` via Settings -> Models | Overrides `.env`, which is stale on model paths. |
-| Speech | STT faster-whisper `tiny.en` beam 2; TTS Kokoro-82M fp32 | Both CPU. edge-tts only with `VOICE_TTS_BACKEND=edge`. |
+| Speech | STT Bark 3.0 Pro (sidecar, stops when idle), faster-whisper `small.en` fallback; TTS Kokoro-82M fp32 | Bark CPU or CUDA, Kokoro CPU. edge-tts only with `VOICE_TTS_BACKEND=edge`. See 4.22 and 4.24. |
 | RAG | nomic-embed sidecar + BM25 FTS5, relevance floor/gap/peak cuts | Hashed-vector fallback if the GGUF is missing. |
 | Client | WinUI 3, .NET 10, WindowsAppSDK 2.4, packaged dev MSIX | Glass = SwapChainPanel under XAML, live desktop capture, layered HLSL passes. |
-| Tests | pytest, 498 pass | No automated tests for the C# client. |
+| Tests | pytest, 965 pass (2026-10-18, per CLAUDE.md) | No automated tests for the C# client. |
 
 ## 2. Status
 
-Everything in `docs/MILESTONES.md` is built and committed. In short: streaming tool-calling agent
+Everything in `docs/MILESTONES.md` is built and committed, and so is most of §4 through 4.26 (see each item's
+status line for what is still unverified on device). In short: streaming tool-calling agent
 with honest tool turns; deterministic permissions with voice/typed confirmations and timeouts;
 governor with relative VRAM floor and launch ladder; model catalogue with vision projectors and a
 captioner fallback; stable prompt prefix, n-gram speculation, 32k context with compaction;
 persona, hands-free voice, HUD, ambient awareness, routines and proactive actions; RAG with real
 embeddings and a relevance floor; the WinUI client with Liquid Glass panels, controls, sheets,
-workspace creation and image attachments; git tools for the workspace repository.
+workspace creation and image attachments; git tools for the workspace repository. Since 2026-10-01: the
+harness hardening (taint gate, research pipeline), Freeform file tools, Google sign-in with Notes, Tasks, Calendar
+and Gmail, the Freeform thread, remote control from the phone and iPad, Bark speech-to-text, inline thinking,
+compaction and PROJECT.md.
 
 ## 3. Key endpoints
 
@@ -93,7 +97,8 @@ In priority order. Each item says what "done" means and what still needs the use
 thinking on, replayed after each change), a post-turn self-check that a claimed action ran, llama-server's 6.6 GB
 `--no-mmap` host memory; (2) **fine-tune Ornith** (4.13 #10: Soup LoRA smoke test on Ornith first, data from the
 safety nets' logs and the blind votes, gated by (1)'s eval); (3) the project panel + PROJECT.md keeper (4.18 phases
-2-4, 4.23 panel talk); (4) 4.23b student integrations; (5) voice (4.24).
+2-4, 4.23 panel talk); (4) 4.23b student integrations; (5) voice (4.24). Added 2026-10-25, slot not yet
+decided: 4.27 file formats (documents, spreadsheets, PDF) -- the next session places it in this order.
 
 ### 4.0 Startup: done for now
 
@@ -975,8 +980,8 @@ staging were not needed yet; they come with Phase 2's async ring.
 
 ### 4.13 Harness review: what to take from Odysseus (started 2026-10-16)
 
-**Device test 2026-10-17 and its fixes -- start here.** All UNCOMMITTED (with the night's work below), ask
-before committing. User's results: Defiant loads cleanly and sounds like Jarvis; metrics footer readable;
+**Device test 2026-10-17 and its fixes -- start here.** Now committed (with the night's work below; see the
+4.13 commits in git log). User's results: Defiant loads cleanly and sounds like Jarvis; metrics footer readable;
 tray quit OK; "summarise <reddit url> and save it in Downloads" looped (harness checks stopped there). Fixes,
 build/test-verified only (905 backend tests, WinUI builds), **unverified on device**:
 - **Freeform gets file tools on the user's own folders** (user's call): read_file, list_directory,
@@ -1000,7 +1005,7 @@ build/test-verified only (905 backend tests, WinUI builds), **unverified on devi
 - Device checks next: Freeform "biggest 3 files in Downloads", "summarise <url> and save it in Downloads"
   (one approval), Fast + "GPU temperature?", Reddit link. Then the earlier list (compare card, "did you do it?").
 
-**Second device test 2026-10-17 (12:17-12:24) and its fixes -- BUILT 2026-10-18, UNCOMMITTED, unverified on device.**
+**Second device test 2026-10-17 (12:17-12:24) and its fixes -- BUILT 2026-10-18, committed, unverified on device.**
 What was built (build/test-verified only; WinUI builds):
 - #1 `agent/paused_turns.py`: the stream loop parks the turn at an approval card (messages, the round's raw
   calls, tools_used, metrics, call history, taint, model/thinking/tools); `run_stream` takes it when an approved
@@ -1084,7 +1089,7 @@ text; Reddit on Fast gives the generic no-tools line. Broken, in order of weight
    (4 s debounce) right after a 97 s write_file generation; the Bonsai session said it had finished. Check
    `governor` samples for the offending process next time before touching thresholds.
 
-**Handoff (2026-10-16 night, halted mid-task).** All UNCOMMITTED, ask before committing:
+**Handoff (2026-10-16 night, halted mid-task).** Left uncommitted at the time; since committed (see the 4.13 commits in git log):
 - Fixes: stream loop's answer round when rounds run out / a call repeats (`_NUDGE_FINAL`/`_NUDGE_REPEAT`; before,
   the stream ended with no `done` = empty reply), `web_search` for a question runs as `research`
   (`_upgrade_search`, malformed calls excluded), `max_tokens` cap (`LLAMA_MAX_TOKENS`, 8192). Tests:
@@ -1512,7 +1517,7 @@ independent -> 1 (traces + contrast) -> 3 (verdict convention + probe flags, use
 Reviewed with the main session 2026-10-18: it agrees with the split and the order; §4.15 comes before 4.14.
 **The user approved the recommended order 2026-10-18.**
 
-**Built 2026-10-18 (build/test-verified only, UNCOMMITTED, unverified on device): #6, #2, #1, #3, #5.**
+**Built 2026-10-18 (build/test-verified only, committed in 50cf136, unverified on device): #6, #2, #1, #3, #5.**
 - #6: lint tests in `test_tool_contract.py` (rules call only real tools with real parameters; each space's
   rules name only tools it offers; skills parse with distinct triggers and name real tools) and
   `test_real_head_prefix_is_stable_and_within_budget` beside the prefix test in `test_context_manager.py`
@@ -1713,7 +1718,7 @@ fail when that file runs alone ("no such table: sessions" -- they rely on an ear
 - Nudge "X in 10 minutes" through `AwarenessMonitor.emit` (new observation kind), spoken and shown like the rest.
 - HTTP via httpx against the REST APIs (already a dependency); `google-auth-oauthlib` only for the sign-in.
 
-**Phase B progress 2026-10-18 19:00-19:10 (build/test-verified; nothing against real Google yet; UNCOMMITTED).**
+**Phase B progress 2026-10-18 19:00-19:10 (build/test-verified; nothing against real Google yet; committed in 5f96c89 onward).**
 - `docs/GOOGLE_SETUP.md`: the user's steps -- own Cloud project, Calendar + Tasks APIs, External consent screen
   (publish it: "Testing" expires sign-ins after 7 days), Desktop OAuth client JSON -> `data/google_client_secret.json`.
 - `app/google/auth.py`: OAuth desktop flow by hand over httpx (no google-auth dependency): PKCE S256, one-shot
@@ -1732,7 +1737,7 @@ fail when that file runs alone ("no such table: sessions" -- they rely on an ear
 - Tests: `test_google_auth.py` (6: PKCE exchange through a fake browser, forged state, refresh, revoke,
   endpoints), `test_google_tasks_sync.py` (6). Full suite 1049 pass.
 
-**Phase B calendar 2026-10-19 (build/test-verified; nothing against real Google yet; UNCOMMITTED).**
+**Phase B calendar 2026-10-19 (build/test-verified; nothing against real Google yet; committed in 5f96c89 onward).**
 - Store: `calendar.json` beside the token (`auth.DATA_DIR`, repo-root `data/`), **not** the planned SQLite table --
   tools are sync functions, and a small JSON file is the repo's pattern for restart-surviving state. Local
   wall-clock times (`2026-10-20T15:00`, or a date for all-day; end exclusive as at Google). A local change is
@@ -2009,7 +2014,7 @@ tuning controls (`SettingsPane.xaml`, PLAN 4.8d).
 - Not in scope: log levels set from the UI, the `LLAMA_PAYLOAD_DUMP_DIR` payload replay (could be a later
   "dump next request" button).
 
-### 4.17b Device test 2026-10-20 and its fixes -- BUILT 2026-10-20, UNCOMMITTED; seen working on device 10-20 pm (user: "everything works smoothly") except the start-only wake word and the typing guard, built after
+### 4.17b Device test 2026-10-20 and its fixes -- BUILT 2026-10-20, committed in 532411b; seen working on device 10-20 pm (user: "everything works smoothly") except the start-only wake word and the typing guard, built after
 
 **Seen working on device (user, 10-20 morning):** the Governor switch (off = chat still works), Logs in Settings ->
 Developer, the morning briefing with the unread-mail line, Game mode by chat ("game mode off" -> model reloads),
@@ -2116,7 +2121,7 @@ Unverified on device. To watch: turn latency (thinks more), searching vs answeri
 tool calls written as text. Not tried: Ornith's recommended presence_penalty 1.5 for general use. Small
 follow-up: Defiant's `imatrix.gguf` is listed in the model catalogue as a model named "imatrix".
 
-### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- Freeform thread DESIGNED 2026-10-20 (not built); Workspace still to discuss
+### 4.18 One continuing chat, or many? Freeform, and Workspace as Claude-style Projects (raised 2026-10-19) -- Freeform thread phases 1-5 BUILT and committed (a4205c3 to 34db5d0; device status not recorded here); Workspace still to discuss
 
 **The question (user):** is Freeform better as one long chat (or many, as now)? The same for Workspace, made
 like Projects in Claude. How to handle the context of a long chat is a second discussion, after deciding
@@ -2618,3 +2623,33 @@ testing, Bark stays as built (background start + 5-minute idle stop, Whisper mea
 3. **A smaller Bark variant** if neither helps: Underdog Bark 3.0 (base), -Clean and -Plus exist next to -Pro on
    Hugging Face (ConwayResearch). Their sizes and accuracy are unchecked -- read each model card (parameters, WER) first;
    a variant is only lighter if it has fewer parameters or ships quantized weights.
+
+### 4.27 Document, spreadsheet, PDF and other common file formats (raised by the user 2026-10-25) -- QUEUED, not yet slotted into the order above
+**Why:** Jarvis reads and writes plain text and code today, but the files people actually hand an assistant are Word
+documents, PDFs, Excel and CSV sheets, PowerPoint decks and similar. Without them the user has to convert by hand before
+Jarvis can help. The user asked for these formats to be supported generally, not for one special case.
+
+**What "done" means (a first pass, to be cut down by the next session):**
+1. **Read** (the first priority, since it covers most requests): PDF text and tables, DOCX text including headings and
+   tables, XLSX/XLS/CSV/TSV sheets (sheet names, headers, values, formulas shown as text), PPTX slide text and notes.
+   Each returns plain text the model can use, truncated the same way other tool output is, with a note when it is cut.
+2. **Write / create:** DOCX, XLSX (with formulas that recalculate), CSV, and PDF output for a finished document. Writes go
+   through the existing file-safety backup (`file_safety.py`) like any other file change.
+3. **Other formats to decide** (the next session should check the user's real files before choosing): RTF, EPUB, ODT/ODS,
+   JSON/YAML and Markdown tables (probably already covered as text), images and scanned PDFs (OCR, probably via the
+   vision slot, not a new engine).
+
+**Constraints the next session must respect (CLAUDE.md "Adding a tool"):** every format reader or writer is a tool with a
+Pydantic `*Args` class, a risk tier in `BASE_TOOL_RISK_MAP`, and an entry in `WORKSPACE_BOUND_TOOLS` if it works on project
+files; the tool docstring's first paragraph is what the model sees, so keep it short. Prefer extending the existing
+`read_file` by file type over adding many new tools, if that keeps the always-on tool list small (the prompt prefix is a
+KV-cache contract). New Python libraries go into the backend venv, so they count against the 4.22 startup and RAM budget;
+check each one's import cost and install size before adding it.
+
+**Decisions left to the next session (Opus, reading this line):** which formats are in the first slice; library choices
+(`pypdf` / `pdfplumber` for PDF, `python-docx`, `openpyxl`, `python-pptx`, and whether any needs a native binary on
+Windows); whether reading is one tool or one per format; and whether an uploaded file in the chat goes through the
+same reader or the RAG path. Measure one real file of each kind before committing to a library.
+
+**Needs the user:** a few real files (a Word doc, a PDF with a table, an Excel sheet) to test against, and a device check
+after the first slice lands. **Not yet started.**
