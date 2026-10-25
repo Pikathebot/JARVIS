@@ -1,6 +1,6 @@
 # Jarvis — Private Local AI Assistant for Windows
 
-A private, fast, and lightweight local AI assistant for Windows 11 powered by native `llama-server.exe` (llama.cpp) on an 8 GB RTX 4060 laptop -- by default **Qwen3.5-9B** (IQ3_XXS + vision projector, 32k context) for main work and **MiniCPM5-2B** for quick turns, chosen at runtime from whatever GGUFs are in `models/` -- with full GPU offload, a native WinUI 3 desktop client with liquid-glass rendering, workspace switching, attachments, artifacts versioning, Model Context Protocol (MCP), dynamic skills loading, hardware resource governance, and voice interaction.
+A private, fast, and lightweight local AI assistant for Windows 11 powered by native `llama-server.exe` (llama.cpp) on an 8 GB RTX 4060 laptop -- by default **Ornith 1.5 9B** (IQ3_XXS + vision projector, 32k context) for main work and **MiniCPM5-2B** for quick turns, selected in Settings -> Models from whatever GGUFs are in `models/` -- with full GPU offload, a native WinUI 3 desktop client with liquid-glass rendering, workspace switching, attachments, artifacts versioning, Model Context Protocol (MCP), dynamic skills loading, hardware resource governance, and voice interaction.
 
 ---
 
@@ -11,11 +11,11 @@ A private, fast, and lightweight local AI assistant for Windows 11 powered by na
 - **SSE Streaming & FastAPI Backend**: Real-time token streaming via `/chat/stream` with tool execution updates and final metadata.
 - **Unified SQLModel & Alembic Database**: Robust relational schema managing Projects, Sessions, Attachments, Artifacts, and Version History with automatic startup migrations.
 - **Hardware Resource Governor (V2)**: Real-time PyNVML GPU/VRAM telemetry protecting your RTX 4060 GPU and CPU from overload.
-- **Deterministic Safety Permissions**: $O(1)$ hardcoded security tiering (`LOW_RISK`, `CONFIRMATION_REQUIRED`, `HIGH_RISK`) with SHA256 action approval tokens.
-- **Model Routing (Normal vs Heavy)**: Local inference by default, dynamically routing complex reasoning to OpenRouter when enabled.
+- **Deterministic Safety Permissions**: $O(1)$ hardcoded security tiering (`LOW_RISK`, `CONFIRMATION_REQUIRED`, `HIGH_RISK`), argument-aware per call (for example, a write outside the workspace asks), with SHA256 action approval tokens.
+- **Model Routing**: Local inference only by default. OpenRouter "Heavy Mode" exists but is off (`CLOUD_ROUTING_ENABLED=false`); when it is on and fails, the local path runs instead.
 - **Model Context Protocol (MCP)**: Bidirectional JSON-RPC 2.0 stdio client for external tools and servers.
 - **Dynamic Skills Loader**: Extensible Markdown-based domain skills (`skills/*.md`) with trigger keyword matching.
-- **Hands-Free Voice Loop**: Wake-word detection ("Jarvis" / "Hey Jarvis") with local voice-activity detection, a 15-second follow-up window so follow-ups need no wake word, barge-in to interrupt a spoken reply; speech in via local Whisper, out via local Kokoro-82M, both on the CPU.
+- **Hands-Free Voice Loop**: Wake-word detection ("Jarvis" / "Hey Jarvis") with local voice-activity detection, a follow-up window so follow-ups need no wake word, barge-in to interrupt a spoken reply; speech in via local Bark 3.0 Pro (faster-whisper as fallback), out via local Kokoro-82M.
 - **Persona Layer**: Selectable manner (`jarvis`, `assistant`, `operator`) controlling address, voice, tone and spoken reply length - without ever altering the tool protocol.
 - **Ambient Awareness**: Proactive hardware observations (VRAM, thermals, RAM, disk, battery, model eviction) streamed over SSE, announced once rather than repeatedly, plus instant telemetry-assembled status briefings.
 - **Always-On-Top HUD**: A borderless glass overlay summoned anywhere with `Ctrl+Shift+J` - voice orb, live telemetry rings, and its own voice session.
@@ -65,7 +65,8 @@ first; a live instance locks the build output.
   the request path, the contracts that are easy to break. Current; start here.
 - [**PLAN.md**](PLAN.md): what runs today and what comes next.
 - [**docs/MILESTONES.md**](docs/MILESTONES.md): what was built, why, and what was measured.
-- [**docs/USER_GUIDE.md**](docs/USER_GUIDE.md): workspaces, shortcuts, custom skills, configuration.
+- [**docs/USER_GUIDE.md**](docs/USER_GUIDE.md): spaces, voice, permissions, custom skills.
 
-The other files in `docs/` are historical design specs from before the WinUI client and the
-current models; they are kept for their reasoning, not as a description of the system.
+The other files in `docs/` (ARCHITECTURE, API_REFERENCE, AI_AGENT_CONTEXT, the GOVERNOR and STAGE specs and the
+Build plan) are historical design specs from before the WinUI client and the current models; they are kept for
+their reasoning, not as a description of the system. Where they disagree with CLAUDE.md, CLAUDE.md wins.

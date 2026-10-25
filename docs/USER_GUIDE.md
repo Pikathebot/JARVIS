@@ -16,14 +16,14 @@ Welcome to Jarvis, your private, lightweight local AI assistant for Windows 11.
 The Jarvis desktop application is a native WinUI 3 client ([`desktop-winui/`](../desktop-winui/)) with 3 integrated areas:
 
 ### 1. Left Sidebar
-- **Workspace Switcher**: Select between your isolated Project Workspaces or switch to Global chat.
+- **Space switch**: **Freeform** is plain conversation with no project, and it can keep one continuing thread. **Workspace** holds your projects, each with its own folder, instructions, files and chats.
 - **New Project Modal**: Create a new project with custom system instructions and designated local folders.
 - **Session History**: Easily switch between previous conversation sessions or launch a new chat.
 
 ### 2. Main Conversation Viewport & Composer
 - **Live SSE Streaming**: Fluid, real-time message streaming with tool execution logs.
-- **Paperclip Attachment Button**: Upload source code, markdown, PDFs, or data files. Files are automatically processed and injected into the LLM context.
-- **Deterministic Action Cards**: Approve or deny sensitive operations (`write_file`, `execute_command`) with one click.
+- **Paperclip Attachment Button**: Attach images (the vision model sees them) and text, code or CSV files (indexed for retrieval in a workspace). PDFs and Office files are stored but not read yet (PLAN 4.27).
+- **Action Cards**: Approve or deny the risky operations (commands, writes outside the workspace, launching apps) with one click.
 
 ### 3. Right Panel
 - **Artifacts**: View and browse AI-generated durable code snippets, markdown reports, and version history.
@@ -47,8 +47,8 @@ Jarvis includes hands-free voice interaction:
 ## 4. Safety Permissions & Action Confirmations
 
 When an operation touches the filesystem or executes system commands, Jarvis evaluates deterministic risk tiers:
-- **Low-Risk Tools** (`read_file`, `web_search`, `fetch_url`): Executed immediately.
-- **Confirmation-Required Tools** (`write_file`, `patch_file`, `app_control`): Jarvis presents an **Action Confirmation Card**:
+- **Low-Risk Tools** (`read_file`, `write_file`, `patch_file`, `web_search`, `fetch_url`): Executed immediately. Writes are checked per call: a write outside the workspace asks first.
+- **Confirmation-Required Tools** (`execute_command`, `launch_app`, and any file action outside the workspace): Jarvis presents an **Action Confirmation Card**:
   - Click **`Approve & Execute`** to authorize the action with a unique cryptographic action token.
   - Click **`Cancel`** to reject.
 
@@ -66,12 +66,11 @@ You can extend Jarvis with custom skills without writing Python code:
      - git status
      - commit changes
      - git branch
-   tools:
-     - execute_command
    ---
 
    # Git Assistant Instructions
    - Always run git status before staging changes.
    - Format commit messages cleanly following Conventional Commits.
    ```
-2. Reload skills dynamically by calling `POST http://127.0.0.1:8000/skills/reload`.
+   The skill's text is added to the turn when a trigger matches.
+2. Reload skills by calling `POST http://127.0.0.1:8000/skills/reload`.
