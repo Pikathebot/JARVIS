@@ -101,16 +101,16 @@ def test_overlong_and_unknown_kinds_are_refused(factory):
 
 def test_limit_per_scope(factory, monkeypatch):
     monkeypatch.setattr(memory_tool, "MEMORY_LIMIT_PER_SCOPE", 2)
-    remember("a1", kind="task", project_id="p1")
-    remember("a2", kind="task", project_id="p1")
-    assert remember("a3", kind="task", project_id="p1").startswith("Not saved")
+    remember("a1", kind="project", project_id="p1")
+    remember("a2", kind="project", project_id="p1")
+    assert remember("a3", kind="project", project_id="p1").startswith("Not saved")
 
 
 def test_blocks_list_memories_with_their_ids(factory):
-    proj = _id_in(remember("Chose SQLite over Postgres: one user, no server", kind="decision", project_id="p1"))
+    proj = _id_in(remember("Chose SQLite over Postgres: one user, no server", kind="project", project_id="p1"))
     user = _id_in(remember("Prefers short answers", kind="preference"))
     project_block = build_project_memory_context(factory, "p1")
-    assert f"- [{proj}] (decision) Chose SQLite over Postgres" in project_block
+    assert f"- [{proj}] Chose SQLite over Postgres" in project_block
     assert "Prefers short answers" not in project_block
     assert build_project_memory_context(factory, "p2") == ""
     assert f"- [{user}] Prefers short answers" in build_profile_context(factory)

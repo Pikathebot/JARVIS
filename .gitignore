@@ -67,3 +67,6 @@ backend/files/
 
 # Claude Code project guidance stays local (2026-10-20)
 /CLAUDE.md
+
+# A workspace's own bookkeeping (PROJECT.md, uploads, backups) -- the Default Workspace points at backend/
+.jarvis/

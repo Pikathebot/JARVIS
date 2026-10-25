@@ -23,6 +23,7 @@ from app.agent.tools.artifacts import create_artifact, update_artifact, patch_ar
 from app.agent.tools.system_status import get_system_status
 from app.agent.tools.git import git_status, git_diff, git_log, git_commit, git_switch, git_restore, git_push, git_pull
 from app.agent.tools.memory import remember, forget, MEMORY_KINDS
+from app.agent.tools.project_state import project_state
 from app.agent.tools.notes import notes, tasks
 from app.agent.tools.recall import recall
 from app.agent.tools.forget_conversation import forget_conversation
@@ -77,6 +78,8 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # Long-term memory the model keeps for itself
     "remember": remember,
     "forget": forget,
+    # The project's living state, .jarvis/PROJECT.md (PLAN 4.18)
+    "project_state": project_state,
     # Earlier conversations: thread episodes + project chats (PLAN 4.18)
     "recall": recall,
     "forget_conversation": forget_conversation,
@@ -135,6 +138,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Memory
     remember,
     forget,
+    project_state,
     recall,
     forget_conversation,
     # Notes + tasks
@@ -354,12 +358,16 @@ class RememberArgs(BaseModel):
         default="project",
         description=(
             "about_user: who the user is. preference: how they like things. workflow: how to work "
-            "with them. project: facts/conventions of this project. decision: what was settled "
-            "and why. task: open project work to pick up later (personal to-dos go to tasks). The first three follow the user everywhere; "
-            "the rest belong to this workspace."
+            "with them. project: facts/conventions of this project. The first three follow the user everywhere; "
+            "project belongs to this workspace."
         ),
     )
     replaces: str = Field(default="", description="Id of an existing memory this corrects or updates, from the memory list; empty for a new one")
+
+
+class ProjectStateArgs(BaseModel):
+    action: Literal["set_now", "add_next", "tick", "add_done", "add_decision"] = Field(..., description="tick: a Next step got finished. add_decision: what was settled, and why")
+    text: str = Field(..., description="One line")
 
 
 class ForgetArgs(BaseModel):
@@ -452,6 +460,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "git_pull": GitRemoteArgs,
     "remember": RememberArgs,
     "forget": ForgetArgs,
+    "project_state": ProjectStateArgs,
     "recall": RecallArgs,
     "forget_conversation": ForgetConversationArgs,
     "notes": NotesArgs,
@@ -546,7 +555,7 @@ WORKSPACE_BOUND_TOOLS = frozenset({
     "delete_file", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
     "git_status", "git_diff", "git_log", "git_commit", "git_switch",
     "git_restore", "git_push", "git_pull",
-    "grep_in_files", "patch_file",
+    "grep_in_files", "patch_file", "project_state",
 })
 
 

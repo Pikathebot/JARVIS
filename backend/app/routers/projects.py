@@ -346,3 +346,59 @@ def index_project_endpoint(
     indexer = WorkspaceIndexer()
     stats = indexer.index_project(project_id)
     return stats
+
+
+# ==========================================
+# Project state: .jarvis/PROJECT.md (PLAN 4.18)
+# ==========================================
+
+class ProjectStateResponse(BaseModel):
+    path: str
+    content: str
+    max_chars: int
+
+
+class ProjectStateUpdate(BaseModel):
+    content: str
+
+
+def _state_project(project_id: str, db: Session) -> Project:
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_id}' not found.")
+    return project
+
+
+@router.get("/{project_id}/state", response_model=ProjectStateResponse)
+def get_project_state(project_id: str, db: Session = Depends(get_session)) -> ProjectStateResponse:
+    """The project's PROJECT.md, created from the template the first time it is asked for."""
+    from app import project_state
+
+    project = _state_project(project_id, db)
+    try:
+        path = project_state.ensure_with_memories(lambda: Session(db.get_bind()), project.workspace_path, project_id,
+                                                  project.name, project.description)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PROJECT.md: {exc}")
+    return ProjectStateResponse(path=str(path), content=project_state.read(project.workspace_path, project_id),
+                                max_chars=project_state.STATE_MAX_CHARS)
+
+
+@router.put("/{project_id}/state", response_model=ProjectStateResponse)
+def put_project_state(project_id: str, req: ProjectStateUpdate,
+                      db: Session = Depends(get_session)) -> ProjectStateResponse:
+    """The user's own edit of PROJECT.md (the project page): the whole file, backed up first.
+    Open chats keep the copy they started with; the next chat reads this."""
+    from app import project_state
+
+    project = _state_project(project_id, db)
+    if len(req.content) > project_state.STATE_MAX_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"PROJECT.md is {len(req.content)} characters; keep it under {project_state.STATE_MAX_CHARS}.")
+    try:
+        path = project_state.write(project.workspace_path, project_id, req.content)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PROJECT.md: {exc}")
+    return ProjectStateResponse(path=str(path), content=project_state.read(project.workspace_path, project_id),
+                                max_chars=project_state.STATE_MAX_CHARS)

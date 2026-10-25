@@ -294,6 +294,7 @@ class ContextManager:
         system_prompt: Optional[str] = None,
         project_id: Optional[str] = None,
         project_instructions: Optional[str] = None,
+        project_head: Optional[str] = None,
         attachments: Optional[list[Any]] = None,
         retrieved_chunks: Optional[list[dict[str, Any]]] = None,
         chat_mode: str = "WORKSPACE",
@@ -356,6 +357,10 @@ class ContextManager:
 
         if project_instructions and project_instructions.strip():
             tier1_parts.append(f"--- Project Instructions ---\n{project_instructions.strip()}")
+        # The project's instructions + PROJECT.md as this chat first read them (app.project_state):
+        # frozen per chat by the caller, so the head stays byte-identical turn to turn.
+        if project_head and project_head.strip():
+            tier1_parts.append(project_head.strip())
 
         tier1_text = "\n\n".join(tier1_parts)
         tier1_tokens = self.token_counter.count(tier1_text) + 4  # system framing

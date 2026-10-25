@@ -2338,6 +2338,79 @@ First guess at the missing piece: **a living project state** the agent reads at 
 updates as work lands (Jarvis's PLAN.md + memory), plus a visible plan for multi-step work. To check with the
 user against how a Claude Project feels.
 
+**2026-10-25: the user confirmed the missing piece = a living project state (+ a project page), and asked where a
+workspace keeps its information.** Traced in code + the live DB:
+- **The folder you pick** (`workspace_path`, external) holds only your files plus a hidden `.jarvis/` (`attachments/`
+  uploads, `backups/` before every file edit). "Local folders" are read-only extra knowledge, never written to.
+- **Jarvis's own project dir** `backend/workspace/projects/{id}/` (`workspaces.py`): `indexes/qdrant` (RAG vectors) +
+  `embedding_model.txt`. Its `files/ knowledge/ artifacts/ memory/` subfolders are made for every project but only
+  `files/` is used (uploads, internal workspaces only); `knowledge/` is indexed if anything is in it. The
+  `workspaces.py` docstring saying artifact history and memory live there is wrong.
+- **The SQLite DB** `backend/data/jarvis_memory.db` holds the rest: the project row (name, instructions, paths),
+  chats, memories (`project_id`), artifacts + versions, file versions, document + chunk text.
+- So a project is spread over three places and the picked folder carries almost none of it: copying or syncing the
+  folder doesn't take the project with it; deleting the workspace removes the DB rows + Jarvis's dir, never yours.
+- Found in passing: the Default Workspace's path is `.` (= `backend/`, 189 indexed documents of Jarvis's own code);
+  test leftovers in the live `workspace/projects/` (`proj_indexer_test`, `proj_tool_test`, `6e893a56-`) and two
+  "Test QA"/"testing" projects in the live DB.
+
+**Decisions on the living project state (one at a time, 2026-10-25):**
+1. **Where:** a Markdown file in the user's folder, `.jarvis/PROJECT.md` (like CLAUDE.md: editable in any editor,
+   git can track it, travels with the folder); an internal workspace keeps it in Jarvis's project dir. -- USER
+2. **When it's read:** once at the start of each chat, into the head beside the project instructions, frozen for that
+   chat (keeps the KV prefix stable; cap ~2,000 chars). Jarvis updates it with a small tool; a change shows from the
+   next chat (or after a compaction). The user can edit it in any editor. -- USER
+3. **Who updates it:** both -- Jarvis calls the tool when work lands, and a background keeper (the
+   `thread_keeper.py` pattern, fast model) reads a chat after it goes quiet and fills in what was missed. A backup
+   before every write. -- USER
+4. **PROJECT.md vs memories:** one place -- a project's decisions and tasks live in PROJECT.md; `remember` keeps
+   preferences, facts and workflows (project `decision` / `task_context` memories move into the file once). -- USER
+5. **Sections:** `# Name`, `## Goal` (from the description at creation; changed only when the user asks), `## Now`,
+   `## Next` (checkboxes, Jarvis ticks), `## Done` (dated, newest first, oldest trimmed first at the cap),
+   `## Decisions` (dated, with why; never trimmed). The tool edits one section per call, never the whole file, so
+   the keeper can't overwrite the user's hand edits. Instructions stay separate (rules, not state). -- USER
+6. **Project page:** opens in the chat area (middle column) when the project name in the sidebar is clicked, like a
+   Claude Project page: header (name, folder + open in Explorer, index status + Reindex), Instructions (editable --
+   today they can't be after creation), Project state (PROJECT.md rendered, Edit writes the file), Memories
+   (preferences/facts/workflows, delete), Files (indexed; moves out of the right panel), Chats (+ New chat).
+   **Right panel keeps only Artifacts**; Context becomes a line in the chat header with a popover (closes the 4.23
+   panel question). Design System spec first. -- USER
+
+**Phase 1 BUILT 2026-10-25, UNCOMMITTED, not seen on device** (1306 pass; `tests/test_project_state.py`, 13):
+- `app/project_state.py`: path (`<workspace>/.jarvis/PROJECT.md`; Jarvis's project dir when there is no own
+  folder), template, parse/render (unknown sections and hand-written prose kept), `edit` (one section per call:
+  set_now / add_next / tick -> moves the step to Done, dated / add_done / add_decision, newest first, duplicates
+  refused), cap 2,000 (oldest Done trimmed; a full file refuses), backup before every write, `head_block`,
+  `snapshot` / `drop_snapshot` (per session, in process memory; compaction drops it so the next turn re-reads).
+- **Found: project instructions were never sent to the model** -- stored and returned by the API, but no code put them
+  in a prompt (CLAUDE.md claimed the head had them). Now `_project_head` in the orchestrator puts instructions +
+  PROJECT.md into the head (`build_context(project_head=)`), read at the chat's first turn and frozen for it.
+  Off-the-record chats read the file, never create it.
+- Tool `project_state(action, text)`: the four registrations, LOW_RISK, Workspace-only. Rule 20 now sends current
+  work / next / done / decisions there. `remember` lost its `decision`/`task` kinds (a call that still uses them
+  is written to PROJECT.md in a project, kept as a fact outside one).
+- `GET /api/projects/{id}/state` (creates the file the first time), `PUT` (whole file, over the cap = 400).
+- First read moves the project's `important_decision` / `persistent_task_context` memories into the file and deletes
+  them (live DB: one task memory in "Game development" will move on its first chat or page open).
+- **Workspace head budget 37,000 -> 37,300** (now 37,233: the schema is ~420 chars after trimming). A project chat's
+  real head also carries its instructions + PROJECT.md (up to ~2,000 chars), once per chat, cached.
+- `.jarvis/` added to `.gitignore` (the Default Workspace points at `backend/`, so its PROJECT.md lands in the repo).
+- **To check on device:** does Ornith call `project_state` on its own when work lands (it often skipped `remember`)?
+  Phase 2's keeper is the safety net for that.
+
+**Build phases (proposed 2026-10-25):**
+1. Backend: `project_state.py` (path, create from template, parse/edit one section, cap + trim, backup), read into
+   the head once per chat (frozen per session, pinned by a prefix-stability test + head budget), `project_state`
+   tool (set_now / add_next / tick / add_done / add_decision) with the four registrations, Workspace-only;
+   `GET/PUT /api/projects/{id}/state`; one-time move of `decision`/`task_context` project memories into the file.
+2. Backend: the keeper -- after a project chat goes quiet, the fast model reads it and proposes section edits
+   (same edit ops, so hand edits survive); log every write.
+3. Design System: Project page + chat-header Context line specs; republish.
+4. WinUI: Project page in the chat area, instructions editing, memories list, Files moved, right panel = Artifacts,
+   Context popover.
+5. Clean-up: the test projects/folders in the live data, the Default Workspace pointing at `backend/`, the wrong
+   `workspaces.py` docstring, the unused `knowledge/ artifacts/ memory/` subfolders.
+
 ### 4.19 Remote control: Jarvis from the phone -- DONE 2026-10-21 (device-verified; moved to `docs/MILESTONES.md`)
 
 Phone and iPad app over Tailscale (`https://msi.taild6d645.ts.net/m/` -> `127.0.0.1:8005`; remote = that port):

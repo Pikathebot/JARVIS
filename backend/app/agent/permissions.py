@@ -100,6 +100,8 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     "git_pull": RiskTier.CONFIRMATION_REQUIRED,
     # Memory: the model's own notes, shown to the user as a tool card; ephemeral turns refuse.
     "remember": RiskTier.LOW_RISK,
+    # One section of the project's own PROJECT.md, backed up first (PLAN 4.18)
+    "project_state": RiskTier.LOW_RISK,
     "forget": RiskTier.LOW_RISK,
     # Reading earlier conversations (PLAN 4.18): read-only, scoped in the tool itself.
     "recall": RiskTier.LOW_RISK,
