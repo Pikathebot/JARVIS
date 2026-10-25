@@ -37,6 +37,7 @@ from app.agent.tool_pipeline import get_tool_pipeline
 from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
+from app.agent.project_capture import capture_project_state, project_cue
 from app.agent import compare, paused_turns, recent_objects, taint
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
@@ -2395,7 +2396,7 @@ class AgentOrchestrator:
             return
 
         target_provider = self.provider
-        saved_in_turn = finished = False
+        saved_in_turn = recorded_in_turn = finished = False
         answer: Optional[str] = None
         tools_used: list[Any] = []
         async for ev in self._run_provider_stream_loop(
@@ -2419,6 +2420,8 @@ class AgentOrchestrator:
         ):
             if ev.get("event") == "tool_start" and (ev.get("data") or {}).get("tool") == "remember":
                 saved_in_turn = True
+            elif ev.get("event") == "tool_start" and (ev.get("data") or {}).get("tool") == "project_state":
+                recorded_in_turn = True
             elif ev.get("event") == "done":
                 finished = True
                 answer = (ev.get("data") or {}).get("response")
@@ -2458,6 +2461,9 @@ class AgentOrchestrator:
 
         if cue == "save" and finished and not saved_in_turn:
             self._start_memory_capture(target_provider, decision.model, user_message, tool_context)
+        if (finished and not recorded_in_turn and not self.is_ephemeral and tool_context.get("project_id")
+                and project_cue(user_message)):
+            self._start_project_capture(target_provider, decision.model, user_message, tool_context)
 
     async def _compact_now(self, session_id: str, focus: str):
         """``/compact [focus]``: compact the conversation now and say so. Nothing is stored for the
@@ -2561,6 +2567,24 @@ class AgentOrchestrator:
     ) -> None:
         """Run the memory safety net (``memory_capture``) after the reply, off the response path."""
         task = asyncio.create_task(capture_memory(provider, model, user_message, dict(tool_context)))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    def _start_project_capture(
+        self,
+        provider: ModelProvider,
+        model: str,
+        user_message: str,
+        tool_context: dict[str, Any],
+    ) -> None:
+        """Run the PROJECT.md safety net (``project_capture``) after the reply, off the response path."""
+        from app import project_state
+
+        try:
+            current = project_state.read(tool_context.get("workspace_path"), tool_context["project_id"])
+        except Exception:
+            current = ""
+        task = asyncio.create_task(capture_project_state(provider, model, user_message, dict(tool_context), current))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
 

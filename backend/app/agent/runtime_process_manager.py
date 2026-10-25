@@ -433,6 +433,12 @@ class RuntimeProcessManager:
             # unified is the default, but the server came up with kv_unified = 'false' and split
             # 32k into two 16k slots: a 16.5k-token thread was refused (2026-10-24, PLAN 4.23).
             cmd.append("--kv-unified")
+            # By default a task on slot 1 (the narrator) saves idle slot 0 to the RAM cache and
+            # clears it, and the next chat turn re-read the whole conversation: 13.7k tokens, 14 s
+            # after every narrated turn. Off, slot 0 keeps its prefix (measured 2026-10-25: 17 tokens).
+            cmd.append("--no-cache-idle-slots")
+        # Capped: the default 8 GB of saved prompts took the laptop to 98.5% RAM (config.py).
+        cmd.extend(["--cache-ram", str(settings.llama_cache_ram_mb)])
         if not self.use_mmap:
             cmd.append("--no-mmap")
         if projector is not None:

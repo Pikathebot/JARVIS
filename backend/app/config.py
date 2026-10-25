@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # llama-server slots. Every chat request is pinned to slot 0 (its cached prefix); slot 1 is the
     # thinking narrator's (PLAN 4.23). The KV pool is unified across slots, so 2 costs no VRAM.
     llama_parallel: int = Field(default=2, alias="LLAMA_PARALLEL")
+    # llama-server's host prompt cache (--cache-ram, MiB; 0 = off). Its default, 8192, filled up as the
+    # two slots swapped prompts (~320 MB a swap): 14.8 GB committed, 98.5% RAM, the governor unloading
+    # the model every few seconds (2026-10-25). A small cache still brings back the chat's prefix
+    # after a side request (memory capture, titles) took slot 0.
+    llama_cache_ram_mb: int = Field(default=2048, alias="LLAMA_CACHE_RAM_MB")
     # A few words on what the model is doing while it thinks, from slot 1 (app/agent/thinking_narrator.py).
     thinking_narrator_enabled: bool = Field(default=True, alias="THINKING_NARRATOR_ENABLED")
     thinking_narrator_interval_s: float = Field(default=3.0, alias="THINKING_NARRATOR_INTERVAL_S")
