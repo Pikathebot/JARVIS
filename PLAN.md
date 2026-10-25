@@ -2549,6 +2549,12 @@ the design document first and never came back to it. Meanwhile the governor unlo
   every narrated turn re-read the whole chat (13.7k tokens, 14 s). Now `--cache-ram 2048` (`LLAMA_CACHE_RAM_MB`) and
   `--no-cache-idle-slots`: narrator and side requests both leave the chat prefix reusable (17 tokens re-read), 7.1 GB
   committed after the test vs 7.6 GB and still growing.
+- **Device test 10:20:** the capture fired 4 s after the reply but wrote only Now ("Looking into Orver's lore"):
+  llama-server answers a forced choice with one call, so the next step and the decision were dropped. Now it loops,
+  one change per request with the result fed back, until `nothing_to_record` (max 4) -- uncommitted, not re-tested.
+  RAM: llama-server 9.0 GB committed and flat at the cap (was 14.8), governor quiet; the system still sat at 94%
+  (commit 30.2 of 32.2 GB) with Claude, Brave and VS Code open. Its 6.6 GB at load with the weights on the GPU is
+  `--no-mmap` host memory, committed but not resident -- a later look (mmap) could free most of it.
 - Unverified on device: the capture writing the right lines on a real message; RAM staying down over a long session;
   turn latency after narrated turns. Takes a model restart (next launch of the app).
 

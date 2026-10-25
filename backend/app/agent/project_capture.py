@@ -75,25 +75,35 @@ async def capture_project_state(
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": f"PROJECT.md now:\n{state}\n\nUser's message:\n{user_message}"},
     ]
-    try:
-        response = await provider.chat(
-            messages=messages, model=model, tools=[project_state, NOTHING_TO_RECORD],
-            temperature=0.2, thinking=False, tool_choice="required", timeout=60,
-        )
-    except Exception as e:
-        logger.warning("PROJECT.md capture request failed: %s", e)
-        return []
-    calls = [c for c in (response.get("message") or {}).get("tool_calls") or []
-             if (c.get("function") or {}).get("name") == "project_state"]
-    if not calls:
-        logger.info("PROJECT.md capture: nothing to record in %r", user_message[:80])
-        return []
-    results = []
-    for call in calls[:MAX_EDITS]:
+    results: list[str] = []
+    # One change per request: llama-server returns a single call here, and on 2026-10-25 the
+    # capture set Now and dropped the plan's next step and the decision. Each result goes back
+    # until the model says nothing is left.
+    for _ in range(MAX_EDITS):
+        try:
+            response = await provider.chat(
+                messages=messages, model=model, tools=[project_state, NOTHING_TO_RECORD],
+                temperature=0.2, thinking=False, tool_choice="required", timeout=60,
+            )
+        except Exception as e:
+            logger.warning("PROJECT.md capture request failed: %s", e)
+            break
+        calls = [c for c in (response.get("message") or {}).get("tool_calls") or []
+                 if (c.get("function") or {}).get("name") == "project_state"]
+        if not calls:
+            break
+        call = calls[0]
         args = (call.get("function") or {}).get("arguments") or {}
         if not isinstance(args, dict):
-            continue
+            break
         result = await asyncio.to_thread(execute_tool, "project_state", args, tool_context)
         logger.info("PROJECT.md capture: %s (%s %r)", result, args.get("action"), args.get("text"))
         results.append(result)
+        messages += [
+            {"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": call.get("id") or "c", "name": "project_state",
+             "content": f"{result} Record the next change from the message, or call nothing_to_record if none is left."},
+        ]
+    if not results:
+        logger.info("PROJECT.md capture: nothing to record in %r", user_message[:80])
     return results
