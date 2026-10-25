@@ -203,6 +203,9 @@ async def compact(store: Any, provider: Any, session_id: str, model: str = "main
                                     details=json.dumps({"summary": summary, "upto_message_id": upto,
                                                         "manual": manual, "focus": focus or ""}))
         store.append_message(session_id, role="system", content=summary, name=MARKER_NAME, is_summary=True)
+        # The prefix is re-prefilled after a compaction anyway: pick up PROJECT.md's edits now.
+        from app.project_state import drop_snapshot
+        drop_snapshot(session_id)
         logger.info("Compacted %s: %d rows into a %d-char summary in %.1f s (%s).", session_id, len(folded),
                     len(summary), now - started, "asked" if manual else "auto")
         return {"summary": summary, "at": now, "manual": manual}

@@ -28,9 +28,10 @@ MEMORY_KINDS: dict[str, tuple[str, bool]] = {
     "preference": ("user_preference", False),
     "workflow": ("workflow_preference", False),
     "project": ("project_preference", True),
-    "decision": ("important_decision", True),
-    "task": ("persistent_task_context", True),
 }
+# A project's decisions and open work live in its PROJECT.md now (PLAN 4.18): a call that still
+# names these kinds is written there in a project, kept as a plain fact outside one.
+STATE_KINDS = {"decision": "add_decision", "task": "add_next"}
 MEMORY_MAX_CHARS = 300
 MEMORY_LIMIT_PER_SCOPE = 50
 MEMORY_ID_CHARS = 8
@@ -143,12 +144,14 @@ def remember(
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
     user_message: Optional[str] = None,
+    workspace_path: Optional[str] = None,
 ) -> str:
     """Save a lasting fact for future conversations (only what will still matter later -- never what the files already say, never passing chat); pass replaces=<id> to correct an existing memory instead of adding a near-duplicate.
 
     kind: about_user (who the user is), preference (how they like things), workflow (how to work
-    with them), project (facts/conventions of this project), decision (what was settled and why),
-    task (open project work to pick up later; personal to-dos go to the tasks tool). The first three are global; the rest belong to the workspace (general facts outside one).
+    with them), project (facts/conventions of this project). The first three are global; project
+    belongs to the workspace (a general fact outside one). Decisions and open project work go to
+    project_state.
     """
     text = " ".join((content or "").split())
     if not text:
@@ -156,6 +159,13 @@ def remember(
     if len(text) > MEMORY_MAX_CHARS:
         return f"Error: keep a memory under {MEMORY_MAX_CHARS} characters -- one fact, stated plainly."
     kind = (kind or "project").strip().lower()
+    if kind in STATE_KINDS:
+        if project_id and not replaces:
+            from app.agent.tools.project_state import project_state
+            result = project_state(STATE_KINDS[kind], text, workspace_path=workspace_path,
+                                   project_id=project_id, session_id=session_id)
+            return result if result.startswith(("Error", "Not saved")) else f"Saved to PROJECT.md: {result}"
+        kind = "project"
     if kind not in MEMORY_KINDS:
         return f"Error: kind must be one of {', '.join(MEMORY_KINDS)}."
     if _is_ephemeral(session_id):

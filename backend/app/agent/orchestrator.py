@@ -347,7 +347,7 @@ TOOL_PROTOCOL_RULES = (
     "17. Always use clean relative workspace paths (e.g. '.', 'backend/app', 'scripts', 'docs').\n"
     "18. When the user asks to delete or remove a file, invoke 'delete_file(file_path=...)'. It asks the user to confirm first; that is expected.\n"
     "19. NEVER report an action as done unless a tool result in this turn confirms it. If you have no tool for what was asked, or the tool was not run, say so plainly instead of describing a result you did not observe.\n"
-    "20. MEMORY: you keep your own long-term notes with 'remember' and 'forget'; what you saved earlier is listed with each message, tagged [id]. Save, without being asked, whatever a later conversation would need and could not get from the files: who the user is and how they like to work (about_user/preference/workflow), and in a workspace the project's conventions, decisions with their reason, and open tasks (project/decision/task). Also save whenever the user says to remember something, and forget when they say to forget it. Do NOT save passing chat, one-off requests, file contents or anything the files already record. One plain fact per memory. If a listed memory is wrong or outdated, fix it with replaces=<id> or forget it -- never add a near-duplicate. Save quietly, alongside your answer."
+    "20. MEMORY: you keep your own long-term notes with 'remember' and 'forget'; what you saved earlier is listed with each message, tagged [id]. Save, without being asked, whatever a later conversation would need and could not get from the files: who the user is and how they like to work (about_user/preference/workflow), and in a workspace the project's conventions (project); its current work, next steps, what got done and decisions with their reason go to project_state instead. Also save whenever the user says to remember something, and forget when they say to forget it. Do NOT save passing chat, one-off requests, file contents or anything the files already record. One plain fact per memory. If a listed memory is wrong or outdated, fix it with replaces=<id> or forget it -- never add a near-duplicate. Save quietly, alongside your answer."
 )
 
 
@@ -1015,6 +1015,40 @@ class AgentOrchestrator:
             parts.append(profile)
         return "\n\n".join(parts)
 
+    def _project_head(self, session_id: str, chat_mode: str, project_id: Optional[str]) -> str:
+        """A Workspace chat's project instructions and PROJECT.md (``app.project_state``), read at
+        the chat's first turn and kept for the rest of it: they sit in the cached head, so an edit
+        shows from the next chat or after a compaction."""
+        if chat_mode != "WORKSPACE" or not project_id:
+            return ""
+
+        def build() -> str:
+            from app import project_state
+            from app.database.models import Project
+            try:
+                with self.memory_store._get_session() as db:
+                    proj = db.get(Project, project_id)
+                    if proj is None:
+                        return ""
+                    instructions, ws = proj.instructions, proj.workspace_path
+                    name, goal = proj.name, proj.description
+            except Exception as e:
+                logger.warning("Project head for %s not read: %s", project_id, e)
+                return ""
+            if not isinstance(ws, (str, type(None))):
+                return ""
+            try:
+                # An off-the-record chat reads the file but never creates it.
+                if not self.is_ephemeral:
+                    project_state.ensure_with_memories(self.memory_store._get_session, ws, project_id,
+                                                       name or "Project", goal)
+            except OSError as e:
+                logger.warning("PROJECT.md for %s not created: %s", project_id, e)
+            return project_state.head_block(instructions, project_state.read(ws, project_id))
+
+        from app.project_state import snapshot
+        return snapshot(session_id, build)
+
     async def _game_mode_reply(self, session_id: str, user_message: str, project_id: Optional[str],
                                chat_mode: Optional[str]) -> Optional[str]:
         """Game mode's answer in code (switching it, or saying no model is loaded), stored like
@@ -1549,6 +1583,7 @@ class AgentOrchestrator:
             turn_context=turn_context,
             turn_directive=turn_directive,
             project_id=active_rag_project_id,
+            project_head=self._project_head(active_session_id, effective_mode_str, active_rag_project_id),
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
@@ -2318,6 +2353,7 @@ class AgentOrchestrator:
             turn_context=turn_context,
             turn_directive=turn_directive,
             project_id=active_rag_project_id,
+            project_head=self._project_head(active_session_id, effective_mode_str, active_rag_project_id),
             attachments=attachments,
             retrieved_chunks=retrieved_chunks,
             chat_mode=effective_mode_str,
