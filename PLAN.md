@@ -2440,164 +2440,27 @@ correct transcript, stopped 23 s after last use (idle set to 20 s). So after 5 q
 Whisper's, and Bark takes over ~30 s later. Once up, transcripts: "Hey Jarvis." (wake hit), "hey jorgush", "Hello, Jervis."
 (misses), and five clips of 400-600 KB came back **empty** -- watch whether Bark drops real speech.
 
-### 4.23 Thinking shown like Claude's, and the right panel reworked (raised by the user 2026-10-23) -- THINKING BUILT 2026-10-24, UNVERIFIED ON DEVICE; panel discussion still open
-**Built 2026-10-24 (uncommitted; 1264 backend tests pass, WinUI builds; not run on the device):**
-- Backend: `--parallel 2` (`LLAMA_PARALLEL`), every chat request pinned to slot 0 (`llamacpp_provider._main_slot`);
-  `agent/thinking_narrator.py` asks slot 1 (`cache_prompt: false`, thinking off, 20 tokens) every ~3 s for 3-7 words
-  on the latest 1,200 chars of thinking -> SSE `thinking_status {text}`; stops at the first answer token or call.
-  `THINKING_NARRATOR_ENABLED` turns it off. Each tool round's thinking is now saved on that round's first tool row
-  (`reasoning_content`; the prompt replay ignores it), so a reopened chat shows the turn in order.
-- WinUI: `ThinkingSegment` (Jarvis.Core) + `ThinkingCard`; `MessageBubbleControl` draws thinking -> step -> thinking ->
-  answer and no longer rebuilds the steps on every streamed token (opened rows stayed closed before). Reasoning and
-  Activity tabs, the badge and `ActivitySteps`/`ActiveReasoningMessage` removed; tabs = Artifacts | Files | Context.
-- Phone app: `thinkRow` in `static/m/app.js`, live and from history; shell cache v5. HUD: answers only (non-streaming), no line.
-- Design system v30: new Thinking component; ToolStepRow, AppLayout, Mobile amended.
-**To check on device:** the line's words (sensible? how often?), reply speed with slot 1 running (decode tok/s in the
-metrics footer vs before), no `id_slot` errors in `backend.log`, a reopened chat showing thinking between steps.
-**The ask (user):** "You know how Claude shows the thinking process -- I want the thinking process to be like that in this
-app too, and we can remove the reasoning and activity stuff in the panel too (we need to work on that panel)."
+### 4.23 Thinking shown like Claude's -- DONE 2026-10-24 (device-verified; moved to `docs/MILESTONES.md`); the panel discussion is still open
 
-**What there is today:** the main model thinks every turn (`MAIN_THINKING_EVERY_TURN`, default on); the backend splits
-`<think>` into `reasoning` SSE events. The client shows that text only in the right panel's **Reasoning** tab
-(`MainWindow.xaml` `ReasoningPage`, with a dot on the tab strip while it streams). Tool steps already show inline in the
-message bubble (`MessageBubbleControl` `ToolStepsHost`, one line each that opens for detail) and again in the panel's
-**Activity** tab. The panel's tabs: Artifacts | Files | Reasoning | Context | Activity.
+Thinking inline in the reply with a live line from llama-server's second slot; Reasoning and Activity tabs removed.
+The panel itself, still to discuss with the user: what's left is Artifacts | Files | Context. Is Context worth a tab
+(or a line in the header / a popover)? Does the panel open on its own when an artifact is made, and close when empty?
+Does it fit the Workspace-as-Projects discussion (4.18), where a project's files, instructions and memories might
+live? Do that discussion first, then design. Not measured: decode speed with slot 1 running beside a turn.
 
-**Direction (to agree with the user before building):**
-- Thinking goes **inline, above the answer, in the message bubble**, like Claude: while it streams, a short live line
-  ("Thinking…", with the latest summary or the last line of thought) that can be opened; when the answer starts, it
-  collapses to one line ("Thought for 6 s") that opens to the full text. Tool steps sit in the same flow, in the order
-  they happened (thinking -> tool -> thinking -> answer), so one block tells the story of the turn.
-- Saved with the message, so it is still there after a reload (check what the store keeps of `reasoning` today).
-- Same on the phone app (`static/m/`) and the HUD, or say why not.
-- **Remove the Reasoning and Activity tabs** from the right panel (and the reasoning-streaming dot).
-- **A live "what it's doing" line from a second slot (user, 2026-10-24).** While thinking streams, every ~3 s the
-  backend sends the latest few hundred tokens of thought to llama-server **slot 1** (`id_slot: 1`, `cache_prompt: false`,
-  thinking off, `max_tokens` ~12, "say in 3-6 words what this is doing") and the line shows that ("Checking the calendar
-  for Friday"); the main turn stays on slot 0, so its cached prefix is never touched. Needs `--parallel 2` (now 1).
-  Our builds default to **unified KV**, so slot 1 shares the 32k pool -- no extra VRAM, but a near-full main context
-  could squeeze it: cap it (`--kv-unified-per-slot`, check whether it applies per slot or to all) or skip the line when
-  the context is nearly full. Cost to measure before committing to it: main decode tok/s with slot 1 running alongside
-  (batched decode, memory-bound -- expect a small hit) and the ~0.1-0.2 s prefill pause each call. Fast model can't do it:
-  only one model is loaded at a time. Off for the fast model and when thinking is short (< ~2 s).
+### 4.23c-e, 4.25 Games-turn fixes, context fit, thinking loops, compaction -- DONE 2026-10-24 (moved to `docs/MILESTONES.md`)
 
-**The panel itself -- to discuss with the user:** what's left is Artifacts | Files | Context. Questions: is Context
-worth a tab (or a line in the header / a popover)? Does the panel open on its own when an artifact is made, and close
-when empty? Does it fit the Workspace-as-Projects discussion (4.18), where a project's files, instructions and memories
-might live? Do that discussion first, then design.
+Record (what went wrong, the fixes, the Ornith re-eval of `list_directory`, the `--kv-unified` find) in
+`docs/MILESTONES.md`. Still open:
+- **The loop fix is unverified on device:** what Ornith does when `--reasoning-budget` cuts it off, and whether
+  `LoopWatch` fires on long but sound thinking (log: "thinking repeating itself").
+- **Compaction on device:** seen once via `/compact`; a long Workspace chat compacting on its own (log: "Turn reached
+  ... compacting") and the reply after a compaction still knowing what was said are not checked. No "Compact now"
+  menu item (typed `/compact` only).
+- The Freeform eval runs every task with thinking off, while the live main model thinks every turn.
+- `get_system_status(about='games')` lists Steam apps (Blender, Wallpaper Engine) as games: Steam's manifests don't say.
 
-**Design system:** a new inline Thinking component (collapsed/streaming/open states) and the panel's new tab set go
-into the Design System artifact in the same piece of work.
-
-### 4.23c "What games do I have?" -- where the model struggled (thread, 2026-10-23 18:31-18:42) -- FIXED 2026-10-24, UNCOMMITTED, unverified on device
-**Fixed (1275 tests pass):** (6) `tool_pipeline.clean_text` replaces lone surrogates in every tool result; (3)
-`fetch_url` refuses `C:\...`, `\\share`, `file:` and `/path` with "use read_file / find_files"; (4) the text-call parser
-reads Qwen's `<tool_call><function=x><parameter=y>` whole (args kept, wrapper gone), and a final answer that is a call
-written as text is asked again without tools and shown in place of what streamed (`replace_content`; `_STUCK_REPLY`
-if it is a call again) -- which also removes (5), the half-promise the next turn picked up; (2)
-`get_system_status(about='games')` reads Steam manifests (every library in `libraryfolders.vdf`), Epic `.item`s (games
-only, not DLC/plugins) and GOG's registry; `about='apps'` lists the Start menu. On this PC: 4 Steam (D:\SteamLibrary)
-+ GTA V (Epic). Freeform head budget 25,700 -> 25,800 for the field. (1) **`list_directory` stays Workspace-only**
-(the user's 2026-10-18 trim after the eval); only the not-found hint changed, to name `find_files`. `list_directory`
-gained `directory_path='drives'`. **`list_directory` back in Freeform 2026-10-24 (user's call after the re-eval
-below):** out of `WORKSPACE_BOUND_TOOLS`, the Freeform turn note names it (and `list_directory('drives')`), the
-not-found hint names it again; Freeform head budget 25,800 -> 26,300 (measured 26,187). 1275 tests pass.
-**Re-measured on Ornith 2026-10-24** (the 10-18 trim was measured on Defiant): the same 10 Freeform tasks x 3 seeds,
-today's tree (`scripts/eval_results/2026-10-24-freeform-listdir/`; `eval_jarvis_tasks.py --add-tools` added for it).
-Today's 30 Freeform tools **24/30**; with `list_directory` added (31) **28/30**. Skill tasks 20/21 vs 21/21 (the one
-difference: wukong-mod seed 0 answered with no search); the rest of the gap is the two knowledge tasks (dry-witted
-1/3 -> 3/3, hybrid-kv 0/3 -> 1/3), which swing with any change to the prompt. Reading: **no cost found on Ornith**;
-the plus side is likely noise, not a gain. Neither set has a task that needs a folder listed, so the benefit (the
-games turn) isn't measured here. Caveat: the eval ran every task with thinking off (`think=0`), while the live main
-model thinks every turn (`MAIN_THINKING_EVERY_TURN`).
-**Found the same day (2026-10-24 09:04, "Wuchang system requirements"): 4.23's `--parallel 2` halved the context.**
-llama-server came up with `kv_unified = 'false'`, `n_ctx_slot = 16384`, and refused the thread's 16,575-token request
-(HTTP 400, shown as an error). Fixed: `--kv-unified` whenever there are 2 slots -- measured on a CPU test server: with it
-`n_ctx_slot` = the whole `--ctx-size` and a 2,701-token prompt fits a 4,096 context with 2 slots. Still open: a request
-over the context is an error to the user rather than a trimmed history -- the context manager doesn't know the
-server's real per-slot limit.
-Four turns and ~12 calls and no list of games. From the stored thread and `backend.log`:
-1. **No way to browse a folder in Freeform.** `list_directory` is in `WORKSPACE_BOUND_TOOLS`, so the model only had
-   `find_files`; its thinking says "I don't have a 'list drives' tool". Yet the not-found hint (`tool_errors.py`
-   "not_found") tells it to use `list_directory` -- a tool it isn't offered. `find_files pattern="*" sort_by=largest` on
-   `C:\Users\lathu` and `C:\` ran 20 s each (the cap) and returned caches.
-2. **Nothing knows where games live.** Steam's real list is `steamapps\libraryfolders.vdf` + `appmanifest_*.acf` per
-   library (Program Files (x86)\Steam and any other library drive); the model guessed AppData\Local/Roaming\Steam and a
-   non-existent `C:\Users\lathu\Games`. Idea: an installed-apps/games answer in code (Start-menu index `launch_app`
-   already builds, plus Steam/Epic manifests) -- one action on an existing tool, not a new tool (head budget).
-3. **`fetch_url` took a local path** (`C:\...\steam.exe` -> `https://C:\...` "Invalid port"). Refuse a path with "that's
-   a local file: use read_file" instead.
-4. **A tool call written as text reached the user twice** (#7004, #7007: raw `<tool_call><function=list_processes>`).
-   Each turn re-ran `list_processes steam`, repeated it, `repeat-stopped` asked for the answer, and the answer was the
-   call as text -- the final-answer path doesn't strip or replace text calls.
-5. **A dangling promise carried into the next request.** After "remind me Sunday...", once the reminder was set, it went
-   on with "Now let me actually look at the drives" (the last failed turn's words) and asked to search `C:\`
-   (approved on the card).
-6. **Lone surrogates in file names broke the history write** ("'utf-8' codec can't encode ... surrogates not allowed"
-   storing the `C:\` `find_files` result); the log ends mid-line two lines later, at the next model request. Tool
-   output needs `errors="replace"` cleaning before it is stored or sent.
-
-### 4.23d The context budget missed the tools and a turn's own results -- FIXED 2026-10-24, UNCOMMITTED
-`build_context(tools_tokens=)` reserves the offered schemas (Freeform ~5.5k tokens) before the history and counts
-them in the report and the "Context assembled" log line; `memory/turn_fit.fit_messages` runs before every request of
-a turn: over (window - reply reserve - tools), it halves the biggest tool results (never under 1,200 chars, with a
-"cut to fit" note), then drops the oldest whole exchanges (never the head or the last two); metrics net
-`fit-window`. 1280 tests pass. Not seen on device.
-
-### 4.23e Device test 2026-10-24: thinking line good, games chat fixed, compaction works; a thinking loop -- FIXED, UNCOMMITTED
-User: "inline thinking line works good, games chat was fixed, compaction work i guess, also i made the model to loop".
-**The loop (10:07, "search for a document project u"):** the first round thought for 87 s and hit the 8,192-token
-reply cap with no answer (94 tok/s against ~27: the draft accepts nearly everything when text repeats -- a repetition
-loop); the reasoning-only nudge sent the whole loop back as an assistant message with thinking still on, and the next
-round looped again until the user stopped it. **Fixed:** (1) `agent/thinking_loop.LoopWatch` watches the streamed
-thinking (past 2,000 chars, every 400: the newest 160 chars already occur twice earlier) and stops the round;
-(2) a round that looped or ran to the cap (`predicted_n` >= `LLAMA_MAX_TOKENS`) with no answer is asked again once
-**with thinking off** and a short note (`_NUDGE_THINKING_LOOP`), the looping text not sent back; (3) llama-server gets
-`--reasoning-budget 4096` (`LLAMA_REASONING_BUDGET`) with a message telling it to answer -- checked that the server
-starts with it. 1292 tests pass. Unverified on device: what Ornith does with the budget message, and how often
-LoopWatch fires on long-but-sound thinking (log: "thinking repeating itself").
-
-### 4.25 Compaction the way Claude Code does it (raised by the user 2026-10-24) -- BUILT 2026-10-24, UNCOMMITTED, unverified on device
-**Built as proposed (user: "build 4.25 as proposed"), 1288 tests pass, WinUI builds, design system v31:**
-`app/memory/compaction.py`. After a turn whose `metrics.peak_tokens` (the server's cached + new + reply, largest round)
-reached 80% of the window, `compaction.schedule` summarizes in the background: the rows since the last compaction
-minus the newest ~20% of the window (always the last exchange kept), with the earlier summary as context, into the
-six sections (what the user wants / facts and decisions / what was done / errors and fixes / still open / where it
-left off), by the main model, thinking off. Freeform: written as the open episode's fold (`fold_upto_message_id` +
-`fold_note`), so `ThreadEpisodes.context` needs no change. Workspace: a `compaction_events` row (strategy `summary`,
-details = summary + `upto_message_id`; no migration), read by `compaction.workspace_history` into `history_rows` +
-`history_preamble`. Both: a marker row (role system, name `compaction`, `is_summary`) after the last message -- the
-divider; `_replay_units` skips it. The next turn yields SSE `compacted {summary, at, manual}`. `/compact [focus]` runs
-it at once (keeps only the last exchange), streams a `compact` step, `compacted` and a one-line reply; the command is
-not stored. The keeper's 85% fold-ahead is retired; the mid-turn bare fold stays as the safety net, its topic budget
-16k -> 22k (above the ~18k of history 80% leaves beside head and tools). Desktop: `ThreadMark.Compacted`, a divider in
-`MessageBubbleControl` opening to the summary as markdown; phone: `compactRow`, shell v6.
-**To check on device:** `/compact` in a long chat (the summary's quality, ~10-30 s), the divider after reload, a long
-Workspace chat compacting on its own (log: "Turn reached ... compacting"), that the reply after it still knows what
-was said. Not built: a menu item for "Compact now" (typed `/compact` only).
-**What it replaced, for the record (the proposal):**
-**What there is:** Freeform's thread (4.18) is already a rolling compaction: a closed topic becomes a digest; an open
-topic past 85% of its 16k-token budget has its oldest half folded into a summary by the keeper *between* turns; a
-fold forced mid-turn gets only a bare note. **Workspace sessions have nothing like it**: the budget silently drops
-their oldest messages (`ContextCompactor` runs only on the non-streaming `run()` path).
-**What Claude Code does differently:** it watches the *real* size of the request, and near the limit summarizes the
-**whole** conversation into one structured summary (what the user asked for and why, decisions, files and things
-touched, errors and fixes, what's still to do, what it was doing at that moment) and carries on from that summary
-alone; a "Conversation compacted" line marks the spot (the scrollback stays for the user); `/compact [focus]` does it
-on request.
-**Proposal (to agree with the user):**
-1. One trigger for both spaces: the measured request (head + tools + history, as 4.23d counts it) past ~80% of the
-   window, checked after each turn; compaction runs in the background between turns (the keeper's way), so a turn
-   never waits on it. The 16k topic budget goes.
-2. The summary in Claude Code's sections, written by the main model (thinking off), replacing the fold note; the
-   last few exchanges stay verbatim after it.
-3. Workspace sessions get it too, stored per session (Alembic: a summary + "summarised up to message id").
-4. A "Conversation compacted" divider in the chat (desktop, phone), opening to the summary (like the digest card);
-   design system spec.
-5. "Compact now": a typed "/compact" (with optional focus words) and a sidebar/menu item.
-6. Mid-turn overflow stays 4.23d's cut-then-drop (a summary there would make the turn wait ~20 s).
-**Costs:** one model call per compaction (~10-30 s on the 9B, in the background); one full re-prefill after it (the
-prefix changes once); the Freeform head is untouched (no new tool).: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
+### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
 **The ask (user):** "Since I am a college student -- integration of competitive programming websites like LeetCode and
 other useful integrations that might help me."
 

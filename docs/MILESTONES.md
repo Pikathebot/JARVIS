@@ -728,3 +728,71 @@ average 4.29 % vs Whisper large-v3 6.04 %, AMI 7.2 vs 13.6 %); **not compared on
 - Verified by tests (1247 pass) and a real end-to-end run on the CPU. **Unverified on device:** the GPU path inside voice mode
   with the fast model + Laya loaded (VRAM headroom), the phone mic route, wake-word hit rate on real speech, and the first-utterance delay.
 
+## Thinking inline, compaction, a context that fits, and the games-turn fixes (2026-10-24)
+One day's work from PLAN 4.23, 4.23c-e and 4.25, committed as 2533af6. Seen working on device by the user: the
+thinking line ("works good"), the games turn ("was fixed"), compaction ("work i guess"). The loop fix (4.23e) is not.
+
+**Thinking shown like Claude's (4.23).** The user wanted the thinking in the reply, as Claude shows it, and the panel's
+Reasoning and Activity tabs gone. Each stretch of thinking is a `ThinkingCard` in the assistant column, in order with
+the tool steps (thinking, call, thinking, answer): "Checking the calendar for Friday…" while it streams (breathing),
+"Thought for 6 s" after, opening to the text. The live words come from llama-server's **second slot**
+(`agent/thinking_narrator.py`, the user's idea): every ~3 s the newest 1,200 chars of thinking go to slot 1
+(`id_slot: 1`, `cache_prompt: false`, thinking off, 20 tokens) for 3-7 words -> SSE `thinking_status`. Every chat
+request is pinned to slot 0 (`llamacpp_provider._main_slot`), so the conversation's cached prefix is never touched.
+Each tool round's thinking is saved on its first tool row (`reasoning_content`, ignored by the prompt replay), so a
+reopened chat shows the turn in order. The bubble no longer rebuilds its steps on every streamed token (an opened row
+used to close). The inspector is Artifacts | Files | Context. Phone app the same (`thinkRow`); the HUD shows answers
+only. Design system v30 (Thinking; ToolStepRow, AppLayout, Mobile). The speed cost of slot 1 was not measured (user:
+"skip the measurement").
+- **Two slots halved the context** (found on device the same morning: "Wuchang system requirements" failed with HTTP
+  400). `--parallel 2` came up with `kv_unified = 'false'`, `n_ctx_slot = 16384`, and a 16,575-token thread was refused.
+  `--kv-unified` whenever there are two slots; measured on a CPU test server: each slot then gets the whole
+  `--ctx-size` (a 2,701-token prompt fit 4,096 with two slots). The embedding model still showed half (non-causal).
+
+**The context budget counted too little (4.23d).** That 400 turn was budgeted at 6,531 tokens and sent as 16,575: the
+budget left out the tool schemas the template renders into the head (Freeform ~5.5k tokens) and the results a turn
+gathers after the budget is drawn. `build_context(tools_tokens=)` reserves the schemas; `memory/turn_fit.fit_messages`
+runs before every request of a turn and, when it wouldn't fit, halves the biggest tool results (never below 1,200
+chars, with a note), then drops the oldest whole exchanges (never the head or the last two). Net `fit-window`.
+
+**Compaction the way Claude Code does it (4.25, `memory/compaction.py`).** The user asked for it after 4.23d. After a
+turn whose largest request (`metrics.peak_tokens`: the server's cached + new + reply) reached 80% of the window, the
+rows since the last compaction, minus the newest ~20% of the window, are summarized in the background by the main
+model (thinking off) into six sections: what the user wants, facts and decisions, what was done, errors and fixes,
+still open, where it left off. The model then reads that summary (as the history's preamble, byte-stable until the
+next one) plus the kept exchanges. Freeform: written as the open episode's fold, so the thread's own context path is
+unchanged; the keeper's 85%-of-16k fold-ahead is retired and the mid-turn bare fold stays as a safety net at 22k.
+Workspace: a `compaction_events` row (strategy `summary`, summary + `upto_message_id`; no migration). Before, a long
+Workspace chat silently lost its oldest messages. Both: a marker row (role system, name `compaction`) after the last
+message, never replayed, drawn as a "Conversation compacted · 09:30" divider that opens to the summary (desktop
+`ThreadMark.Compacted`, phone `compactRow`); the next turn's SSE `compacted` announces a background one. `/compact
+[focus]` compacts at once, keeping only the last exchange (on device: 34 rows into a 1,542-char summary in 18.5 s).
+Design system v31 (Thread, Mobile).
+
+**"What games do I have?" (4.23c).** Four turns, a dozen calls and no list, on 2026-10-23. What was wrong and the fix:
+- Freeform had no way to list a folder, and the not-found hint named `list_directory`, which it wasn't offered.
+  `list_directory` was taken out of Freeform on 2026-10-18 (on Defiant, six file tools scored 18/30 against 24/30
+  without). **Re-measured on Ornith** (same 10 Freeform tasks x 3 seeds, `eval_jarvis_tasks.py --add-tools`, results in
+  `scripts/eval_results/2026-10-24-freeform-listdir/`): today's 30 tools 24/30, with `list_directory` 28/30. No cost
+  found; the gap is mostly the two knowledge tasks that swing with any prompt change. The user put it back; it also
+  lists the drives (`directory_path='drives'`). Freeform head budget 25,700 -> 26,300.
+- Nothing knew where games live: `get_system_status(about='games')` reads Steam's `appmanifest_*.acf` in every library
+  of `libraryfolders.vdf`, Epic's `.item` manifests (games only, not DLC or engine plugins) and GOG's registry key;
+  `about='apps'` lists the Start menu (`agent/tools/installed.py`). One optional field on an existing tool, not a new
+  tool. On this PC: Helldivers 2, Wuchang, Blender, Wallpaper Engine (Steam lists apps too) and GTA V (Epic).
+- `fetch_url` turned `C:\...\steam.exe` into `https://C:\...`: it now refuses local paths and points at `read_file`.
+- A tool call written as text reached the user twice: the parser now reads Qwen's `<tool_call><function=x>
+  <parameter=y>` whole, and a final answer that is a call is asked again without tools and shown instead
+  (`replace_content`; a plain "I got stuck" if it is a call again). That also stopped the half-promise ("let me look at
+  the drives") that the next, unrelated request picked up.
+- File names on `C:\` with lone surrogates broke the history write and then the next request: tool output is cleaned
+  (`tool_pipeline.clean_text`).
+
+**Thinking that loops (4.23e).** On device, "search for a document project u" thought for 87 s into the 8,192-token
+reply cap with no answer, at 94 tok/s against ~27 (speculative drafting accepts nearly everything when the text
+repeats), and the reasoning-only nudge sent the whole loop back with thinking still on, so it looped again.
+`agent/thinking_loop.LoopWatch` stops a round whose newest 160 chars of thinking already occur twice earlier (checked
+every 400 chars past 2,000); a round that looped or ran to the cap with no answer is asked once more with thinking off
+and a short note, its looping text not sent back; llama-server gets `--reasoning-budget 4096` with a message telling it
+to answer (checked that the server starts with it). 1292 backend tests pass; WinUI builds.
+
