@@ -89,6 +89,12 @@ workspace creation and image attachments; git tools for the workspace repository
 
 In priority order. Each item says what "done" means and what still needs the user.
 
+**Order agreed with the user 2026-10-25:** (1) reliability -- a real-chat eval (a dozen of the user's own messages,
+thinking on, replayed after each change), a post-turn self-check that a claimed action ran, llama-server's 6.6 GB
+`--no-mmap` host memory; (2) **fine-tune Ornith** (4.13 #10: Soup LoRA smoke test on Ornith first, data from the
+safety nets' logs and the blind votes, gated by (1)'s eval); (3) the project panel + PROJECT.md keeper (4.18 phases
+2-4, 4.23 panel talk); (4) 4.23b student integrations; (5) voice (4.24).
+
 ### 4.0 Startup: done for now
 
 §4.0 (spaces, spring transitions, the materialising startup, startup CPU and time) is done --
@@ -2533,7 +2539,7 @@ Record (what went wrong, the fixes, the Ornith re-eval of `list_directory`, the 
 - The Freeform eval runs every task with thinking off, while the live main model thinks every turn.
 - `get_system_status(about='games')` lists Steam apps (Blender, Wallpaper Engine) as games: Steam's manifests don't say.
 
-### 4.26 PROJECT.md not updated, and llama-server's RAM (device report 2026-10-25) -- BUILT 2026-10-25, UNCOMMITTED, unverified on device
+### 4.26 PROJECT.md not updated, and llama-server's RAM (device report 2026-10-25) -- DONE 2026-10-25 (a8261b7), capture device-verified; RAM over a long session not yet
 
 The user lined up "first Orver's lore, next the battle system" and said "we have also decided that songs carry both
 the cutscene and the story"; two tries, PROJECT.md unchanged. Ornith's thinking planned the `project_state` call, read
@@ -2551,7 +2557,8 @@ the design document first and never came back to it. Meanwhile the governor unlo
   committed after the test vs 7.6 GB and still growing.
 - **Device test 10:20:** the capture fired 4 s after the reply but wrote only Now ("Looking into Orver's lore"):
   llama-server answers a forced choice with one call, so the next step and the decision were dropped. Now it loops,
-  one change per request with the result fed back, until `nothing_to_record` (max 4) -- uncommitted, not re-tested.
+  one change per request with the result fed back, until `nothing_to_record` (max 4); re-tested: Now, Next and the
+  decision all written.
   RAM: llama-server 9.0 GB committed and flat at the cap (was 14.8), governor quiet; the system still sat at 94%
   (commit 30.2 of 32.2 GB) with Claude, Brave and VS Code open. Its 6.6 GB at load with the weights on the GPU is
   `--no-mmap` host memory, committed but not resident -- a later look (mmap) could free most of it.
