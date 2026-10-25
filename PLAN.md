@@ -2376,7 +2376,7 @@ workspace keeps its information.** Traced in code + the live DB:
    **Right panel keeps only Artifacts**; Context becomes a line in the chat header with a popover (closes the 4.23
    panel question). Design System spec first. -- USER
 
-**Phase 1 BUILT 2026-10-25, UNCOMMITTED, not seen on device** (1306 pass; `tests/test_project_state.py`, 13):
+**Phase 1 BUILT 2026-10-25, COMMITTED 86a62a2, not seen on device** (1306 pass; `tests/test_project_state.py`, 13):
 - `app/project_state.py`: path (`<workspace>/.jarvis/PROJECT.md`; Jarvis's project dir when there is no own
   folder), template, parse/render (unknown sections and hand-written prose kept), `edit` (one section per call:
   set_now / add_next / tick -> moves the step to Done, dated / add_done / add_decision, newest first, duplicates
