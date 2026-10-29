@@ -102,6 +102,18 @@ decided: 4.27 file formats (documents, spreadsheets, PDF) -- the next session pl
 Added 2026-10-26 from three outside reviews (4.29): A (loopback token, approval tokens, atomic JSON) joins (1);
 B (backup/restore, C# tests, soak) runs after (1) and before (2); C (UI Automation, power-aware governor,
 low-power mode, `jarvis://`) sits after (4), proposed only -- the user hasn't placed it yet.
+The combined Kimi/Qwen/Argon summary (`conversation_from_other_ai/combined_both_convo_with_kimi.md`, 10-27) was
+checked against the code on 2026-10-29: nothing new beyond 4.29 -- its "RAG after patch/delete" and "approved outside
+reads" items are already built (`workspace_index.reindex/unindex`, `execute_tool`'s `allow_outside`).
+
+**Step (1) progress, 2026-10-29:** 1b claim check BUILT, uncommitted, unverified on device. Past-tense claims with a
+target ("Reminder set for 5 pm", "I've set up the meeting", "appointment has been added", "updated notes.md") now
+count (`_TARGETED_CLAIM_RE`); each claim maps to the tool family that could do it (`_CLAIM_FAMILIES`: file,
+reminder, calendar, email, clipboard, list, git, sound, memory, app), and only a successful call from that family
+backs it -- a `remember` no longer backs "added to your calendar". The one retry's note names what didn't change and
+the offered tools that could (`nudge_unbacked_claim`). Known, pre-existing: `_SUBJECTLESS_CLAIM_RE` flags prose
+like "Created in 2019, ..." (one wasted retry at worst). Next in (1): the training log (jsonl under `data/`, every
+net that fires) + the "got it wrong" tap, then 1a real-chat eval (case list to the user first), then 1c mmap.
 
 ### 4.0 Startup: done for now
 

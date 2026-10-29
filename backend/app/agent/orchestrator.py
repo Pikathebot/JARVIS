@@ -496,14 +496,98 @@ _BARE_CLAIM_RE = re.compile(r"\s*(?:done|added|all set|sorted|ticked off|noted)(
                             re.IGNORECASE)
 
 
-def claims_unrun_action(content: str) -> bool:
-    text = content or ""
-    if _UNRUN_ACTION_CLAIM_RE.search(text) or _SUBJECTLESS_CLAIM_RE.search(text) or _BARE_CLAIM_RE.fullmatch(text):
-        return True
+# Past-tense claims that need a target to count (PLAN §4 step 1, 2026-10-26): "Added" or "I've set"
+# alone opens too much ordinary prose ("I've added error handling to the function"), but with a
+# reminder, an appointment, your calendar/list/notes or a file name it says something was done.
+# "Set"/"put" only after "I": opening a sentence they are advice ("Set a timer for 10 minutes").
+_TARGETED_CLAIM_RE = re.compile(
+    r"(?:(?:^|[.!?\n]\s*)(?:done[,.!:\s-]+)?(?:added|created|scheduled|updated|booked)"
+    r"|\bI(?:'ve| have)?\s+(?:just\s+|now\s+|also\s+|already\s+)?"
+    r"(?:added|created|scheduled|updated|booked|set(?:\s+up)?|put))\b"
+    r".{0,60}?(?:\b(?:reminder|alarm|timer|appointment|meeting)s?\b"
+    r"|\b(?:to|in|on|into|for)\s+(?:your|the|my)\s+(?:calendar|schedule|to-?do(?:\s+list)?|list|tasks?|notes?|clipboard)\b"
+    r"|\b[\w-]+\.[a-z][a-z0-9]{0,4}\b)"
+    # "Reminder set for 5 pm." / "Your dentist appointment has been added."
+    r"|\b(?:reminder|alarm|timer|appointment|event|task)\s+(?:is\s+|has\s+been\s+)?(?:set|added|created|scheduled|booked)\b",
+    re.IGNORECASE,
+)
+
+
+def _claim_sentences(text: str) -> list[str]:
+    """The sentences of a reply that say something was done (or will be, with no offer)."""
+    if _BARE_CLAIM_RE.fullmatch(text):
+        return [text]
+    found = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
-        if _PROMISE_RE.search(sentence) and not _OFFER_RE.search(sentence):
-            return True
-    return False
+        if (_UNRUN_ACTION_CLAIM_RE.search(sentence) or _SUBJECTLESS_CLAIM_RE.search(sentence)
+                or _TARGETED_CLAIM_RE.search(sentence)
+                or (_PROMISE_RE.search(sentence) and not _OFFER_RE.search(sentence))):
+            found.append(sentence)
+    return found
+
+
+def claims_unrun_action(content: str) -> bool:
+    return bool(_claim_sentences(content or ""))
+
+
+# What a claim is about, and the tools that could have done it (PLAN §4 step 1, 2026-10-26). Before,
+# any tool that changed something backed every claim, so "Added to your calendar." after only a
+# remember passed. First match wins, so a sentence naming a file is about the file even if it
+# says "opened". A claim matching none of these is backed by any tool that changed something.
+_FILE_TOOLS = frozenset({"write_file", "patch_file", "delete_file", "create_artifact", "update_artifact",
+                         "patch_artifact", "project_state", "notes", "git_restore", "execute_command"})
+_CLAIM_FAMILIES: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
+    ("the file", re.compile(r"\b[\w-]+\.[a-z][a-z0-9]{0,4}\b|\b(?:files?|folders?|directory)\b", re.IGNORECASE),
+     _FILE_TOOLS),
+    ("the reminder", re.compile(r"\b(?:remind\w*|alarms?|timers?)\b", re.IGNORECASE), frozenset({"remind_me", "reminders"})),
+    ("the calendar", re.compile(r"\b(?:calendar|events?|appointments?|meetings?|scheduled)\b", re.IGNORECASE),
+     frozenset({"calendar"})),
+    ("the email", re.compile(r"\b(?:e-?mails?|drafts?|drafted|inbox|replied)\b", re.IGNORECASE), frozenset({"email"})),
+    ("the clipboard", re.compile(r"\bclipboard\b", re.IGNORECASE), frozenset({"set_clipboard", "execute_command"})),
+    ("the list", re.compile(r"\b(?:to-?dos?|tasks?|lists?|ticked|marked|notes?|noted)\b", re.IGNORECASE),
+     frozenset({"tasks", "notes"})),
+    ("git", re.compile(r"\b(?:commit(?:ted)?|pushed|pulled|branch)\b", re.IGNORECASE),
+     frozenset({"git_commit", "git_push", "git_pull", "git_switch", "execute_command"})),
+    ("the sound", re.compile(r"\b(?:muted?|unmuted?|volume|paused|resumed|skipped|playing)\b", re.IGNORECASE),
+     frozenset({"set_mute", "set_volume", "media_control"})),
+    ("memory", re.compile(r"\b(?:remember\w*|memory|memories)\b", re.IGNORECASE), frozenset({"remember", "project_state"})),
+    ("the app", re.compile(r"\b(?:open(?:ed)?|launch\w*|start(?:ed)?|clos\w+|kill\w*|terminat\w+|focus\w*|running)\b",
+                           re.IGNORECASE),
+     frozenset({"launch_app", "focus_app", "kill_process", "execute_command"})),
+)
+_FAMILY_TOOLS = {label: tools for label, _, tools in _CLAIM_FAMILIES}
+
+
+def claimed_actions(content: str) -> list[str]:
+    """What each claim in the reply is about (a ``_CLAIM_FAMILIES`` label, "" when it names none)."""
+    labels = []
+    for sentence in _claim_sentences(content or ""):
+        label = next((lbl for lbl, pattern, _ in _CLAIM_FAMILIES if pattern.search(sentence)), "")
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def unbacked_claims(content: str, tools_used: list[Any]) -> list[str]:
+    """The claims no successful tool call of the right kind backs this turn."""
+    changed = changed_tools(tools_used)
+    return [label for label in claimed_actions(content)
+            if not (changed & _FAMILY_TOOLS[label] if label else changed)]
+
+
+def nudge_unbacked_claim(labels: list[str], offered: list[str]) -> str:
+    """The note that sends an unbacked claim back: names what it was about and the tools that could do it."""
+    named = [label for label in labels if label]
+    if not named:
+        return _NUDGE_UNRUN_CLAIM
+    tools = [t for t in offered if any(t in _FAMILY_TOOLS[label] for label in named)]
+    what = " or ".join(named)
+    if not tools:
+        return (f"Nothing in this turn changed {what}, and no tool that could is available, so what you just "
+                "described did not happen. Say plainly, in one sentence, that you have not done it.")
+    return (f"Nothing in this turn changed {what}: no {' / '.join(tools)} call succeeded, so what you just "
+            "described did not happen. If the user asked for it, call the tool now. Otherwise say plainly, "
+            "in one sentence, that you have not done it.")
 
 
 # The fast model's reply to "remind me to stretch in 20 minutes" was "I'll keep that in mind"
@@ -551,8 +635,9 @@ _LET_ME_ACT = re.compile(r"\blet me\s+(?:search|look (?:it |that )?up|check|find
                          re.IGNORECASE)
 
 
-def changed_something(tools_used: list[Any]) -> bool:
-    """Whether a tool that changes state ran successfully this turn (reads and failures don't count)."""
+def changed_tools(tools_used: list[Any]) -> set[str]:
+    """The tools that changed state successfully this turn (reads and failures don't count)."""
+    changed = set()
     for item in tools_used or []:
         if not isinstance(item, dict) or item.get("status") in ("error", "timeout"):
             continue
@@ -565,8 +650,13 @@ def changed_something(tools_used: list[Any]) -> bool:
                 or (name == "email" and action in ("inbox", "search", "read", "list"))):
             continue
         if name not in _READ_ONLY_TOOLS:
-            return True
-    return False
+            changed.add(name)
+    return changed
+
+
+def changed_something(tools_used: list[Any]) -> bool:
+    """Whether a tool that changes state ran successfully this turn (reads and failures don't count)."""
+    return bool(changed_tools(tools_used))
 
 
 class TurnMetrics:
@@ -1765,11 +1855,12 @@ class AgentOrchestrator:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": nudge_unrun_forget(self._tool_names(tools))})
                     continue
-                if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
+                if tools and not claim_checked and (unbacked := unbacked_claims(content, tools_used)):
                     claim_checked = True
-                    logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
+                    logger.info("Model '%s' claimed %s with no tool call backing it; sending it back once.",
+                                model, unbacked)
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
+                    messages.append({"role": "user", "content": nudge_unbacked_claim(unbacked, self._tool_names(tools))})
                     continue
                 if tools and not tools_used and not claim_checked and promises_a_lookup(content):
                     claim_checked = True
@@ -2769,12 +2860,13 @@ class AgentOrchestrator:
                     messages.append({"role": "user", "content": nudge_unrun_forget(self._tool_names(tools))})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
-                if tools and not changed_something(tools_used) and not claim_checked and claims_unrun_action(content):
+                if tools and not claim_checked and (unbacked := unbacked_claims(content, tools_used)):
                     claim_checked = True
-                    logger.info("Model '%s' claimed an action with no tool call; sending it back once.", model)
+                    logger.info("Model '%s' claimed %s with no tool call backing it; sending it back once.",
+                                model, unbacked)
                     metrics.nets.append("claim-checked")
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": _NUDGE_UNRUN_CLAIM})
+                    messages.append({"role": "user", "content": nudge_unbacked_claim(unbacked, self._tool_names(tools))})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
                 if tools and not tools_used and not claim_checked and promises_a_lookup(content):

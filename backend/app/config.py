@@ -139,13 +139,8 @@ class Settings(BaseSettings):
     routines_enabled: bool = Field(default=True, alias="ROUTINES_ENABLED")
     routines_check_seconds: float = Field(default=20.0, alias="ROUTINES_CHECK_SECONDS")
 
-    terminal_enabled: bool = Field(default=False, alias="TERMINAL_ENABLED")
-
-    web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
-
     # Cloud Routing & Heavy Mode Settings
     cloud_routing_enabled: bool = Field(default=False, alias="CLOUD_ROUTING_ENABLED")
-    heavy_mode_enabled: bool = Field(default=False, alias="HEAVY_MODE_ENABLED")
     openrouter_enabled: bool = Field(default=False, alias="OPENROUTER_ENABLED")
     openrouter_api_key: Optional[str] = Field(default=None, alias="OPENROUTER_API_KEY")
     openrouter_heavy_model: str = Field(default="meta-llama/llama-3.3-70b-instruct:free", alias="OPENROUTER_HEAVY_MODEL")
@@ -272,7 +267,6 @@ class Settings(BaseSettings):
     rag_device: str = Field(default="cpu", alias="RAG_DEVICE")
     rag_chunk_size: int = Field(default=1024, alias="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=128, alias="RAG_CHUNK_OVERLAP")
-    rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
 
     # Context Manager Budgeting & KV Cache Safeguards
     context_reserved_output_tokens: int = Field(default=2048, alias="CONTEXT_RESERVED_OUTPUT_TOKENS")

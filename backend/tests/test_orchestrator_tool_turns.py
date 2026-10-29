@@ -12,7 +12,8 @@ from app.agent.model_provider import ModelProvider
 from app.agent.model_router import RoutingDecision
 from app.agent.orchestrator import (
     AgentOrchestrator, _NUDGE_TO_ACT, _NUDGE_TO_ANSWER, _NUDGE_UNRUN_CLAIM, _NUDGE_UNRUN_LOOKUP, _with_system_prompt,
-    TurnMetrics, changed_something, claims_unrun_action, looks_like_action, promises_a_lookup, writes_a_call_as_text,
+    TurnMetrics, changed_something, claimed_actions, claims_unrun_action, looks_like_action, nudge_unbacked_claim,
+    promises_a_lookup, unbacked_claims, writes_a_call_as_text,
 )
 from app.agent.permissions import ChatMode
 from app.agent.tools.registry import delete_file, read_file, web_search
@@ -225,6 +226,39 @@ def test_claims_unrun_action(text, claims):
     assert claims_unrun_action(text) is claims
 
 
+@pytest.mark.parametrize("text, claims", [
+    # past-tense claims with a target (PLAN §4 step 1b, 2026-10-26)
+    ("Reminder set for 5 pm.", True),
+    ("Your dentist appointment has been added.", True),
+    ("I've set up the meeting for Monday.", True),
+    ("I've updated notes.md with the summary.", True),
+    ("Set a timer for 10 minutes.", False),  # advice, not a claim
+])
+def test_targeted_past_tense_claims(text, claims):
+    assert claims_unrun_action(text) is claims
+
+
+def test_a_claim_maps_to_the_tools_that_could_have_done_it():
+    assert claimed_actions("Added to your calendar.") == ["the calendar"]
+    assert claimed_actions("Reminder set for 5 pm.") == ["the reminder"]
+    assert claimed_actions("I've updated notes.md with the summary.") == ["the file"]
+    assert claimed_actions("Done, sir.") == [""]
+    remembered = [{"tool": "remember", "status": "success"}]
+    added = [{"tool": "calendar", "args": {"action": "add"}, "status": "success"}]
+    # a remember used to back every claim; now only a calendar change backs a calendar claim
+    assert unbacked_claims("Added to your calendar.", remembered) == ["the calendar"]
+    assert unbacked_claims("Added to your calendar.", added) == []
+    # a claim that names nothing is backed by any change, as before
+    assert unbacked_claims("Done, sir.", remembered) == []
+    assert unbacked_claims("Done, sir.", []) == [""]
+
+
+def test_the_nudge_names_the_claim_and_the_tools_that_could_do_it():
+    note = nudge_unbacked_claim(["the calendar"], ["remember", "calendar", "read_file"])
+    assert "changed the calendar" in note and "no calendar call succeeded" in note
+    assert nudge_unbacked_claim([""], ["calendar"]) == _NUDGE_UNRUN_CLAIM
+
+
 def test_only_successful_state_changing_tools_back_a_claim():
     assert not changed_something([])
     assert not changed_something([{"tool": "read_file", "status": "success"},
@@ -262,7 +296,9 @@ async def test_a_claimed_action_with_no_tool_call_is_sent_back_once(tmp_path):
     assert events[-1]["event"] == "done"
     assert len(provider.calls) == 2 and provider.calls[1]["tools"]
     second = provider.calls[1]["messages"]
-    assert second[-1] == {"role": "user", "content": _NUDGE_UNRUN_CLAIM}
+    # "open" makes it a claim about the app; neither offered tool can do that, so the note says so
+    assert second[-1] == {"role": "user", "content": nudge_unbacked_claim(["the app"], ["read_file", "delete_file"])}
+    assert "no tool that could is available" in second[-1]["content"]
     assert "attempted to open Qwen" in second[-2]["content"]
 
 
@@ -294,6 +330,32 @@ async def test_a_claim_after_only_reads_is_still_sent_back(tmp_path):
     assert events[-1]["event"] == "done"
     assert len(provider.calls) == 3
     assert provider.calls[2]["messages"][-1] == {"role": "user", "content": _NUDGE_UNRUN_CLAIM}
+
+
+@pytest.mark.asyncio
+async def test_a_claim_backed_only_by_the_wrong_kind_of_tool_is_sent_back(tmp_path):
+    # A write_file succeeded, but the reply says the calendar changed: that used to pass.
+    from app.agent.tools.calendar_events import calendar
+    from app.agent.tools.registry import write_file
+    provider = ScriptedProvider([
+        [{"event": "tool_call", "tool_call": {"id": "w1", "type": "function", "function": {
+            "name": "write_file", "arguments": {"file_path": "notes.txt", "content": "dentist friday"}}}},
+         {"event": "done", "raw": {"content": "", "reasoning": "", "tool_calls": None}}],
+        _text_turn("Saved your note, and the dentist appointment has been added to your calendar."),
+        _text_turn("I saved the note but have not added it to your calendar."),
+    ])
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+    events = [ev async for ev in orch._run_provider_stream_loop(
+        provider=provider, session_id="claim-family-test", model="main", system_prompt="sys",
+        conversation_messages=[{"role": "user", "content": "note the dentist on friday and add it to my calendar"}],
+        tools=[write_file, calendar], chat_mode=ChatMode.WORKSPACE, workspace_path=tmp_path,
+    )]
+    assert events[-1]["event"] == "done"
+    assert (tmp_path / "notes.txt").exists()
+    assert len(provider.calls) == 3
+    note = provider.calls[2]["messages"][-1]["content"]
+    assert "changed the calendar" in note and "calendar call" in note
 
 
 @pytest.mark.asyncio
