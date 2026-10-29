@@ -112,8 +112,22 @@ count (`_TARGETED_CLAIM_RE`); each claim maps to the tool family that could do i
 reminder, calendar, email, clipboard, list, git, sound, memory, app), and only a successful call from that family
 backs it -- a `remember` no longer backs "added to your calendar". The one retry's note names what didn't change and
 the offered tools that could (`nudge_unbacked_claim`). Known, pre-existing: `_SUBJECTLESS_CLAIM_RE` flags prose
-like "Created in 2019, ..." (one wasted retry at worst). Next in (1): the training log (jsonl under `data/`, every
-net that fires) + the "got it wrong" tap, then 1a real-chat eval (case list to the user first), then 1c mmap.
+like "Created in 2019, ..." (one wasted retry at worst). Committed b27afc4.
+
+**Training log + "got it wrong", 2026-10-29: BUILT, uncommitted; the flag is device-verified (user, 10-29: taps
+reach the log, icon turns accent, note row opens -- after fixing a redraw that Render's signature skipped), a `net`
+record not yet seen on device.** Flags vanish from the screen after a restart (turn ids are in memory only); the
+user asked whether that is intended -- persisting the turn id on the stored message would fix it, not yet decided. `agent/training_log.py`
+appends to repo-root `data/training_log.jsonl` (git-ignored; `JARVIS_TRAINING_LOG_PATH` overrides, conftest points
+it at a temp dir): `net` records for a streamed turn where a net fired (user message, each draft sent back with the
+note that sent it via `TurnMetrics.send_back`, tools with args/results clipped, the kept reply; `fit-window` alone
+doesn't count), `capture` records when the memory / PROJECT.md capture saved something, and `wrong` / `unflagged`
+from the flag. Every streamed `done` carries a `turn_id` (kept in memory, last 200 turns; none off the record);
+`POST /api/feedback/{turn_id}/wrong {meant}` / `DELETE` (not on the phone port). WinUI: a Flag icon after the
+reply's metadata line (`label-tertiary`, `accent` when set), tap again to take it back, then an inline "What did you
+mean? (optional)" row (Send / Skip, Enter / Esc). Design system v33 (MessageBubble). Not covered: the non-streaming
+loop (`run`) logs no nets; reloaded history has no flag. Next in (1): 1a real-chat eval (case list to the user
+first), then 1c mmap.
 
 ### 4.0 Startup: done for now
 

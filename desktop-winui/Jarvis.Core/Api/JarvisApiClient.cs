@@ -244,6 +244,27 @@ public sealed class JarvisApiClient
         }
     }
 
+    /// <summary>"Got it wrong" on a reply; sent again with <paramref name="meant"/> to add what was meant.
+    /// False when the backend no longer knows the turn (too old, or from before a restart).</summary>
+    public async Task<bool> FlagWrongAsync(string turnId, string meant = "", CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsJsonAsync($"/api/feedback/{Uri.EscapeDataString(turnId)}/wrong",
+            new WrongFlag { Meant = meant }, JarvisJson.Options, ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return false;
+        response.EnsureSuccessStatusCode();
+        return true;
+    }
+
+    public async Task UnflagWrongAsync(string turnId, CancellationToken ct = default)
+    {
+        using var response = await _http.DeleteAsync($"/api/feedback/{Uri.EscapeDataString(turnId)}/wrong", ct)
+            .ConfigureAwait(false);
+        if (response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
     // ==========================================
     // Projects / workspaces
     // ==========================================

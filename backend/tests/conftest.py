@@ -28,6 +28,7 @@ os.environ.setdefault("STT_ENGINE", "whisper")
 os.environ.setdefault("FREEFORM_FILES_ROOT", os.path.join(os.path.dirname(_TEST_DB), "freeform-home"))
 os.makedirs(os.environ["FREEFORM_FILES_ROOT"], exist_ok=True)
 os.environ.setdefault("JARVIS_PREFERENCE_VOTES_PATH", os.path.join(os.path.dirname(_TEST_DB), "votes.jsonl"))
+os.environ.setdefault("JARVIS_TRAINING_LOG_PATH", os.path.join(os.path.dirname(_TEST_DB), "training_log.jsonl"))
 # The user's notes folder and Google sign-in: a test must never write the real tasks.md, nor find
 # the real Google token and sync against the user's account.
 os.environ.setdefault("JARVIS_NOTES_DIR", os.path.join(os.path.dirname(_TEST_DB), "notes"))

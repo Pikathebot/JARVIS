@@ -1539,6 +1539,8 @@ public sealed partial class MainWindow : Window
         bubble.ApproveRequested += async confirmation => await ChatViewModel.ConfirmActionAsync(confirmation);
         bubble.DenyRequested += confirmation => ChatViewModel.DenyAction(confirmation);
         bubble.CompareVoteRequested += async (message, choice) => await ChatViewModel.VoteCompareAsync(message, choice);
+        bubble.WrongToggled += async message => await ChatViewModel.ToggleWrongAsync(message);
+        bubble.MeantSubmitted += async (message, meant) => await ChatViewModel.SendMeantAsync(message, meant);
         bubble.UndoMemory = ChatViewModel.UndoMemoryAsync;
     }
 }

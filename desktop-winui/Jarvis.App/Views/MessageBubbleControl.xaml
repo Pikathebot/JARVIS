@@ -194,8 +194,23 @@
                             </StackPanel>
                         </Border>
 
-                <!-- Metadata footer -->
-                <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Foreground="{ThemeResource LabelTertiaryBrush}" Visibility="Collapsed" />
+                <!-- Metadata footer, and "got it wrong" (PLAN §4 step 1): a flag in label-tertiary,
+                     accent once set; then an optional "what did you mean" note inline. -->
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <TextBlock x:Name="MetadataFooter" Style="{StaticResource DataText}" Foreground="{ThemeResource LabelTertiaryBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
+                    <Button x:Name="WrongButton" Style="{StaticResource IconButtonStyle}" Width="24" Height="24" CornerRadius="12"
+                            Visibility="Collapsed" Click="WrongButton_Click" AutomationProperties.Name="Got it wrong"
+                            ToolTipService.ToolTip="Got it wrong">
+                        <FontIcon x:Name="WrongIcon" Style="{StaticResource JarvisIcon}" Glyph="&#xE7C1;" FontSize="12"
+                                  Foreground="{ThemeResource LabelTertiaryBrush}" />
+                    </Button>
+                </StackPanel>
+                <StackPanel x:Name="MeantRow" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                    <TextBox x:Name="MeantBox" Width="320" PlaceholderText="What did you mean? (optional)"
+                             KeyDown="MeantBox_KeyDown" />
+                    <Button Content="Send" Click="MeantSend_Click" />
+                    <Button Content="Skip" Click="MeantSkip_Click" />
+                </StackPanel>
             </StackPanel>
         </Grid>
     </Grid>

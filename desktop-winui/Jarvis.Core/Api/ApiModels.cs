@@ -180,3 +180,9 @@ public sealed class CompareVote
 {
     public string Choice { get; set; } = "";
 }
+
+/// <summary>POST /api/feedback/{turn_id}/wrong (PLAN §4 step 1): "got it wrong", with what was meant if said.</summary>
+public sealed class WrongFlag
+{
+    public string Meant { get; set; } = "";
+}

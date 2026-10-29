@@ -48,6 +48,7 @@ from app.routers import (
     confirmations_router,
     rag_debug_router,
     compare_router,
+    feedback_router,
 )
 from app.routers.google import router as google_router
 from app.routers.thread import router as thread_router
@@ -629,6 +630,7 @@ app.include_router(confirmations_router)
 app.include_router(rag_debug_router)
 app.include_router(thread_router)
 app.include_router(compare_router)
+app.include_router(feedback_router)
 app.include_router(google_router)
 app.include_router(remote_router)
 

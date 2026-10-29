@@ -25,6 +25,10 @@ public sealed partial class MessageBubbleControl : UserControl
     /// <summary>A vote on the reply's second take: original / alternative / tie / dismiss.</summary>
     public event Action<ChatMessage, string>? CompareVoteRequested;
 
+    /// <summary>"Got it wrong" tapped (or tapped again to take it back), and the optional "what I meant".</summary>
+    public event Action<ChatMessage>? WrongToggled;
+    public event Action<ChatMessage, string>? MeantSubmitted;
+
     /// <summary>The Undo on a "Remembered/Forgot" line; set by the window that hosts the bubble.
     /// Returns what the line says afterwards, or null when nothing changed.</summary>
     public Func<ToolStep, MemoryLine, Task<string?>>? UndoMemory { get; set; }
@@ -124,6 +128,13 @@ public sealed partial class MessageBubbleControl : UserControl
             // A thread marker gets its title once the episode's record is written.
             case nameof(ChatMessage.MarkText):
                 DispatcherQueue.TryEnqueue(RenderNow);
+                break;
+
+            // The flag and its note row follow the tap at once. They aren't in Render's signature
+            // (a tap would never get past it), and need only their own few elements redrawn.
+            case nameof(ChatMessage.FlaggedWrong):
+            case nameof(ChatMessage.MeantDone):
+                DispatcherQueue.TryEnqueue(() => { if (_message is { } m) RenderWrong(m); });
                 break;
 
             // A tool step or a stretch of thinking began or finished.
@@ -434,6 +445,7 @@ public sealed partial class MessageBubbleControl : UserControl
         if (string.IsNullOrEmpty(message.Model) && string.IsNullOrEmpty(message.Provider))
         {
             MetadataFooter.Visibility = Visibility.Collapsed;
+            RenderWrong(message);
             return;
         }
         MetadataFooter.Visibility = Visibility.Visible;
@@ -447,6 +459,41 @@ public sealed partial class MessageBubbleControl : UserControl
         // router's own reason string does (e.g. "...routed to FAST_MODEL (Qwen3.5-4B-...)."), so
         // surface it as a tooltip rather than cluttering the footer text itself.
         ToolTipService.SetToolTip(MetadataFooter, message.RouteReason);
+        RenderWrong(message);
+    }
+
+    private void RenderWrong(ChatMessage message)
+    {
+        var can = !string.IsNullOrEmpty(message.TurnId) && !message.IsStreaming;
+        WrongButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        // one glyph (Flag); a set flag is the selected state, so accent (IconSet)
+        WrongIcon.Foreground = Themes.JarvisTheme.Brush(message.FlaggedWrong ? "Accent" : "LabelTertiary");
+        var tip = message.FlaggedWrong ? "Flagged as got wrong. Tap to take it back" : "Got it wrong";
+        ToolTipService.SetToolTip(WrongButton, tip);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(WrongButton, tip);
+        var noteOpen = can && message.FlaggedWrong && !message.MeantDone;
+        if (noteOpen && MeantRow.Visibility != Visibility.Visible) MeantBox.Text = "";
+        MeantRow.Visibility = noteOpen ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void WrongButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_message is { } message) WrongToggled?.Invoke(message);
+    }
+
+    private void SubmitMeant(string text)
+    {
+        if (_message is { } message) MeantSubmitted?.Invoke(message, text);
+    }
+
+    private void MeantSend_Click(object sender, RoutedEventArgs e) => SubmitMeant(MeantBox.Text);
+
+    private void MeantSkip_Click(object sender, RoutedEventArgs e) => SubmitMeant("");
+
+    private void MeantBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; SubmitMeant(MeantBox.Text); }
+        else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; SubmitMeant(""); }
     }
 
     private void ApproveButton_Click(object sender, RoutedEventArgs e)

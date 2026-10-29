@@ -243,6 +243,18 @@ public partial class ChatMessage : ObservableObject
     [ObservableProperty]
     public partial bool CompareVoted { get; set; }
 
+    /// <summary>The turn's id from the done event, for "got it wrong" (PLAN §4 step 1). Live replies
+    /// only: reloaded history and off-the-record turns have none, and show no flag.</summary>
+    public string? TurnId { get; set; }
+
+    /// <summary>The user flagged this reply as a misunderstanding.</summary>
+    [ObservableProperty]
+    public partial bool FlaggedWrong { get; set; }
+
+    /// <summary>What the user meant was sent (or the note was closed): the note row goes away.</summary>
+    [ObservableProperty]
+    public partial bool MeantDone { get; set; }
+
     [ObservableProperty]
     public partial bool IsStreaming { get; set; }
 

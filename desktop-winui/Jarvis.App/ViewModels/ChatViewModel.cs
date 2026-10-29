@@ -644,6 +644,7 @@ public partial class ChatViewModel : ObservableObject
         _streamingMessage.ToolsUsed = e.ToolsUsed;
         _streamingMessage.Metrics = e.Metrics;
         _streamingMessage.CompareId = e.CompareId;
+        _streamingMessage.TurnId = e.TurnId;
         if (!string.IsNullOrEmpty(e.CompareId))
         {
             _ = PollCompareAsync(_streamingMessage);
@@ -696,6 +697,38 @@ public partial class ChatViewModel : ObservableObject
         try
         {
             await _api.VoteCompareAsync(message.CompareId, choice).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>"Got it wrong" on a reply, or taking the flag back (PLAN §4 step 1). The flag shows at
+    /// once; the training log is an extra, so a failure (backend gone, turn too old) is not an error.</summary>
+    public async Task ToggleWrongAsync(ChatMessage message)
+    {
+        if (string.IsNullOrEmpty(message.TurnId)) return;
+        var flag = !message.FlaggedWrong;
+        message.FlaggedWrong = flag;
+        message.MeantDone = false;
+        try
+        {
+            if (flag) await _api.FlagWrongAsync(message.TurnId).ConfigureAwait(false);
+            else await _api.UnflagWrongAsync(message.TurnId).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>The optional "what I meant" after a flag; empty just closes the note.</summary>
+    public async Task SendMeantAsync(ChatMessage message, string meant)
+    {
+        message.MeantDone = true;
+        if (string.IsNullOrEmpty(message.TurnId) || string.IsNullOrWhiteSpace(meant)) return;
+        try
+        {
+            await _api.FlagWrongAsync(message.TurnId, meant.Trim()).ConfigureAwait(false);
         }
         catch
         {

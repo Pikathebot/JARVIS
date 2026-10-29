@@ -38,7 +38,7 @@ from app.agent.model_router import ModelRouter, RoutingDecision
 from app.agent.model_provider import ModelProvider
 from app.agent.memory_capture import capture_memory
 from app.agent.project_capture import capture_project_state, project_cue
-from app.agent import compare, paused_turns, recent_objects, taint
+from app.agent import compare, paused_turns, recent_objects, taint, training_log
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
 from app.agent.tools.notes import turn_directive as notes_turn_directive
@@ -677,6 +677,12 @@ class TurnMetrics:
         self.gen_tokens = 0
         self.gen_ms = 0.0
         self.nets: list[str] = []
+        # each draft a net sent back or replaced, with the note that sent it (the training log's pairs)
+        self.sent_back: list[dict[str, Any]] = []
+
+    def send_back(self, net: str, draft: str, note: Optional[str]) -> None:
+        self.nets.append(net)
+        self.sent_back.append({"net": net, "draft": draft, "note": note})
 
     def add_round(self, raw: dict[str, Any]) -> None:
         self.rounds += 1
@@ -2657,7 +2663,8 @@ class AgentOrchestrator:
         tool_context: dict[str, Any],
     ) -> None:
         """Run the memory safety net (``memory_capture``) after the reply, off the response path."""
-        task = asyncio.create_task(capture_memory(provider, model, user_message, dict(tool_context)))
+        task = asyncio.create_task(self._logged_capture(
+            "memory", capture_memory(provider, model, user_message, dict(tool_context)), model, user_message, tool_context))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
 
@@ -2675,9 +2682,23 @@ class AgentOrchestrator:
             current = project_state.read(tool_context.get("workspace_path"), tool_context["project_id"])
         except Exception:
             current = ""
-        task = asyncio.create_task(capture_project_state(provider, model, user_message, dict(tool_context), current))
+        task = asyncio.create_task(self._logged_capture(
+            "project", capture_project_state(provider, model, user_message, dict(tool_context), current),
+            model, user_message, tool_context))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    async def _logged_capture(self, kind: str, capture: Any, model: str, user_message: str,
+                              tool_context: dict[str, Any]) -> Any:
+        """Run a capture net and, when it saved something, put that in the training log."""
+        saved = await capture
+        results = saved if isinstance(saved, list) else [saved]
+        ok = [r for r in results if isinstance(r, str) and r and not r.startswith("Error")]
+        if ok:
+            training_log.record_capture(kind, session_id=tool_context.get("session_id"), model=model,
+                                        user_message=user_message, saved=ok if len(ok) > 1 else ok[0],
+                                        ephemeral=self.is_ephemeral)
+        return saved
 
 
     async def _run_provider_stream_loop(
@@ -2808,7 +2829,7 @@ class AgentOrchestrator:
                     thinking_loop_retried = True
                     why = "repeating itself" if loop_watch.looping else "ran to the reply cap"
                     logger.info("Model '%s' thinking %s with no answer; asking again with thinking off.", model, why)
-                    metrics.nets.append("thinking-loop")
+                    metrics.send_back("thinking-loop", full_reasoning, _NUDGE_THINKING_LOOP)
                     thinking = False
                     messages.append({"role": "user", "content": _NUDGE_THINKING_LOOP})
                     continue
@@ -2816,15 +2837,16 @@ class AgentOrchestrator:
                 replaced = False
                 if not tools:
                     # Nothing was offered, so a call written out as text can't run: say so instead.
+                    draft = content
                     content, replaced = drop_unofferable_calls(content)
                     if replaced:
                         logger.info("Model '%s' wrote a tool call on a turn with no tools; replaced the reply.", model)
-                        metrics.nets.append("no-tools")
+                        metrics.send_back("no-tools", draft, None)
                     elif claims_without_tools(content, (tool_context or {}).get("user_message")):
                         # Nothing can have run: a claim on this turn is false whatever it says.
                         logger.info("Model '%s' claimed an action on a turn with no tools; replaced the reply.", model)
+                        metrics.send_back("fast-claim", content, None)
                         content, replaced = _NO_TOOLS_REPLY, True
-                        metrics.nets.append("fast-claim")
                 elif not tool_calls:
                     cleaned_content, extracted_calls = extract_tool_calls_from_text(content)
                     if extracted_calls:
@@ -2840,9 +2862,10 @@ class AgentOrchestrator:
                     if tools and full_reasoning.strip() and not nudged:
                         nudged = True
                         logger.info("Model '%s' stopped after reasoning only; nudging it to act.", model)
-                        metrics.nets.append("nudged")
+                        note = _NUDGE_TO_ANSWER if tools_used else _NUDGE_TO_ACT
+                        metrics.send_back("nudged", full_reasoning.strip(), note)
                         messages.append({"role": "assistant", "content": full_reasoning.strip()})
-                        messages.append({"role": "user", "content": _NUDGE_TO_ANSWER if tools_used else _NUDGE_TO_ACT})
+                        messages.append({"role": "user", "content": note})
                         continue
                     metrics.nets.append("re-asked")
                     synth_response = await provider.chat(model=model, messages=messages, profile=profile, thinking=thinking)
@@ -2855,24 +2878,26 @@ class AgentOrchestrator:
                 if tools and not claim_checked and claims_unrun_forget(content, tool_ctx.get("user_message"), tools_used):
                     claim_checked = True
                     logger.info("Model '%s' said something was forgotten with no forget call; sending it back once.", model)
-                    metrics.nets.append("forget-checked")
+                    note = nudge_unrun_forget(self._tool_names(tools))
+                    metrics.send_back("forget-checked", content, note)
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": nudge_unrun_forget(self._tool_names(tools))})
+                    messages.append({"role": "user", "content": note})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
                 if tools and not claim_checked and (unbacked := unbacked_claims(content, tools_used)):
                     claim_checked = True
                     logger.info("Model '%s' claimed %s with no tool call backing it; sending it back once.",
                                 model, unbacked)
-                    metrics.nets.append("claim-checked")
+                    note = nudge_unbacked_claim(unbacked, self._tool_names(tools))
+                    metrics.send_back("claim-checked", content, note)
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": nudge_unbacked_claim(unbacked, self._tool_names(tools))})
+                    messages.append({"role": "user", "content": note})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
                     continue
                 if tools and not tools_used and not claim_checked and promises_a_lookup(content):
                     claim_checked = True
                     logger.info("Model '%s' promised a lookup with no tool call; sending it back once.", model)
-                    metrics.nets.append("lookup-checked")
+                    metrics.send_back("lookup-checked", content, _NUDGE_UNRUN_LOOKUP)
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_UNRUN_LOOKUP})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
@@ -2880,7 +2905,7 @@ class AgentOrchestrator:
                 if tools and not claim_checked and writes_a_call_as_text(content, self._tool_names(tools)):
                     claim_checked = True
                     logger.info("Model '%s' wrote a tool call as text; sending it back once.", model)
-                    metrics.nets.append("text-call-checked")
+                    metrics.send_back("text-call-checked", content, _NUDGE_CALL_AS_TEXT)
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _NUDGE_CALL_AS_TEXT})
                     yield {"event": "token", "data": {"delta": "\n\n"}}
@@ -2904,6 +2929,8 @@ class AgentOrchestrator:
                         "active_skills": active_skills or [],
                         "tools_used": tools_used,
                         "metrics": metrics.payload(tools_used),
+                        "turn_id": self._close_turn(session_id, model, conversation_messages, tool_ctx, content,
+                                                    tools_used, metrics),
                         # The streamed text was the raw call: the client shows `response` instead.
                         "replace_content": replaced,
                     }
@@ -3112,9 +3139,21 @@ class AgentOrchestrator:
                 "active_skills": active_skills or [],
                 "tools_used": tools_used,
                 "metrics": metrics.payload(tools_used),
+                "turn_id": self._close_turn(session_id, model, conversation_messages, tool_ctx, content,
+                                            tools_used, metrics),
                 "replace_content": replaced,
             }
         }
+
+    def _close_turn(self, session_id: str, model: str, conversation_messages: list[dict[str, Any]],
+                    tool_ctx: dict[str, Any], reply: str, tools_used: list[Any], metrics: TurnMetrics) -> Optional[str]:
+        """Hand the finished turn to the training log; its id lets the user flag the reply."""
+        user_message = tool_ctx.get("user_message") or next(
+            (m.get("content") for m in reversed(conversation_messages) if m.get("role") == "user"), "")
+        return training_log.close_turn(
+            session_id=session_id, model=model, user_message=user_message if isinstance(user_message, str) else "",
+            reply=reply, tools_used=tools_used, nets=metrics.nets, sent_back=metrics.sent_back,
+            ephemeral=self.is_ephemeral)
 
     async def _run_openrouter_stream_loop(
         self,

@@ -238,6 +238,10 @@ public sealed class SseDoneEvent
     /// way; poll /api/compare/{id} and show a compare card only if one becomes ready.</summary>
     [JsonPropertyName("compare_id")]
     public string? CompareId { get; set; }
+
+    /// <summary>The turn's id for a "got it wrong" flag (PLAN §4 step 1); null off the record.</summary>
+    [JsonPropertyName("turn_id")]
+    public string? TurnId { get; set; }
 }
 
 /// <summary>What one reply cost: first-token time and prompt/cache sizes from the first model round,
