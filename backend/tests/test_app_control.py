@@ -25,6 +25,7 @@ def start_menu(tmp_path, monkeypatch):
     (programs / "Steam" / "Steam.lnk").write_bytes(b"")
     (programs / "Epic Games Launcher.lnk").write_bytes(b"")
     monkeypatch.setattr(app_control, "_start_menu_dirs", lambda: [str(programs)])
+    monkeypatch.setattr(app_control, "_packaged_apps", lambda: {})  # never the real machine's Store apps
     return programs
 
 
@@ -91,6 +92,18 @@ def test_several_matches_and_none_exact_ask_instead_of_guessing(busy_start_menu)
     assert path is None and "Android Studio" in candidates and "Unsloth Studio" in candidates
     # A bare name plus a variant of it is not a real choice.
     assert app_control.match_start_menu("disc")[0].endswith("Discord.lnk")
+
+
+def test_store_apps_launch_through_apps_folder(start_menu, monkeypatch):
+    # Eval 2026-10-29: Apple Music is a Store app with no shortcut file, so "open apple music" failed.
+    monkeypatch.setattr(app_control, "_packaged_apps",
+                        lambda: {"Apple Music": r"shell:AppsFolder\AppleInc.AppleMusicWin_x!App", "Discord": "shadowed"})
+    opened = []
+    monkeypatch.setattr(app_control.os, "startfile", lambda target: opened.append(target), raising=False)
+    assert launch_app("apple music") == "Successfully launched 'apple music' (via the Store app)."
+    assert opened == [r"shell:AppsFolder\AppleInc.AppleMusicWin_x!App"]
+    # a shortcut file of the same name wins
+    assert app_control.match_start_menu("discord")[0].endswith("Discord.lnk")
 
 
 def test_typos_suggest_the_near_spelling(busy_start_menu):

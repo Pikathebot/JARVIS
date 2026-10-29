@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -23,7 +24,8 @@ from app.routines.models import Routine, RoutineKind
 
 logger = logging.getLogger("jarvis.routines")
 
-DEFAULT_STATE_PATH = BASE_DIR.parent / "data" / "routines.json"
+# JARVIS_ROUTINES_PATH: tests and evals keep their reminders out of the real file.
+DEFAULT_STATE_PATH = Path(os.environ.get("JARVIS_ROUTINES_PATH") or BASE_DIR.parent / "data" / "routines.json")
 # A one-shot reminder this far past its minute was missed (Jarvis off or asleep): say so.
 LATE_AFTER_SECONDS = 180
 

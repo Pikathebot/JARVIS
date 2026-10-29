@@ -170,6 +170,24 @@ def test_permissions_moving_or_deleting_asks():
     assert evaluate_tool_permission("calendar", {"action": "agenda"}, tainted_by="a web page").allowed
 
 
+def test_a_call_with_what_to_add_but_no_action_adds(cal):
+    # Real-chat eval 2026-10-29, case 2: this call fell to the agenda and a birthday was never added.
+    out = ce.calendar(title="Meera's Birthday", when="2026-07-22", repeat="yearly")
+    assert out.startswith("Added") and "Meera" in out
+    assert ce.calendar().startswith(("Mon", "Nothing"))  # nothing given is still the agenda
+    assert ce.resolve_action("", title="x", when="friday", event="e12") == "agenda"  # an event named: not an add
+    # and the claim check counts it as a change
+    assert orch_mod.changed_something([{"tool": "calendar", "args": {"title": "x", "when": "friday"}, "status": "success"}])
+
+
+def test_birthdays_and_anniversaries_come_back_every_year(cal):
+    ce.calendar("add", title="Ravi's Birthday", when="2026-03-14 09:00")
+    ce.calendar("add", title="Wedding anniversary", when="2027-02-14")
+    ce.calendar("add", title="Dentist", when="tomorrow 3pm")
+    repeats = {e["title"]: e.get("repeat") for e in _events()}
+    assert repeats == {"Ravi's Birthday": "yearly", "Wedding anniversary": "yearly", "Dentist": None}
+
+
 def test_reading_the_calendar_is_not_a_change():
     assert not orch_mod.changed_something([{"tool": "calendar", "args": {"action": "agenda"}, "status": "success"}])
     assert not orch_mod.changed_something([{"tool": "calendar", "args": {}, "status": "success"}])

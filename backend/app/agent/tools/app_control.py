@@ -84,10 +84,45 @@ def _start_menu_dirs() -> list[str]:
     return [d for d in dirs if os.path.isdir(d)]
 
 
+# Store (MSIX) apps -- Apple Music, WhatsApp, Xbox -- have no shortcut file in the Start Menu
+# folders, so a name lookup never found them (eval 2026-10-29: "open apple music", 0/3, and the
+# model concluded Apple Music was a Mac app). The shell's AppsFolder lists them with an AppID that
+# ``shell:AppsFolder\<AppID>`` opens. Reading it costs ~0.9 s, so it is kept for a few minutes.
+_PACKAGED_TTL = 300.0
+_packaged_cache: tuple[float, dict[str, str]] = (0.0, {})
+
+
+def _packaged_apps() -> dict[str, str]:
+    """Display name -> ``shell:AppsFolder\\<AppID>`` for every packaged (Store) app; {} off Windows."""
+    global _packaged_cache
+    import time
+    stamp, cached = _packaged_cache
+    if time.monotonic() - stamp < _PACKAGED_TTL:
+        return cached
+    found: dict[str, str] = {}
+    try:
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()  # tools run on a worker thread
+        try:
+            items = win32com.client.Dispatch("Shell.Application").NameSpace("shell:AppsFolder").Items()
+            for item in items:
+                name, app_id = str(item.Name or "").strip(), str(item.Path or "")
+                if name and "!" in app_id:  # packaged apps only; the rest are the shortcuts above
+                    found.setdefault(name, f"shell:AppsFolder\\{app_id}")
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as e:
+        logger.debug("Packaged apps not listed: %s", e)
+    _packaged_cache = (time.monotonic(), found)
+    return found
+
+
 def _start_menu_shortcuts() -> dict[str, str]:
     """Display name -> shortcut path for every app in the Start Menu, one entry per name (the
-    same app often has a shortcut in both the user's and the all-users folder). Uninstall/help
-    shortcuts are skipped so "discord" never resolves to "Uninstall Discord"."""
+    same app often has a shortcut in both the user's and the all-users folder), then the Store
+    apps, which have no shortcut file. Uninstall/help shortcuts are skipped so "discord" never
+    resolves to "Uninstall Discord"."""
     skip = ("uninstall", "readme", "help", "license", "release notes", "documentation")
     found: dict[str, str] = {}
     seen: set[str] = set()
@@ -101,6 +136,10 @@ def _start_menu_shortcuts() -> dict[str, str]:
                     continue
                 seen.add(stem.lower())
                 found[stem] = os.path.join(dirpath, fn)
+    for name, target in _packaged_apps().items():
+        if name.lower() not in seen and not any(word in name.lower() for word in skip):
+            seen.add(name.lower())
+            found[name] = target
     return found
 
 
@@ -263,7 +302,8 @@ def launch_app(name_or_path: str) -> str:
             # Shortcuts and URI schemes go through the shell, exactly as a Start Menu click would.
             os.startfile(target)
             logger.info("Launched application '%s' via shell (%s)", name_or_path, target)
-            return f"Successfully launched '{name_or_path}' (via {os.path.basename(target) or target})."
+            via = "the Store app" if target.lower().startswith("shell:appsfolder") else (os.path.basename(target) or target)
+            return f"Successfully launched '{name_or_path}' (via {via})."
         proc = subprocess.Popen(
             target,
             shell=True if target.endswith((".cmd", ".bat")) else False,

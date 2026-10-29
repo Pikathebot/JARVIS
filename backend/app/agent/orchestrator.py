@@ -42,6 +42,7 @@ from app.agent import compare, paused_turns, recent_objects, taint, training_log
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
 from app.agent.tools.notes import turn_directive as notes_turn_directive
+from app.agent.tools.calendar_events import resolve_action as resolve_calendar_action
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
 from app.memory.store import MemoryStore
@@ -642,7 +643,10 @@ def changed_tools(tools_used: list[Any]) -> set[str]:
         if not isinstance(item, dict) or item.get("status") in ("error", "timeout"):
             continue
         name = item.get("tool") or item.get("name") or ""
-        action = str((item.get("args") or {}).get("action") or "list").lower()
+        args = item.get("args") or {}
+        action = str(args.get("action") or "list").lower()
+        if name == "calendar":  # no action + a title and time is an add (calendar_events.resolve_action)
+            action = resolve_calendar_action(args.get("action"), args.get("title"), args.get("when"), args.get("event"))
         if name == "reminders" and action == "list":
             continue
         if ((name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list")

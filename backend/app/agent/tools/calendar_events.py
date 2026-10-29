@@ -258,7 +258,24 @@ def _match(events: list[dict[str, Any]], key: str, now: datetime) -> tuple[Optio
 
 # --- the tool ---------------------------------------------------------------------------------
 
-def calendar(action: str = "agenda", title: str = "", when: str = "", duration: str = "", event: str = "",
+def resolve_action(action: Any, title: Any = "", when: Any = "", event: Any = "") -> str:
+    """The action a call means. With none given, a title and a time (and no event) is an add: on
+    2026-10-29 (real-chat eval, case 2) such a call fell to the agenda, cost the turn a round and one
+    birthday was never added. Shared with the claim check, which must count that call as a change."""
+    act = str(action or "").strip().lower()
+    if act:
+        return act
+    if str(title or "").strip() and str(when or "").strip() and not str(event or "").strip():
+        return "add"
+    return "agenda"
+
+
+# What comes back every year: a title like this with no repeat given is added yearly (eval 2026-10-29,
+# case 2: five birthdays went in as one-off 09:00 meetings, three of them already past).
+_YEARLY_TITLE = re.compile(r"\b(?:birthdays?|b'?day|anniversar(?:y|ies))\b", re.IGNORECASE)
+
+
+def calendar(action: str = "", title: str = "", when: str = "", duration: str = "", event: str = "",
              repeat: str = "", session_id: Optional[str] = None) -> str:
     """
     The user's calendar (synced with Google Calendar): the agenda for a day or week, or find, add, move or delete an event.
@@ -271,7 +288,7 @@ def calendar(action: str = "agenda", title: str = "", when: str = "", duration: 
         event: Which event (move, delete): its id from the agenda, or some of its words. For find: the words to look for.
         repeat: 'yearly' (add) for a birthday or anniversary that comes back every year; empty = once.
     """
-    act = str(action or "agenda").strip().lower()
+    act = resolve_action(action, title, when, event)
     if act not in ("agenda", "find", "add", "move", "delete"):
         return "Error: action must be agenda, find, add, move or delete."
     from app.google.calendar_sync import maybe_sync, sync_soon
@@ -338,7 +355,7 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat
             end = at + (timedelta(days=1) if all_day else span or timedelta(hours=1))
             ev = {"id": new_id(events), "title": name, "start": _stamp(at, all_day), "end": _stamp(end, all_day),
                   "location": "", "gid": "", "dirty": True, "updated": time.time()}
-            if _REPEATS[str(repeat or "").strip().lower()]:
+            if _REPEATS[str(repeat or "").strip().lower()] or (not str(repeat or "").strip() and _YEARLY_TITLE.search(name)):
                 ev["repeat"] = "yearly"
             dup = next((e for e in _live(events) if e["title"].lower() == name.lower() and e["start"] == ev["start"]), None)
             if dup is not None:

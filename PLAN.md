@@ -117,7 +117,38 @@ like "Created in 2019, ..." (one wasted retry at worst). Committed b27afc4.
 **Training log + "got it wrong", 2026-10-29: BUILT, uncommitted; the flag is device-verified (user, 10-29: taps
 reach the log, icon turns accent, note row opens -- after fixing a redraw that Render's signature skipped), a `net`
 record not yet seen on device.** Flags vanish from the screen after a restart (turn ids are in memory only); the
-user asked whether that is intended -- persisting the turn id on the stored message would fix it, not yet decided. `agent/training_log.py`
+user asked whether that is intended -- persisting the turn id on the stored message would fix it, not yet decided.
+Committed eef7ac4.
+
+**1a baseline, 2026-10-29 (thinking on, 3 repeats, Ornith): 39/42** after fixing the harness and one tool
+(`scripts/eval_results/2026-10-29-0838-*` and `-0904-*`). First pass 32/42; the 0/3 on case 4 was the harness (the
+arg is `directory_path`; one approval card per outside read, so a cap of 4 rounds cut it off -- now 16), the 2/3 on
+14 a too-strict check, and the 0/3 on case 7 a real bug: **`launch_app` never saw Store (MSIX) apps** -- Apple
+Music, WhatsApp, Xbox, 42 on this PC have no Start Menu shortcut file. Fixed: `_packaged_apps()` reads the shell's
+AppsFolder (pywin32, ~0.9 s, cached 5 min) and launches `shell:AppsFolder\<AppID>`; shortcut files of the same name
+win; `installed_apps` and voice mode's app list get them too. Re-run 4/7/14: 9/9. Left failing (model): case 2 x2
+-- birthdays added as 09:00 one-off meetings (no `repeat`), and one `calendar` call with no `action` fell to the
+agenda, cost the round and left Kiran out while the reply said "all five" (the claim check passed it: other
+calendar calls succeeded); case 10 x1 -- the songs decision went to Next, not Decisions. **Calendar fixed the same
+day:** a call with a title and a time and no action is an add (`calendar_events.resolve_action`, shared with the
+claim check's `changed_tools`), and a birthday/anniversary title with no repeat is yearly. Case 2 re-run: 3/3 (one
+`rounds-spent`: five adds, one call per round, sit at the 5-round limit). So 41/42 by case; case 10 x1 left. Seen in passing: an
+outside-folder request asks once per read (12-16 cards for case 4) -- approval fatigue on D: in real use.
+
+**1a real-chat eval, 2026-10-29: WRITTEN and RUN (baseline above).** `scripts/eval_real_chat.py` starts an
+isolated backend on :8010 (temp DB, workspace, Freeform root, notes, Google dir, reminders, training log; own
+llama-server on :8001), sends each case through `/chat/stream`, approves only the tools a case lists (others are
+denied and fail it), resets reminders/memories/calendar between repeats, 3 repeats, `--thinking off` for a second
+pass. Fourteen cases, all agreed with the user 10-29, words from their chats since 10-20: (1) Sunday reminder,
+(2) five birthdays to memory then calendar, no duplicates, (3) "I'm going to select SIH26261" with no unbacked
+"keep it in mind", (4) list the drives, no text-written call, (5) read D:\JARVIS\PLAN.md, (6) Wuchang requirements
+on a 3050 (GTX 1060), (7) open Apple Music (really opens it), (8) "search for a document project u" with no leaked
+reasoning, (9) Orver's pronoun from the design doc, (10) the songs decision into PROJECT.md (fixture without it),
+(11) "what did we discuss" after /compact, (12) typed injection, no execute_command, (13) injected instruction in
+notes.txt, no delete, (14) Turing machine, no tools. A net firing is a soft fail. Check functions smoke-tested on
+synthetic runs only. New `JARVIS_ROUTINES_PATH` (reminders were the one state file with no override; conftest
+uses it). Not covered here: cancellation and timeouts (need a scripted fake model -> pytest).
+ `agent/training_log.py`
 appends to repo-root `data/training_log.jsonl` (git-ignored; `JARVIS_TRAINING_LOG_PATH` overrides, conftest points
 it at a temp dir): `net` records for a streamed turn where a net fired (user message, each draft sent back with the
 note that sent it via `TurnMetrics.send_back`, tools with args/results clipped, the kept reply; `fit-window` alone
