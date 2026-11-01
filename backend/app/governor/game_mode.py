@@ -15,7 +15,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Any, Awaitable, Callable, Optional
+from contextlib import contextmanager
+from typing import Any, Awaitable, Callable, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,22 @@ def _safe(fn: Callable[[], Optional[float]]) -> Optional[float]:
 game_mode = GameMode()
 
 
+# Short holds besides Game mode: a tool update swapping llama.cpp or a venv's packages under the
+# processes that use them (app/updates). Same gate, so nothing restarts mid-swap.
+_holds: dict[str, str] = {}
+
+
+@contextmanager
+def hold(key: str, reason: str) -> Iterator[None]:
+    _holds[key] = reason
+    try:
+        yield
+    finally:
+        _holds.pop(key, None)
+
+
 def blocked() -> Optional[str]:
     """Why a model or sidecar may not start now, or None."""
-    return BLOCKED if game_mode.active else None
+    if game_mode.active:
+        return BLOCKED
+    return next(iter(_holds.values()), None)

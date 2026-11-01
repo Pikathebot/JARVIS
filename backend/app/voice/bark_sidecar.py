@@ -48,6 +48,8 @@ def decode_audio(audio_data: bytes) -> np.ndarray:
     """Any container PyAV reads (webm/opus, mp4/aac, wav) to 16 kHz mono float32."""
     import io
 
+    from app.updates.manager import wait_for_packages
+    wait_for_packages()
     from faster_whisper.audio import decode_audio as _decode
 
     return _decode(io.BytesIO(audio_data), sampling_rate=16000)

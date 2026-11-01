@@ -11,13 +11,13 @@ namespace Jarvis_App.Views;
 
 /// <summary>
 /// The Settings window's content (PLAN 4.8b2): a section list and one page at a time --
-/// General, Models, Persona, Voice, Routines, Accounts, Developer, About. Hosted by
+/// General, Models, Persona, Voice, Routines, Accounts, Remote, Developer, Updates, About. Hosted by
 /// <see cref="SettingsWindow"/>; the pages hold what the old in-window sheet had plus the
 /// Models budget card, the Voice listening sliders and the Developer preview.
 /// </summary>
 public sealed partial class SettingsPane : UserControl
 {
-    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Accounts", "Remote", "Developer", "About" };
+    public static readonly string[] Pages = { "General", "Models", "Persona", "Voice", "Routines", "Accounts", "Remote", "Developer", "Updates", "About" };
 
     private readonly JarvisApiClient _api;
     private readonly GovernorViewModel _governor;
@@ -61,6 +61,7 @@ public sealed partial class SettingsPane : UserControl
     public void Detach()
     {
         StopLogs();
+        StopUpdatePolling();
         ModelsViewModel.PropertyChanged -= Models_PropertyChanged;
         ModelsViewModel.Hub.PropertyChanged -= Hub_PropertyChanged;
         RoutinesViewModel.Routines.CollectionChanged -= Routines_CollectionChanged;
@@ -86,7 +87,8 @@ public sealed partial class SettingsPane : UserControl
         {
             ("General", GeneralPage, NavGeneral), ("Models", ModelsPage, NavModels), ("Persona", PersonaPage, NavPersona),
             ("Voice", VoicePage, NavVoice), ("Routines", RoutinesPage, NavRoutines), ("Accounts", AccountsPage, NavAccounts),
-            ("Remote", RemotePage, NavRemote), ("Developer", DeveloperPage, NavDeveloper), ("About", AboutPage, NavAbout),
+            ("Remote", RemotePage, NavRemote), ("Developer", DeveloperPage, NavDeveloper), ("Updates", UpdatesPage, NavUpdates),
+            ("About", AboutPage, NavAbout),
         };
         foreach (var (name, panel, nav) in panels)
         {
@@ -106,6 +108,8 @@ public sealed partial class SettingsPane : UserControl
         if (page == "Models") RefreshBudget();
         if (page == "Accounts") _ = RefreshGoogleAsync();
         if (page == "Remote") _ = RefreshRemoteAsync(newCode: false);
+        if (page == "Updates") _ = RefreshUpdatesAsync(check: false);
+        else StopUpdatePolling();
     }
 
     private bool _syncingAppearance;

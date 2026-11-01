@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -16,7 +17,9 @@ from app.agent.orchestrator import AgentOrchestrator
 from app.agent.model_router import ModelRouter
 from app.agent.openrouter_client import OpenRouterClient
 from app.agent.provider_factory import get_model_provider
-from app.agent.runtime_process_manager import get_runtime_process_manager
+from app.agent.model_catalog import REPO_ROOT
+from app.agent.runtime_process_manager import get_runtime_process_manager, resolve_repo_path
+from app.updates.manager import UpdateManager, configure_update_manager
 from app.governor.resource_governor import (
     ResourceGovernor,
     SystemMetrics,
@@ -53,6 +56,7 @@ from app.routers import (
 from app.routers.google import router as google_router
 from app.routers.thread import router as thread_router
 from app.routers.remote import router as remote_router
+from app.routers.updates import router as updates_router
 from app.remote import RemoteGateMiddleware, is_remote_request, set_remote_turn
 from app.memory.thread import THREAD_SESSION_ID
 from app.thread_live import get_thread_live
@@ -284,6 +288,37 @@ game_mode.configure(
     vram_used_mb=lambda: governor.collect_metrics().vram_used_mb,
 )
 
+async def release_for_voice_packages() -> None:
+    """A tools/laya-venv update: Bark and Laya stopped, so their packages can be replaced."""
+    from app.voice.bark_sidecar import get_bark_sidecar
+    from app.voice.laya_sidecar import get_laya_sidecar
+    from app.voice.voice_mode import get_voice_mode
+
+    voice = get_voice_mode()
+    if voice.enabled:
+        await voice.disable(load_main=False)
+    await asyncio.to_thread(get_laya_sidecar().stop)
+    await asyncio.to_thread(get_bark_sidecar().stop)
+
+
+async def relaunch_main_model() -> bool:
+    """After a llama.cpp swap: the chat model started on the new build is the check that it works."""
+    try:
+        async with governor.activity(ActivityType.MODEL_LOADING, label="llama.cpp update"):
+            return await get_runtime_process_manager().ensure_running("main")
+    except Exception as exc:
+        logger.warning("The chat model didn't start after the llama.cpp swap: %s", exc)
+        return False
+
+
+update_manager = configure_update_manager(UpdateManager(
+    llama_dir=resolve_repo_path(settings.llama_server_exe).parent,
+    downloads_dir=REPO_ROOT / "tools" / ".updates",
+    release_all=release_for_game_mode,
+    release_voice=release_for_voice_packages,
+    relaunch=relaunch_main_model,
+))
+
 # Ambient awareness: notices hardware conditions worth speaking up about.
 awareness_monitor = AwarenessMonitor(
     governor=governor,
@@ -431,6 +466,11 @@ confirmation_watcher = ConfirmationWatcher(
 async def lifespan(app: FastAPI):
     """Lifespan context manager to start/stop Resource Governor, Process Watcher, MCP servers, and Voice engine."""
     logger.info("Starting up Jarvis Assistant backend services...")
+
+    # Voice package installs queued from Settings > Updates run now, before Whisper or Kokoro is
+    # imported (they wait on it); off the event loop so /health still answers within the app's 20 s.
+    if not update_manager.packages_ready.is_set():
+        threading.Thread(target=update_manager.apply_pending, name="tool-updates", daemon=True).start()
 
     # Run database migrations in background thread (non-blocking for async event loop)
     await asyncio.to_thread(run_db_migrations)
@@ -633,6 +673,7 @@ app.include_router(compare_router)
 app.include_router(feedback_router)
 app.include_router(google_router)
 app.include_router(remote_router)
+app.include_router(updates_router)
 
 # Phone and iPad (PLAN 4.19): requests on the remote port are marked remote, gated to the routes
 # the phone app needs, and need a paired device's token (app/remote.py). Outermost, so it runs

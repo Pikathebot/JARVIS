@@ -50,7 +50,7 @@ Principles that have held up:
 
 | Area | What runs | Notes |
 |---|---|---|
-| Inference | `llama-server.exe` build 10689, `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--no-mmap`, `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
+| Inference | `llama-server.exe` build 11899 (user-updated 10-26; Settings → Updates since 11-01), `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--no-mmap`, `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
 | Main model | Ornith 1.5 9B IQ3_XXS + its mmproj @ 32k (since 2026-10-20; Defiant is the fallback) | Chosen by eval and blind votes, see 4.17c. Live model is whatever `data/models.json` names. |
 | Fast model | MiniCPM5-2B Q4_K_M | 5/5 on the tool-chain bench, 2.5x faster than the 4B. EN/ZH only, no vision. |
 | Model choice | `data/models.json` via Settings -> Models | Overrides `.env`, which is stale on model paths. |
@@ -2797,3 +2797,39 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
 
 **Needs the user:** how strict A4 should be; whether C goes in the order and where; leaving the app running for B8.
 **Not yet started.**
+
+### 4.30 Try Spark-X2.6-4B as the main and the fast model (raised by the user 2026-10-29) -- QUEUED
+**What:** `models/Spark-X2.6-4B-GGUF/Spark-X2.6-4B-Q4_K_M.gguf` (3.5 GB, downloaded 2026-10-26, no `mmproj*`
+projector, so text only). Score it in both slots against what runs now. **Main** (vs Ornith 1.5 9B IQ3): the real-chat
+eval (Ornith 41/42 by case, 2026-10-29) and `eval_jarvis_tasks.py` (Ornith 129/150, 4.17c); it would lose vision
+(images go to a slot that can see). **Fast** (vs MiniCPM5-2B): fast turns get no tools, so judge speed and plain
+answers; and voice mode runs the fast model with Laya and Bark/Whisper on the GPU -- Bonsai 2 9B at 3.4 GB was dropped
+from the fast slot for leaving no headroom (4.14), and Spark is about the same size, so measure VRAM in voice mode.
+**Needs first:** `eval_real_chat.py` serves whatever `data/models.json` selects; add a `--main` / `--fast` model
+override for the eval's backend (env for the isolated process only, never the user's selection). Check the chat
+template's tool calling and `<think>` handling before scoring. Jarvis closed for every run.
+
+### 4.31 Settings → Updates: llama.cpp and the voice packages (raised by the user 2026-11-01) -- BUILT, unverified on device
+**The ask (user):** "llama.cpp was updated by me, so add stuff in the frontend settings to update the tools that we
+have." Agreed: llama.cpp plus the Python voice packages; check, then the user presses Update; Roll back restores.
+**Built:** `app/updates/` (`llama_cpp.py`, `packages.py`, `manager.py`), `routers/updates.py` (`/api/updates`, not on
+the phone port), Settings → Updates page (`SettingsPane.Updates.cs`), design system v35 (SettingsCard, IconSet E896).
+- llama.cpp: installed build from `llama-server --version`; newest `b<N>` prerelease on ggml-org with a
+  `win-cuda-<installed major>` x64 zip (the CUDA runtime DLLs are copied from the old install, saving the 390 MB
+  cudart zip); sha256 checked against GitHub's digest; unzipped to `tools/llama-cpp.staged`, its `--version` checked;
+  then under the `tool-update` hold (`game_mode.hold`, same gate as Game mode) the model, voice mode and sidecars
+  stop (`release_for_game_mode`), folders swap (old -> `tools/llama-cpp.previous`), and the chat model starts on
+  the new build as the check -- if it won't, the old build goes back and starts. Roll back swaps the two folders.
+- Packages: `faster-whisper, ctranslate2, kokoro-onnx, onnxruntime` (backend `.venv`, pip) and `laya, transformers`
+  (`tools/laya-venv`, uv) to exact PyPI versions, with torch/torchaudio/torchvision held as constraints at the
+  installed `+cu128` build. Bark and Laya are stopped first. The backend's own venv can't change while Kokoro is
+  loaded (it warms at every start), so its update is queued in `data/tool_updates.json` and installed by a thread at
+  the next start; Whisper/Kokoro/Bark's audio decode wait on it (`wait_for_packages`) -- not the lifespan, because the
+  app gives /health 20 s. Each install records what moved, so Roll back pins the old versions.
+- On 11-01: llama.cpp 11899 -> 12024 available (280 MB); ctranslate2 4.8.1 -> 4.8.4, onnxruntime 1.28 -> 1.31.1,
+  laya 0.3.23 -> 0.4.19 (a 0.x minor: may break Laya), transformers 5.18 -> 5.22.1 (Bark's ParakeetForTDT).
+**Verified:** 12 tests (`test_tool_updates.py`, all faked); a read-only status probe against the real installs and
+GitHub/PyPI; WinUI build. **Unverified on device:** the page itself, a real llama.cpp swap and roll back, the uv and
+pip installs, the queued install at startup.
+**Seen in passing:** `tools/llama-cpp-prism` is no longer on disk (test_ternary_quants_... fails); two tests are
+date-bound and fail since November (test_notes_tasks round trip, test_recall last month).

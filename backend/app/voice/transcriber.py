@@ -45,6 +45,8 @@ class AudioTranscriber:
             return self._gpu_model
         if self._whisper_model is None:
             try:
+                from app.updates.manager import wait_for_packages
+                wait_for_packages()
                 from faster_whisper import WhisperModel
                 logger.info("Loading local Whisper model ('%s' on CPU)...", self.model_size)
                 self._whisper_model = WhisperModel(
@@ -100,6 +102,8 @@ class AudioTranscriber:
                 os.add_dll_directory(str(dll_dir))
                 os.environ["PATH"] = str(dll_dir) + os.pathsep + os.environ.get("PATH", "")
             try:
+                from app.updates.manager import wait_for_packages
+                wait_for_packages()
                 from faster_whisper import WhisperModel
 
                 before = _gpu_used_mb()

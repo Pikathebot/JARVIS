@@ -75,6 +75,8 @@ class KokoroEngine:
                     raise FileNotFoundError(
                         f"Kokoro model files missing: {self.model_path} / {self.voices_path}"
                     )
+                from app.updates.manager import wait_for_packages
+                wait_for_packages()
                 from kokoro_onnx import Kokoro
 
                 logger.info("Loading Kokoro TTS from %s", self.model_path)

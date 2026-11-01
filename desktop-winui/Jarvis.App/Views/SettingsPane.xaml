@@ -107,6 +107,12 @@
                         <TextBlock Text="Developer" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
+                <Button x:Name="NavUpdates" Style="{StaticResource NavButton}" Tag="Updates" Click="Nav_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE896;" FontSize="16" />
+                        <TextBlock Text="Updates" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
                 <Button x:Name="NavAbout" Style="{StaticResource NavButton}" Tag="About" Click="Nav_Click">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE946;" FontSize="16" />
@@ -782,6 +788,33 @@
                         </StackPanel>
 
                         <!-- ========== About ========== -->
+                        <!-- ========== Updates: llama.cpp and the voice packages (app/updates) ========== -->
+                        <StackPanel x:Name="UpdatesPage" Spacing="20" Visibility="Collapsed">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="UpdatesCheckedText" Text="Not checked yet" Style="{StaticResource SecondaryFootnoteText}" Margin="4,0,0,0" VerticalAlignment="Center" />
+                                <Button x:Name="UpdatesCheckButton" Grid.Column="1" Content="Check for updates" Click="UpdatesCheck_Click" />
+                            </Grid>
+                            <StackPanel x:Name="UpdateJobPanel" Spacing="6" Visibility="Collapsed">
+                                <TextBlock Text="In progress" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid Style="{StaticResource SettingsRow}" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="6" VerticalAlignment="Center">
+                                            <TextBlock x:Name="UpdateJobText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                                            <ProgressBar x:Name="UpdateJobProgress" Maximum="100" />
+                                            <TextBlock x:Name="UpdateJobDetail" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Button x:Name="UpdateJobCancel" Grid.Column="1" Content="Cancel" VerticalAlignment="Center" Click="UpdateJobCancel_Click" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                            <StackPanel x:Name="UpdatesList" Spacing="20" />
+                            <TextBlock x:Name="UpdatesStatusText" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0" Visibility="Collapsed" />
+                            <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0"
+                                       Text="Nothing downloads or installs until you press Update. Updating llama.cpp stops the chat model and voice mode for a few seconds, starts the model on the new build to check it, and puts the old build back if it won't start; the old build stays for Roll back. Whisper and Kokoro install when Jarvis next starts. Torch is a CUDA build and stays as it is." />
+                        </StackPanel>
+
                         <StackPanel x:Name="AboutPage" Spacing="20" Visibility="Collapsed">
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Backend" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />

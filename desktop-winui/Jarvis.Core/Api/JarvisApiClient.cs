@@ -163,6 +163,30 @@ public sealed class JarvisApiClient
         await EnsureSuccessAsync(response, "cancel download").ConfigureAwait(false);
     }
 
+    /// <summary>llama.cpp and the voice packages. <paramref name="check"/> asks GitHub and PyPI again (a few seconds).</summary>
+    public Task<UpdatesStatus> FetchUpdatesAsync(bool check = false, CancellationToken ct = default) =>
+        GetAsync<UpdatesStatus>($"/api/updates?check={(check ? "true" : "false")}", ct);
+
+    /// <summary>Starts an update or roll back ("update" / "rollback"); poll <see cref="FetchUpdateJobAsync"/>.</summary>
+    public Task<UpdateJobResponse> StartUpdateAsync(string toolId, string action, CancellationToken ct = default) =>
+        PostAsync<UpdateStartRequest, UpdateJobResponse>($"/api/updates/{Uri.EscapeDataString(toolId)}",
+            new UpdateStartRequest { Action = action }, ct);
+
+    public Task<UpdateJobResponse> FetchUpdateJobAsync(CancellationToken ct = default) =>
+        GetAsync<UpdateJobResponse>("/api/updates/job", ct);
+
+    public async Task CancelUpdateDownloadAsync(CancellationToken ct = default)
+    {
+        var response = await _http.DeleteAsync("/api/updates/job", ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "cancel update").ConfigureAwait(false);
+    }
+
+    public async Task CancelPendingUpdateAsync(string toolId, CancellationToken ct = default)
+    {
+        var response = await _http.DeleteAsync($"/api/updates/{Uri.EscapeDataString(toolId)}/pending", ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "cancel queued update").ConfigureAwait(false);
+    }
+
     public async Task PauseGovernorAsync(string? reason = null, CancellationToken ct = default)
     {
         var body = new GovernorPauseRequest { Reason = reason ?? "User requested manual pause" };
