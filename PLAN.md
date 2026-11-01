@@ -50,7 +50,7 @@ Principles that have held up:
 
 | Area | What runs | Notes |
 |---|---|---|
-| Inference | `llama-server.exe` build 11899 (user-updated 10-26; Settings → Updates since 11-01), `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--no-mmap`, `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
+| Inference | `llama-server.exe` build 11899 (user-updated 10-26; Settings → Updates since 11-01), `-fa on`, q8_0 KV, `--spec-type ngram-simple`, `--load-mode none` (was `--no-mmap`), `-ngl 99` | Only one chat model resident at a time; a "fast" verdict never swaps (runs on main, thinking off). |
 | Main model | Ornith 1.5 9B IQ3_XXS + its mmproj @ 32k (since 2026-10-20; Defiant is the fallback) | Chosen by eval and blind votes, see 4.17c. Live model is whatever `data/models.json` names. |
 | Fast model | MiniCPM5-2B Q4_K_M | 5/5 on the tool-chain bench, 2.5x faster than the 4B. EN/ZH only, no vision. |
 | Model choice | `data/models.json` via Settings -> Models | Overrides `.env`, which is stale on model paths. |
@@ -159,6 +159,15 @@ reply's metadata line (`label-tertiary`, `accent` when set), tap again to take i
 mean? (optional)" row (Send / Skip, Enter / Esc). Design system v33 (MessageBubble). Not covered: the non-streaming
 loop (`run`) logs no nets; reloaded history has no flag. Next in (1): 1a real-chat eval (case list to the user
 first), then 1c mmap.
+**1c mmap -- measured 2026-11-01, kept off.** First found: since the user's llama.cpp update (10-26 18:13, build
+11899) every main launch died on "invalid argument: --no-mmap" -- the flag became `--load-mode` (auto|none|mmap|mlock|
+mmap+mlock|dio) and the old one is refused, so every ladder rung failed. Fixed: `no_mmap_flags()` reads the exe's
+`--help` (cached by mtime) and passes `--load-mode none`, or `--no-mmap` to older builds and the PrismML fork. Then
+the comparison (Ornith 32k, real command, two runs each, port 8011): none 14.5-14.8 s load, 6.66 GB private, 0.94 GB
+working set; mmap 17.8-18.0 s, 6.25 GB private, 3.6-3.8 GB working set; VRAM ~5.1 GB and decode ~31 tok/s both. So
+mmap frees only 0.4 GB of commit and costs 3 s and 2.7 GB resident: the 6.6 GB is not weights in RAM but tracks the
+VRAM allocated (likely WDDM backing video memory with commit; unconfirmed). Unverified on device: the app launching
+the model with the fix.
 
 ### 4.0 Startup: done for now
 
@@ -2626,7 +2635,8 @@ the design document first and never came back to it. Meanwhile the governor unlo
   decision all written.
   RAM: llama-server 9.0 GB committed and flat at the cap (was 14.8), governor quiet; the system still sat at 94%
   (commit 30.2 of 32.2 GB) with Claude, Brave and VS Code open. Its 6.6 GB at load with the weights on the GPU is
-  `--no-mmap` host memory, committed but not resident -- a later look (mmap) could free most of it.
+  `--no-mmap` host memory, committed but not resident -- a later look (mmap) could free most of it. (11-01: it
+  doesn't; mmap frees 0.4 GB -- see 1c above.)
 - Unverified on device: the capture writing the right lines on a real message; RAM staying down over a long session;
   turn latency after narrated turns. Takes a model restart (next launch of the app).
 
@@ -2831,5 +2841,6 @@ the phone port), Settings → Updates page (`SettingsPane.Updates.cs`), design s
 **Verified:** 12 tests (`test_tool_updates.py`, all faked); a read-only status probe against the real installs and
 GitHub/PyPI; WinUI build. **Unverified on device:** the page itself, a real llama.cpp swap and roll back, the uv and
 pip installs, the queued install at startup.
-**Seen in passing:** `tools/llama-cpp-prism` is no longer on disk (test_ternary_quants_... fails); two tests are
+**Seen in passing:** `tools/llama-cpp-prism` was removed by the user (unused; stock llama.cpp is adding ternary
+support) -- its test now fakes the fork; two tests are
 date-bound and fail since November (test_notes_tasks round trip, test_recall last month).

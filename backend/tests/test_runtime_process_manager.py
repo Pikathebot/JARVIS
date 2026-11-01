@@ -25,13 +25,21 @@ def test_resolve_repo_path():
     assert str(p_rel).endswith("models\\test.gguf") or str(p_rel).endswith("models/test.gguf")
 
 
-def test_ternary_quants_get_the_prism_server_and_others_keep_the_default():
+def test_ternary_quants_get_the_prism_server_when_it_is_installed(tmp_path, monkeypatch):
+    from app.agent import runtime_process_manager as rpm
+
     stock = Path("stock/llama-server.exe")
     bonsai = Path("models/bonsai-2-9b/Ternary-Bonsai-2-9B-PQ2_0.gguf")
-    prism = exe_for_model(bonsai, stock)
-    assert prism != stock and "llama-cpp-prism" in str(prism).replace("\\", "/")
+    fork = tmp_path / "llama-cpp-prism" / "llama-server.exe"
+    fork.parent.mkdir()
+    fork.write_text("")
+    monkeypatch.setattr(rpm, "PRISM_SERVER_EXE", str(fork))
+    assert exe_for_model(bonsai, stock) == fork
+    assert exe_for_model(Path("models/x/Model-PTQ1_0.gguf"), stock) == fork
     assert exe_for_model(Path("models/x/Qwen3.5-9B-UD-IQ3_XXS.gguf"), stock) == stock
-    assert exe_for_model(Path("models/x/Model-PTQ1_0.gguf"), stock) != stock
+    # Removed 2026-11-01 (stock llama.cpp is gaining these quants): the stock build gets them.
+    fork.unlink()
+    assert exe_for_model(bonsai, stock) == stock
 
 
 @pytest.mark.anyio
@@ -578,3 +586,19 @@ async def test_without_a_headroom_provider_only_failures_step_down(budget_catalo
     cmds = await _launch_and_capture_cmds(pm, "main")
     assert len(cmds) == 1 and "--mmproj" in cmds[0]
     assert pm.launch_adjustment is None
+
+
+def test_no_mmap_uses_load_mode_on_builds_that_replaced_the_flag(tmp_path, monkeypatch):
+    """Since ~b11xxx llama-server rejects --no-mmap ("invalid argument") and every launch rung failed
+    after the 2026-10-26 update; older builds and the PrismML fork still need the old flag."""
+    from app.agent import runtime_process_manager as rpm
+
+    exe = tmp_path / "llama-server.exe"
+    exe.write_text("")
+    helps = {"new": "-lm,   --load-mode MODE   model loading mode (default: auto)", "old": "--no-mmap   do not memory-map"}
+    for which, expected in (("new", ["--load-mode", "none"]), ("old", ["--no-mmap"])):
+        rpm._help_cache.clear()
+        monkeypatch.setattr(rpm.subprocess, "run", lambda *a, **k: MagicMock(stdout=helps[which], stderr=""))
+        assert rpm.no_mmap_flags(exe) == expected
+    rpm._help_cache.clear()
+    assert rpm.no_mmap_flags(tmp_path / "missing.exe") == ["--no-mmap"]

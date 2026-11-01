@@ -81,6 +81,33 @@ def exe_for_model(model: Path, default_exe: Path) -> Path:
     return default_exe
 
 
+_help_cache: dict[tuple[str, float], str] = {}
+
+
+def _server_help(exe: Path) -> str:
+    """``llama-server --help`` for this binary, cached by path and mtime ('' if it can't be read)."""
+    try:
+        key = (str(exe), exe.stat().st_mtime)
+    except OSError:
+        return ""
+    if key not in _help_cache:
+        try:
+            out = subprocess.run([str(exe), "--help"], capture_output=True, text=True, timeout=30,
+                                 cwd=str(exe.parent), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            _help_cache[key] = (out.stdout or "") + (out.stderr or "")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Could not read %s --help: %s", exe, exc)
+            _help_cache[key] = ""
+    return _help_cache[key]
+
+
+def no_mmap_flags(exe: Path) -> list[str]:
+    """Load the weights without memory-mapping the file. Builds from ~b11xxx replaced ``--no-mmap``
+    with ``--load-mode`` and refuse the old flag outright ("invalid argument: --no-mmap" took every
+    launch rung down after the 2026-10-26 update); older builds and the PrismML fork only know it."""
+    return ["--load-mode", "none"] if "--load-mode" in _server_help(exe) else ["--no-mmap"]
+
+
 class RuntimeProcessManager:
     """
     Deterministic OS process management for llama-server.exe.
@@ -418,8 +445,9 @@ class RuntimeProcessManager:
         ctx_size: int,
         projector: Optional[Path],
     ) -> list[str]:
+        server = exe_for_model(model, resolved_exe)
         cmd = [
-            str(exe_for_model(model, resolved_exe)),
+            str(server),
             "--model", str(model),
             "--alias", alias,
             "--host", str(self.host),
@@ -440,7 +468,7 @@ class RuntimeProcessManager:
         # Capped: the default 8 GB of saved prompts took the laptop to 98.5% RAM (config.py).
         cmd.extend(["--cache-ram", str(settings.llama_cache_ram_mb)])
         if not self.use_mmap:
-            cmd.append("--no-mmap")
+            cmd.extend(no_mmap_flags(server))
         if projector is not None:
             cmd.extend(["--mmproj", str(projector)])
             if not settings.llama_mmproj_offload:
