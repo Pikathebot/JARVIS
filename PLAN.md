@@ -2847,6 +2847,15 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
 7. **First C# tests.** `Jarvis.Core` has none. Start a small test project (not in the App build): SSE reader with events
    split at arbitrary byte boundaries, malformed/duplicated events, a confirmation that ends the stream without `done`,
    and DTOs round-tripping real backend JSON under `JarvisJson.Options`.
+   **BUILT 2026-11-01, uncommitted; 24 tests pass (`dotnet test Jarvis.Core.Tests`, not in Jarvis.slnx).**
+   `SseReaderTests` (bytes cut at 1/2/3/7 bytes incl. multi-byte characters, CRLF, multi-line data, trailing packet,
+   comments, cancellation), `ChatStreamClientTests` (a stub HttpClient: tokens then done, a confirmation that ends
+   without `done`, malformed/unknown events, duplicated events, hang-up mid-stream, HTTP error, snake_case request body),
+   `DtoRoundTripTests` (done/metrics, confirmation args as object or string, chat request). Findings: `SseReader`
+   throws `OperationCanceledException` when cancelled between frames and only ends quietly when the cancel lands inside
+   a read -- `ChatStreamClient` swallows it, so the app is fine, but any other caller must too; a duplicated event is
+   delivered twice (no dedupe), pinned by a test. Payloads are hand-written to the backend's key names, not captured
+   from a live turn.
 8. **A long soak.** Hours of chat, voice, RAG, compaction and eviction with RAM commit/working set logged, not only
    VRAM -- the open item in 4.26 ("RAM over a long session not yet"). Needs the user to leave it running.
 
