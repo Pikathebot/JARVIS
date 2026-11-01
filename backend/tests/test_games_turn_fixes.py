@@ -24,7 +24,7 @@ async def test_pipeline_cleans_tool_output():
     outcome.result.encode("utf-8")
 
 
-@pytest.mark.parametrize("path", [r"C:\Users\lathu\AppData\Local\Steam\steam.exe", "D:/Games", r"\\nas\share", "file:///C:/x"])
+@pytest.mark.parametrize("path", [r"C:\Users\someone\AppData\Local\Steam\steam.exe", "D:/Games", r"\\nas\share", "file:///C:/x"])
 def test_fetch_url_refuses_a_local_path(path):
     result = fetch_url(path)
     assert result.startswith("Error:") and "read_file" in result
