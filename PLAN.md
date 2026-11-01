@@ -2016,6 +2016,10 @@ Defiant 9B): on frees 5,107 MiB in 1.8 s (6,772 -> 1,675 MiB used, llama-server 
 answered in code at once with no model start; "Jarvis, game mode off please" turns it off and the next
 message reloads the model (21 s) and answers; "turn on game mode" by chat works too. The app's switch,
 pill and tray item are build-verified only.
+**QUEUED 2026-11-01 for the next session, right after 4.29 A1 (user asked):** let the model turn Game mode on --
+(a) `launch_app` of a watchlisted game enters it, and (b) a tool for "free up the GPU / I'm about to play" asks.
+Both switch *after the turn ends* (the model can't unload itself mid-reply); turning it off stays the code command,
+since no model is loaded then. Today only an exact switch phrase, the popover, the tray or the HUD can toggle it.
 **Not built (next, with the user):** `launch_app` entering Game mode for a watchlisted game (the model is
 mid-turn when the tool runs -- it must switch after the turn ends); the rule for unlisted games (card
 >= ~90% and external growth >= ~256 MiB); RAM/commit in the governor's picture. Measure on device first:
