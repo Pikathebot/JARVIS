@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+from app.atomic_write import write_text_atomic
 from app.config import BASE_DIR
 
 logger = logging.getLogger("jarvis.memory.bin")
@@ -45,8 +46,7 @@ def _load() -> list[dict[str, Any]]:
 def _save(entries: list[dict[str, Any]]) -> None:
     cutoff = (datetime.utcnow() - timedelta(days=KEEP_DAYS)).isoformat()
     kept = [e for e in entries if str(e.get("forgotten_at", "")) >= cutoff]
-    BIN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    BIN_PATH.write_text(json.dumps(kept, indent=2), encoding="utf-8")
+    write_text_atomic(BIN_PATH, json.dumps(kept, indent=2))
 
 
 def _jsonable(value: Any) -> Any:

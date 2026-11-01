@@ -34,6 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from app.atomic_write import write_text_atomic
 from app.config import BASE_DIR
 
 logger = logging.getLogger("jarvis.remote")
@@ -93,10 +94,7 @@ class RemoteDevices:
             self._devices = []
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"devices": self._devices}, indent=2), encoding="utf-8")
-        os.replace(tmp, self._path)
+        write_text_atomic(self._path, json.dumps({"devices": self._devices}, indent=2))
 
     # ---- pairing code -------------------------------------------------------------------------
 

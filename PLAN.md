@@ -2808,6 +2808,9 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
 3. **Atomic writes for restart-surviving JSON.** `persona/manager.py`, `routines/scheduler.py` and
    `agent/model_catalog.py` (`data/models.json`) rewrite in place with `write_text`; a crash mid-write corrupts the file.
    `remote.py` already does temp file + `os.replace` -- share one helper and use it everywhere.
+   **BUILT 2026-11-01, uncommitted:** `app/atomic_write.py` `write_text_atomic` (temp file, fsync, `os.replace`, temp removed on failure); used by
+   persona, routines, model catalog, memory bin and remote devices. Tests: `test_atomic_write.py`. Not applied to the notes/calendar/tasks
+   files that already swap a temp file in by hand.
 4. **Stronger confirmation for destructive voice approvals** (Kimi): a spoken "yes" alone shouldn't approve deleting
    files or killing processes. Proposal: for those tiers, voice needs a repeat ("yes, delete it") or a tap. Needs the
    user's call on how strict.

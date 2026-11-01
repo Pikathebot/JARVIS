@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from app.awareness.monitor import AwarenessMonitor
 from app.awareness.observations import Observation, Severity
+from app.atomic_write import write_text_atomic
 from app.config import BASE_DIR
 from app.routines.models import Routine, RoutineKind
 
@@ -86,13 +87,9 @@ class RoutineScheduler:
 
     def _save_state(self) -> None:
         try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(
-                json.dumps(
-                    {"routines": [r.to_dict() for r in self._routines.values()]},
-                    indent=2,
-                ),
-                encoding="utf-8",
+            write_text_atomic(
+                self.state_path,
+                json.dumps({"routines": [r.to_dict() for r in self._routines.values()]}, indent=2),
             )
         except Exception as e:
             logger.warning("Could not persist routine state to %s: %s", self.state_path, e)

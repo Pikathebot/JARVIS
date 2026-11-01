@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
+from app.atomic_write import write_text_atomic
 from app.config import BASE_DIR, settings
 from app.persona.profiles import (
     BUILTIN_PERSONAS,
@@ -55,13 +56,9 @@ class PersonaManager:
 
     def _save_state(self) -> None:
         try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(
-                json.dumps(
-                    {"active_id": self._active_id, "overrides": self._overrides},
-                    indent=2,
-                ),
-                encoding="utf-8",
+            write_text_atomic(
+                self.state_path,
+                json.dumps({"active_id": self._active_id, "overrides": self._overrides}, indent=2),
             )
         except Exception as e:
             logger.warning("Could not persist persona state to %s: %s", self.state_path, e)

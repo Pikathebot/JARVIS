@@ -31,6 +31,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Optional
 
+from app.atomic_write import write_text_atomic
+
 logger = logging.getLogger("jarvis.agent.model_catalog")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -185,11 +187,10 @@ class ModelCatalog:
 
     def _save_state(self) -> None:
         try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
             state: dict[str, Any] = {"selection": self._selection}
             if self._launch_costs:
                 state["launch_costs"] = self._launch_costs
-            self.state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            write_text_atomic(self.state_path, json.dumps(state, indent=2))
         except Exception as exc:
             logger.warning("Could not persist model selection to %s: %s", self.state_path, exc)
 
