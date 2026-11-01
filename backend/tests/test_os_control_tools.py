@@ -120,6 +120,17 @@ def test_kill_process_ordinary_single_still_asks():
         assert dec.risk_tier == RiskTier.CONFIRMATION_REQUIRED
 
 
+def test_kill_process_with_nothing_to_close_runs_and_says_it_is_a_file():
+    """2026-11-01: asked to delete testing.txt in Freeform, the model called kill_process("testing.txt") and the
+    user got an approval card for it. Nothing by that name runs, so the call goes through and fails plainly."""
+    with patch("psutil.process_iter") as mock_iter:
+        mock_iter.return_value = []
+        dec = evaluate_tool_permission("kill_process", {"pid_or_name": "testing.txt"})
+        assert dec.allowed is True and dec.risk_tier == RiskTier.LOW_RISK
+        out = kill_process("testing.txt")
+    assert out.startswith("Error:") and "looks like a file" in out and "Nothing was changed" in out
+
+
 def test_kill_process_multi_instance_confirmation_required():
     """Terminating a process name matching >1 running instances dynamically escalates to CONFIRMATION_REQUIRED."""
     with patch("psutil.process_iter") as mock_iter:

@@ -226,7 +226,7 @@ async def test_freeform_turn_has_no_project_rag_or_project_tools():
         assert "SPACE: Freeform" in _prompt_text(fake.calls[-1])
         assert "SPACE: Freeform" not in fake.calls[-1]["messages"][0]["content"]  # per-turn, not the cached prefix
         offered = _tool_names(fake.calls[-1])
-        assert offered.isdisjoint({"delete_file", "execute_command", "git_status", "create_artifact"})
+        assert offered.isdisjoint({"execute_command", "git_status", "create_artifact"})
         assert "read_file" in offered  # file tools work on the user's own folders (2026-10-17)
 
         with SessionLocal() as db:
@@ -248,7 +248,7 @@ async def test_freeform_turn_has_no_project_rag_or_project_tools():
 
 def test_freeform_offers_no_workspace_tools():
     names = {t.__name__ for t in tools_for_space("FREEFORM")}
-    assert "execute_command" not in names and "git_status" not in names and "delete_file" not in names
+    assert "execute_command" not in names and "git_status" not in names
     assert "web_search" in names and "read_file" in names  # file tools work on the user's folders
 
 

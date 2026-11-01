@@ -2855,3 +2855,27 @@ pip installs, the queued install at startup.
 **Seen in passing:** `tools/llama-cpp-prism` was removed by the user (unused; stock llama.cpp is adding ternary
 support) -- its test now fakes the fork; two tests are
 date-bound and fail since November (test_notes_tasks round trip, test_recall last month).
+
+### 4.32 "Delete it" became kill_process; barge-in left a frozen bubble (user, 2026-11-01) -- DONE (device-verified)
+**What happened (thread, Freeform):** "Create a file called testing.txt with test" (approved) -> "ok so where is it?"
+(`find_files` over the whole home folder, 15 s+) -> the user barged in with "you know what just delete it", which
+cancelled that turn and left its bubble empty with a frozen caret -> the model, offered no delete tool in Freeform,
+called `kill_process("testing.txt")`; the user denied it, and a denied card has no "got it wrong" flag to tap (flags
+ride on `done`, which a confirmation never sends).
+**Fixed:**
+- `delete_file` is offered in Freeform (the user's call; head budget 26300 -> 26800). Same gate as a workspace: always a
+  card, Recycle Bin, never the root (home) itself.
+- `kill_process` with nothing by that name running needs no card (it can only fail), and a target with a non-.exe
+  extension answers "looks like a file, not a running program".
+- `workspace_index`: with no project given, a written/deleted file is (un)indexed into the active project only if it is
+  inside that project's workspace or local folders -- the Freeform write of ~/testing.txt had gone into project
+  ea341cb5's RAG.
+- WinUI `ChatViewModel`: a cancelled stream (Stop, or a new message sent over it) stops its own bubble -- thinking
+  ended, running tool steps marked "Stopped", caret gone, removed if nothing arrived (`ChatMessage.Stop()`); and the
+  cancelled stream no longer clears the new turn's `IsLoading`. First try didn't fix it on device: `ChatStreamClient` catches its
+  own cancellation and returns normally, so the `catch (OperationCanceledException)` never ran. Now the bubble is
+  stopped whenever the stream returns still streaming (queued behind the turn's callbacks, so a finished one is
+  untouched) -- which also covers a stream that drops without `done`.
+**Open (not done):** a flag on a turn that ended in a denied card. **Verified:** tests (Freeform delete approved and
+refused at the root, kill_process with nothing to close, index scoping, head budget); WinUI compiles (built to a
+scratch folder, the app was running). **Device-verified 11-01 (user):** Freeform delete; barge-in now ends the old bubble ("works perfect").

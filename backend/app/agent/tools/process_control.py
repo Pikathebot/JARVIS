@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import time
 from typing import Optional, Any
@@ -191,6 +192,10 @@ def kill_process(pid_or_name: str, force: bool = False) -> str:
         if not procs:
             if skipped_self:
                 return f"Error: '{target}' is part of Jarvis itself; it can't be closed from chat."
+            ext = os.path.splitext(target_lower)[1]
+            if ext and ext != ".exe":
+                return (f"Error: '{target}' looks like a file, not a running program; kill_process only closes "
+                        "programs. Nothing was changed.")
             return f"Error: No running processes found matching '{target}'."
 
     name = target

@@ -529,7 +529,8 @@ public partial class ChatViewModel : ObservableObject
     {
         _abort?.Cancel();
         _abort = new CancellationTokenSource();
-        var ct = _abort.Token;
+        var mine = _abort;
+        var ct = mine.Token;
 
         IsLoading = true;
         Error = null;
@@ -539,6 +540,7 @@ public partial class ChatViewModel : ObservableObject
         var newTopic = TakeNewTopic();
         _streamingMessage = new ChatMessage { Role = MessageRole.Assistant, IsStreaming = true, HasStructuredReasoning = true };
         Messages.Add(_streamingMessage);
+        var reply = _streamingMessage;
 
         var callbacks = new ChatStreamCallbacks
         {
@@ -571,19 +573,38 @@ public partial class ChatViewModel : ObservableObject
                 NewTopic = newTopic,
                 Callbacks = callbacks,
             }, ct).ConfigureAwait(false);
+            // The stream client swallows its own cancellation and returns, and a dropped stream
+            // returns too: either way a bubble still streaming here gets no done, card or error.
+            // Queued behind the turn's callbacks, so one that finished is left as it is.
+            Post(() => StopReply(reply));
         }
         catch (ApiException ex) when (ex.StatusCode == 429)
         {
             Post(() => HandleError("Jarvis is under heavy load right now (governor limit). Try again shortly."));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            // Stop, or a new message sent over this one, if the cancel lands before the client's
+            // own catch: this turn's own bubble (not the next turn's) loses its caret and spinners,
+            // and goes if nothing arrived. Barging in left an empty bubble with a frozen caret (2026-11-01).
+            Post(() => StopReply(reply));
+        }
+        catch (Exception ex)
         {
             Post(() => HandleError(ex.Message));
         }
         finally
         {
-            Post(() => IsLoading = false);
+            // A turn that was sent over must not clear the loading state of the one replacing it.
+            Post(() => { if (ReferenceEquals(_abort, mine)) IsLoading = false; });
         }
+    }
+
+    private void StopReply(ChatMessage reply)
+    {
+        if (!reply.IsStreaming) return; // it finished (done, a card or an error) before the cancel landed
+        if (reply.Stop()) Messages.Remove(reply);
+        if (ReferenceEquals(_streamingMessage, reply)) _streamingMessage = null;
     }
 
     private void AppendToken(string delta)

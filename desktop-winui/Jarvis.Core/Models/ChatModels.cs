@@ -207,6 +207,23 @@ public partial class ChatMessage : ObservableObject
         TraceVersion++;
     }
 
+    /// <summary>The turn was cancelled (Stop, or a new message sent over it): end the thinking, mark
+    /// running steps stopped and drop the caret. True when nothing at all arrived, so the caller can
+    /// remove the empty bubble.</summary>
+    public bool Stop()
+    {
+        EndThinking();
+        foreach (var step in ToolSteps.Where(s => s.Status == ToolStatus.Running))
+        {
+            step.Status = ToolStatus.Error;
+            step.Result = "Stopped";
+        }
+        TraceVersion++;
+        IsStreaming = false;
+        return string.IsNullOrWhiteSpace(Content) && ToolSteps.Count == 0
+            && Thinking.All(t => string.IsNullOrWhiteSpace(t.Text));
+    }
+
     public void EndToolStep(string tool, string status, object? result)
     {
         var step = ToolSteps.LastOrDefault(s => s.Tool == tool && s.Status == ToolStatus.Running);

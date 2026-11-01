@@ -27,11 +27,12 @@ def _ctx(**extra):
 
 def test_freeform_offers_four_file_tools_and_nothing_project_bound():
     names = {t.__name__ for t in tools_for_space("FREEFORM")}
-    assert {"read_file", "find_files", "write_file", "list_directory"} <= names
+    assert {"read_file", "find_files", "write_file", "list_directory", "delete_file"} <= names
     # all six cost unrelated Freeform turns (eval 2026-10-18, Defiant), so the user trimmed them to three;
     # list_directory came back 2026-10-24 (Ornith: no cost found, PLAN 4.23c)
     assert not names & {"grep_in_files", "patch_file"}
-    assert not names & {"delete_file", "execute_command", "git_status", "create_artifact"}
+    # delete_file joined 2026-11-01: without it "delete testing.txt" reached for kill_process
+    assert not names & {"execute_command", "git_status", "create_artifact"}
 
 
 def test_relative_paths_resolve_in_the_users_folders(home):
@@ -112,8 +113,22 @@ def test_freeform_backups_stay_out_of_the_home_folder(home):
 
 
 def test_project_bound_tools_are_still_refused(home):
-    out = execute_tool("delete_file", {"file_path": "Downloads/x"}, _ctx())
+    out = execute_tool("execute_command", {"command": "dir"}, _ctx())
     assert out.startswith("Error:") and "Freeform" in out
+
+
+def test_an_approved_delete_moves_a_file_in_the_users_folders_to_the_recycle_bin(home, monkeypatch):
+    from app.agent.tools import file_safety
+
+    binned = []
+    monkeypatch.setattr(file_safety, "send_to_recycle_bin", lambda p: (binned.append(p), p.unlink()))
+    (home / "testing.txt").write_text("test")
+    args = {"file_path": "testing.txt"}
+    dec = evaluate_tool_permission("delete_file", args, chat_mode=ChatMode.FREEFORM, workspace_path=str(home))
+    assert not dec.allowed and "Recycle Bin" in dec.reason  # always asks
+    out = execute_tool("delete_file", args, _ctx(permission_checked=True))
+    assert out == "Moved 'testing.txt' to the Recycle Bin." and binned == [home / "testing.txt"]
+    assert execute_tool("delete_file", {"file_path": "."}, _ctx(permission_checked=True)).startswith("Error")
 
 
 def test_reading_a_file_in_freeform_taints_the_turn(home):
@@ -122,3 +137,32 @@ def test_reading_a_file_in_freeform_taints_the_turn(home):
     # In a workspace an ordinary project file doesn't (read-then-edit is the common flow).
     ws = {"chat_mode": "WORKSPACE", "workspace_path": str(home), "session_id": "s"}
     assert taint.source_of("read_file", {"file_path": "Downloads/page.txt"}, ws) is None
+
+
+def test_a_file_in_the_users_folders_stays_out_of_the_active_projects_index(tmp_path):
+    """A Freeform write of ~/testing.txt was indexed into whichever project was active (2026-11-01)."""
+    from app.agent.tools.workspace_index import _project_for
+    from app.database.models import Project
+    from app.database.session import SessionLocal
+    from app.main import run_db_migrations
+
+    run_db_migrations()  # the app's own migrations, as test_compare does (not create_all)
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    with SessionLocal() as db:
+        was_active = [p.id for p in db.query(Project).filter(Project.is_active == True).all()]  # noqa: E712
+        for pid in was_active:
+            db.get(Project, pid).is_active = False
+        proj = Project(id="idx-scope", name="idx", workspace_path=str(ws), is_active=True)
+        db.add(proj)
+        db.commit()
+    try:
+        assert _project_for(None, ws / "notes.md") == "idx-scope"
+        assert _project_for(None, tmp_path / "home" / "testing.txt") is None
+        assert _project_for("given", tmp_path / "anywhere.txt") == "given"
+    finally:
+        with SessionLocal() as db:
+            db.delete(db.get(Project, "idx-scope"))
+            for pid in was_active:
+                db.get(Project, pid).is_active = True
+            db.commit()

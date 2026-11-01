@@ -552,7 +552,7 @@ def execute_tool(
 # (eval 2026-10-18: 28/30 -> 18/30), so the user trimmed them to these three the same day.
 FREEFORM_MODE = "FREEFORM"
 WORKSPACE_BOUND_TOOLS = frozenset({
-    "delete_file", "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
+    "execute_command", "create_artifact", "update_artifact", "patch_artifact", "read_artifact",
     "git_status", "git_diff", "git_log", "git_commit", "git_switch",
     "git_restore", "git_push", "git_pull",
     "grep_in_files", "patch_file", "project_state",

@@ -358,7 +358,9 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # PLAN 4.23c), following the user's choice above for the same case.
 # FREEFORM 25800 -> 26300 on 2026-10-24 for list_directory back in Freeform (the user's call, after the
 # Ornith re-eval found no cost: 28/30 with it, 24/30 without; PLAN 4.23c).
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 26300, "WORKSPACE": 37300}
+# FREEFORM 26300 -> 26800 on 2026-11-01 for delete_file in Freeform (the user's call: asked to delete a
+# file there, the model had no delete tool and reached for kill_process).
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 26800, "WORKSPACE": 37300}
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])

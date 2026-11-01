@@ -539,6 +539,11 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
     except Exception:
         pass
 
+    if match_count == 0:
+        # Nothing by that name is running, so the call can only fail: let it, and the tool's answer
+        # tells the model why, instead of an approval card for nothing. (2026-11-01: asked to delete
+        # testing.txt in Freeform, the model reached for kill_process("testing.txt").)
+        return RiskTier.LOW_RISK, f"No running program is called '{target_str}': nothing to close."
     if match_count > 1:
         return RiskTier.CONFIRMATION_REQUIRED, f"Process name '{target_str}' matches {match_count} running instances. Multi-instance termination requires user confirmation."
 
@@ -770,10 +775,9 @@ def evaluate_tool_permission(
                 effective_tier, custom_reason = RiskTier.CONFIRMATION_REQUIRED, risky
     elif tool_name == "kill_process":
         target = arguments.get("pid_or_name") or arguments.get("pid") or arguments.get("name") or arguments.get("process_name") or ""
-        kp_tier, kp_reason = evaluate_kill_process_risk(target)
-        if kp_tier != RiskTier.LOW_RISK or base_tier == RiskTier.LOW_RISK:
-            effective_tier = kp_tier
-            custom_reason = kp_reason
+        # Every target that could close something asks; only an empty one or one nothing matches
+        # (the call can only fail) runs without a card.
+        effective_tier, custom_reason = evaluate_kill_process_risk(target)
         if str(arguments.get("force", "")).strip().lower() in ("true", "1", "yes"):
             custom_reason = f"{custom_reason} Force-ends it at once: anything unsaved is lost.".strip()
         else:
