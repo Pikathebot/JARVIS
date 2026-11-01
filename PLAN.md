@@ -2775,6 +2775,14 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
    uvicorn (env var) and to `JarvisApiClient` (header); a middleware refuses 8000 requests without it; requests with a
    foreign `Origin` are refused. Tests and the snapshot/eval scripts need a way in (read the token from a file beside
    the backend, or an env override in conftest).
+   **BUILT 2026-11-01, UNVERIFIED ON DEVICE, uncommitted.** `app/api_token.py` (`ApiTokenMiddleware`, outermost): with
+   `JARVIS_API_TOKEN` set, port 8000 needs `X-Jarvis-Token` (401) and refuses an `Origin` outside
+   `allowed_cors_origins` (403); the remote port is left to its own gate; token unset = open (tests, a hand-started dev
+   server, scripts). `App.xaml.cs` makes the token, sets it on both HttpClients, `BackendHost` passes it to uvicorn.
+   A hand-started backend with no token still works with the app; a stale backend holding a *different* token would
+   read as unhealthy. Scripts that call a running :8000 (`rag_name_check.py`) now need the header -- not wired.
+   Tests: `test_api_token.py`. Also found: `test_remote_turn_labels_cards_that_ask_anyway` fails when notepad isn't
+   running (kill_process on a non-running name is LOW_RISK since b4e6ee9) -- fix the test to use a running process name.
 2. **Approval tokens a caller can compute.** `act_<hash>` is a deterministic SHA-256 of tool + normalised args, and
    `ConfirmationRegistry.filter_approvals` lets a token it never issued "pass through untouched". So anything that can
    reach the API can approve an action before Jarvis ever asked. Done means: only tokens the registry issued for that

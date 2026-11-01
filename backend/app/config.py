@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     # The phone/iPad port (PLAN 4.19, app/remote.py): loopback only, reached through `tailscale
     # serve`; whatever arrives here is remote. 0 = no remote listener (tests).
     remote_port: int = Field(default=8005, alias="REMOTE_PORT")
+    # Random per launch, set by the desktop app's BackendHost (app/api_token.py). Empty = port 8000 open.
+    api_token: str = Field(default="", alias="JARVIS_API_TOKEN")
     # A relative sqlite path is anchored to the backend directory (see ``database_url_resolved``),
     # not to the process cwd: the app runs with cwd=backend, pytest with cwd=repo root, and the
     # two would otherwise quietly use two different database files.

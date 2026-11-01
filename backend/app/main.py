@@ -57,6 +57,7 @@ from app.routers.google import router as google_router
 from app.routers.thread import router as thread_router
 from app.routers.remote import router as remote_router
 from app.routers.updates import router as updates_router
+from app.api_token import ApiTokenMiddleware
 from app.remote import RemoteGateMiddleware, is_remote_request, set_remote_turn
 from app.memory.thread import THREAD_SESSION_ID
 from app.thread_live import get_thread_live
@@ -679,6 +680,13 @@ app.include_router(updates_router)
 # the phone app needs, and need a paired device's token (app/remote.py). Outermost, so it runs
 # before CORS and everything else.
 app.add_middleware(RemoteGateMiddleware, remote_port=settings.remote_port)
+# The desktop port needs the launch token (PLAN 4.29 A1). Added last = outermost.
+app.add_middleware(
+    ApiTokenMiddleware,
+    token=settings.api_token,
+    allowed_origins=settings.allowed_cors_origins,
+    remote_port=settings.remote_port,
+)
 _MOBILE_DIR = Path(__file__).resolve().parent / "static" / "m"
 
 

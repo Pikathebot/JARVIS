@@ -7,12 +7,15 @@ namespace Jarvis.Core.Api;
 
 /// <summary>
 /// Typed port of the retired Next.js client's src/lib/api.ts (879 lines, ~45 endpoints). One HttpClient against
-/// http://127.0.0.1:8000, no auth, no CORS concerns (HttpClient is not a browser). Every method
+/// http://127.0.0.1:8000, authenticated by the per-launch X-Jarvis-Token header. Every method
 /// name/shape below mirrors its TS counterpart 1:1 so the mapping stays obvious on review.
 /// </summary>
 public sealed class JarvisApiClient
 {
     public const string DefaultBaseUrl = "http://127.0.0.1:8000";
+
+    /// <summary>Header carrying the per-launch token the backend requires on port 8000.</summary>
+    public const string TokenHeader = "X-Jarvis-Token";
 
     private readonly HttpClient _http;
 

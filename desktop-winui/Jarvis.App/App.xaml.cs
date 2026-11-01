@@ -71,6 +71,10 @@ public partial class App : Application
             // /chat/stream can legitimately run long — its own request bypasses this via a separate
             // HttpClient instance so a slow model doesn't also stall unrelated polling calls.
             var streamHttpClient = new HttpClient { BaseAddress = new Uri(JarvisApiClient.DefaultBaseUrl), Timeout = Timeout.InfiniteTimeSpan };
+            // Port 8000 refuses callers without this launch's token (PLAN 4.29 A1); the backend gets it too.
+            var apiToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            httpClient.DefaultRequestHeaders.Add(JarvisApiClient.TokenHeader, apiToken);
+            streamHttpClient.DefaultRequestHeaders.Add(JarvisApiClient.TokenHeader, apiToken);
 
             _api = new JarvisApiClient(httpClient);
             var chatStreamClient = new ChatStreamClient(streamHttpClient);
@@ -80,7 +84,7 @@ public partial class App : Application
             // windows needn't come before it.
             var repoRoot = FindRepoRoot();
             RepoRoot = repoRoot;
-            _backendHost = new BackendHost(_api, repoRoot);
+            _backendHost = new BackendHost(_api, repoRoot, apiToken);
             var backendReady = _backendHost.EnsureRunningAsync(TimeSpan.FromSeconds(20));
             LogStartup("backend launched");
 
