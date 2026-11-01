@@ -1558,7 +1558,7 @@ class AgentOrchestrator:
             )
         # A token whose confirmation window lapsed does not approve anything: the action is
         # re-evaluated, comes back as confirmation_required, and the prompt says why.
-        approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
+        approved_action_ids, _refused = get_confirmation_registry().filter_approvals(approved_action_ids, active_session_id)
         resolved_project_id, workspace_path, tool_context, effective_mode_str, resolved_chat_mode = (
             self._resolve_turn_scope(project_id, active_session_id, chat_mode)
         )
@@ -2261,7 +2261,7 @@ class AgentOrchestrator:
         notice = compaction.take_notice(active_session_id)
         if notice:
             yield {"event": "compacted", "data": notice}
-        approved_action_ids, _lapsed = get_confirmation_registry().filter_approvals(approved_action_ids)
+        approved_action_ids, _refused = get_confirmation_registry().filter_approvals(approved_action_ids, active_session_id)
 
         parked = paused_turns.take(active_session_id, approved_action_ids)
         if parked is not None:

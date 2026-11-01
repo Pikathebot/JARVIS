@@ -2776,6 +2776,16 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
    reach the API can approve an action before Jarvis ever asked. Done means: only tokens the registry issued for that
    session, unexpired, are accepted; consumed once; a test that a pre-computed token for an un-asked action is refused.
    Check first what still relies on pass-through (the phone, HUD voice "yes", the eval scripts).
+   **DONE 2026-11-01, device-verified** (user: approve/deny work; a forged token sent to the live backend was refused,
+   log "never issued for this session", and came back as a card). `ConfirmationRegistry.filter_approvals(ids, session_id)` accepts only a
+   token it issued for that session, unexpired, and consumes it; anything else is refused and the action comes back as a
+   fresh card (logged "never issued for this session"). Checked first: the desktop app, HUD, phone and
+   `eval_real_chat.py` all send `action_id`s from a `confirmation_required` event, and voice mode's spoken yes never uses
+   tokens, so nothing relied on pass-through. Behaviour change: an approval after a backend restart, or from another
+   session, asks again. Test: a token computed for `git push origin main` that was never asked about ran the command on
+   the old code and now returns the card (`test_a_precomputed_token_for_an_unasked_action_is_asked_about_instead`).
+   Unverified on device: approving from the HUD a card raised in the main window (different sessions) -- if that was a
+   real flow it now re-asks.
 3. **Atomic writes for restart-surviving JSON.** `persona/manager.py`, `routines/scheduler.py` and
    `agent/model_catalog.py` (`data/models.json`) rewrite in place with `write_text`; a crash mid-write corrupts the file.
    `remote.py` already does temp file + `os.replace` -- share one helper and use it everywhere.

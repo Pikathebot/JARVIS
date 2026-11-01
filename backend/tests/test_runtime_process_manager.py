@@ -12,8 +12,15 @@ from app.agent.runtime_process_manager import (
 )
 
 
+from app.agent import runtime_process_manager as _rpm
+
+_real_server_help = _rpm._server_help
+
+
 @pytest.fixture(autouse=True)
-def clean_pm():
+def clean_pm(monkeypatch):
+    # The --help probe would show up as an extra Popen in the spawn tests: answer it as a new build.
+    monkeypatch.setattr(_rpm, "_server_help", lambda exe: "--load-mode")
     reset_runtime_process_manager()
     yield
     reset_runtime_process_manager()
@@ -593,6 +600,7 @@ def test_no_mmap_uses_load_mode_on_builds_that_replaced_the_flag(tmp_path, monke
     after the 2026-10-26 update; older builds and the PrismML fork still need the old flag."""
     from app.agent import runtime_process_manager as rpm
 
+    monkeypatch.setattr(rpm, "_server_help", _real_server_help)
     exe = tmp_path / "llama-server.exe"
     exe.write_text("")
     helps = {"new": "-lm,   --load-mode MODE   model loading mode (default: auto)", "old": "--no-mmap   do not memory-map"}

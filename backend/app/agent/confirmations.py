@@ -131,34 +131,45 @@ class ConfirmationRegistry:
         return entry
 
     def filter_approvals(
-        self, action_ids: Optional[list[str]], now: Optional[float] = None
+        self,
+        action_ids: Optional[list[str]],
+        session_id: Optional[str] = None,
+        now: Optional[float] = None,
     ) -> tuple[list[str], list[str]]:
         """
-        Split a turn's ``approved_action_ids`` into the ones that may run and the ones that
-        lapsed. Approving consumes the ask. Tokens this registry never saw pass through
-        untouched: the permission gate still hashes them, so they cannot approve anything
-        other than the exact action they were minted for.
+        Split a turn's ``approved_action_ids`` into the ones that may run and the refused ones.
+        Only a token this registry issued, for this session, still inside its window, approves
+        anything, and approving consumes it. ``act_<hash>`` is a deterministic hash of the call,
+        so a token that was never asked about is one a caller computed: it is refused, and the
+        action comes back as a fresh ask (PLAN 4.29 A2). So is an approval that arrives after a
+        backend restart -- the user is asked again.
         """
         if not action_ids:
             return [], []
         allowed: list[str] = []
         stale: list[str] = []
+        unknown: list[str] = []
         current = now if now is not None else time.time()
+        session = session_id or "default"
         for action_id in action_ids:
             entry = self._pending.get(action_id)
-            if entry is not None and entry.expires_at <= current:
+            if entry is None:
+                (stale if action_id in self._expired else unknown).append(action_id)
+            elif entry.expires_at <= current:
                 # Lapsed but not yet swept by the watcher -- same answer either way.
                 self._pending.pop(action_id, None)
                 self._expired.append(action_id)
                 stale.append(action_id)
-            elif entry is None and action_id in self._expired:
-                stale.append(action_id)
+            elif session_id is not None and entry.session_id != session:
+                unknown.append(action_id)  # asked in another conversation: stays pending there
             else:
                 self._pending.pop(action_id, None)
                 allowed.append(action_id)
         if stale:
             logger.warning("Refusing %d lapsed confirmation token(s): %s", len(stale), stale)
-        return allowed, stale
+        if unknown:
+            logger.warning("Refusing %d confirmation token(s) never issued for this session: %s", len(unknown), unknown)
+        return allowed, stale + unknown
 
     # --------------------------------------------------------------- expiry
 

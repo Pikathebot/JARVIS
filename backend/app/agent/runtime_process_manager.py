@@ -94,10 +94,13 @@ def _server_help(exe: Path) -> str:
         try:
             out = subprocess.run([str(exe), "--help"], capture_output=True, text=True, timeout=30,
                                  cwd=str(exe.parent), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            _help_cache[key] = (out.stdout or "") + (out.stderr or "")
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            text = (out.stdout or "") + (out.stderr or "")
+        except Exception as exc:  # a probe must never stop a launch; not cached, so the next one retries
             logger.warning("Could not read %s --help: %s", exe, exc)
-            _help_cache[key] = ""
+            return ""
+        if isinstance(text, str):
+            _help_cache[key] = text
+        return text if isinstance(text, str) else ""
     return _help_cache[key]
 
 

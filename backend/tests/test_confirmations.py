@@ -64,9 +64,39 @@ def test_approval_after_the_window_is_refused(registry):
     assert registry.filter_approvals(["act_1"]) == ([], ["act_1"])
 
 
-def test_tokens_this_registry_never_issued_pass_through(registry):
-    # A backend restart forgets its asks; the permission gate still hashes the token.
-    assert registry.filter_approvals(["act_unknown"]) == (["act_unknown"], [])
+def test_a_token_this_registry_never_issued_approves_nothing(registry):
+    # act_<hash> is a deterministic hash of the call, so anyone who can reach the API could compute
+    # one for an action Jarvis never asked about (PLAN 4.29 A2). A restart's forgotten asks too.
+    assert registry.filter_approvals(["act_unknown"], "s1") == ([], ["act_unknown"])
+
+
+def test_a_token_is_good_only_in_the_session_that_was_asked_and_only_once(registry):
+    registry.ask("s1", [pending()], now=1000.0)
+    assert registry.filter_approvals(["act_1"], "other", now=1001.0) == ([], ["act_1"])
+    assert registry.get("act_1") is not None  # still pending where it was asked
+    assert registry.filter_approvals(["act_1"], "s1", now=1001.0) == (["act_1"], [])
+    assert registry.filter_approvals(["act_1"], "s1", now=1002.0) == ([], ["act_1"])
+
+
+@pytest.mark.asyncio
+async def test_a_precomputed_token_for_an_unasked_action_is_asked_about_instead(monkeypatch):
+    from app.agent.permissions import generate_action_id
+    from app.agent.tools import registry as tools
+    from test_orchestrator_tool_turns import ScriptedProvider, _orchestrator
+    from test_taint import _call
+    from unittest.mock import MagicMock
+
+    ran = []
+    monkeypatch.setitem(tools.TOOL_FUNCTIONS, "execute_command", lambda command, **_: ran.append(command) or "ok")
+    args = {"command": "git push origin main"}
+    forged = generate_action_id("execute_command", args)
+    orch = _orchestrator()
+    orch.memory_store = MagicMock()
+    orch.provider = ScriptedProvider([_call("c1", "execute_command", args)])
+    events = [ev async for ev in orch.run_stream("push it", session_id="forged-1", approved_action_ids=[forged])]
+    assert ran == []
+    assert events[-1]["event"] == "confirmation_required"
+    assert [p["action_id"] for p in events[-1]["data"]["pending_confirmations"]] == [forged]
 
 
 def test_re_asking_a_lapsed_action_is_flagged_so_the_prompt_can_say_why(registry):
