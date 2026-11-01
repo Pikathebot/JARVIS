@@ -207,6 +207,11 @@ public sealed partial class HudWindow : Window
         {
             switch (ConfirmationIntentParser.Parse(query))
             {
+                case ConfirmationIntent.Yes when ConfirmationIntentParser.NeedsTap(_pendingConfirmations):
+                    // A spoken yes may not approve a delete, kill or shell command (PLAN 4.29 A4).
+                    DispatcherQueue.TryEnqueue(() => CaptionText.Text = ConfirmationIntentParser.TapPrompt);
+                    await VoiceViewModel.SpeakAsync(ConfirmationIntentParser.TapPrompt);
+                    return;
                 case ConfirmationIntent.Yes:
                     approved = _pendingConfirmations.Select(p => p.ActionId).ToList();
                     _pendingConfirmations.Clear();

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Jarvis.Core.Models;
 
 namespace Jarvis.Core.Voice;
 
@@ -67,6 +68,20 @@ public static class ConfirmationIntentParser
         if (no) return ConfirmationIntent.No;
         return ConfirmationIntent.Unclear;
     }
+
+    /// <summary>Cards a spoken "yes" may not approve (PLAN 4.29 A4): deleting, killing and shell
+    /// commands, plus anything the gate marks HIGH_RISK. Mishearing "yes" from a TV or a
+    /// neighbour must not run these; the answer is a tap on Allow, or typing.</summary>
+    private static readonly HashSet<string> TapOnlyTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "delete_file", "kill_process", "execute_command",
+    };
+
+    public static bool NeedsTap(IEnumerable<PendingConfirmation> pending) =>
+        pending.Any(p => TapOnlyTools.Contains(p.Tool)
+                         || string.Equals(p.RiskTier, "HIGH_RISK", StringComparison.OrdinalIgnoreCase));
+
+    public const string TapPrompt = "That one needs a tap. Press Allow on the card to go ahead.";
 
     private static bool StartsWithAny(string normalized, string[] words)
     {

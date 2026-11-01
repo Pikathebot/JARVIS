@@ -2814,6 +2814,13 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
 4. **Stronger confirmation for destructive voice approvals** (Kimi): a spoken "yes" alone shouldn't approve deleting
    files or killing processes. Proposal: for those tiers, voice needs a repeat ("yes, delete it") or a tap. Needs the
    user's call on how strict.
+   **BUILT 2026-11-01, UNVERIFIED ON DEVICE, uncommitted (user chose: tap only; delete, kill, shell commands, HIGH_RISK).**
+   `ConfirmationIntentParser.NeedsTap` (Jarvis.Core); a *spoken* yes (HUD `HandleCommandAsync`, main window
+   `SendMessageAsync(spoken: true)`) on a pending card with such a tool is heard but not acted on: Jarvis says "That one
+   needs a tap. Press Allow on the card" and the card stays. Typed yes, the Allow button and the phone are unchanged.
+   Voice mode's own steps (`voice_mode.py`) have nothing destructive in the A4 sense: "close it" is a `press_keys`
+   close_window step that already asks first (test_voice_mode), and it can't delete, kill or run a command. No C# test
+   project yet (4.29 B7), so build-verified only.
 5. **Feed Kimi's case list into the real-chat eval:** injected instructions inside fetched pages/documents, tool denial,
    timeout and cancellation, a turn that triggers compaction, thinking on and off, and "I saved it" claims with no tool
    run (the post-turn self-check's target).

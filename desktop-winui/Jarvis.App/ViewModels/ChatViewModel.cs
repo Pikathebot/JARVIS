@@ -87,7 +87,8 @@ public partial class ChatViewModel : ObservableObject
     }
 
     /// <param name="voiceRoute">Voice mode's route for a spoken turn ("chat" | "act"); null when typed.</param>
-    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null, string? voiceRoute = null, List<string>? imagePaths = null)
+    /// <param name="spoken">True when the text came from the microphone: a spoken yes then may not approve a delete, kill or shell command (those need a tap).</param>
+    public async Task SendMessageAsync(string content, List<Attachment>? attachments = null, string? voiceRoute = null, List<string>? imagePaths = null, bool spoken = false)
     {
         var hasAttachments = attachments is { Count: > 0 };
         if (string.IsNullOrWhiteSpace(content) && !hasAttachments)
@@ -105,6 +106,10 @@ public partial class ChatViewModel : ObservableObject
         {
             switch (ConfirmationIntentParser.Parse(content))
             {
+                case ConfirmationIntent.Yes when spoken && ConfirmationIntentParser.NeedsTap(PendingConfirmations):
+                    // Heard, not acted on: the card stays for a tap (or a typed yes).
+                    SpokenFeedback?.Invoke(ConfirmationIntentParser.TapPrompt);
+                    return;
                 case ConfirmationIntent.Yes:
                     await ApproveAllPendingAsync(content).ConfigureAwait(false);
                     return;

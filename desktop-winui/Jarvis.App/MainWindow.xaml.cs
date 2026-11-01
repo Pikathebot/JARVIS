@@ -1313,7 +1313,7 @@ public sealed partial class MainWindow : Window
             App.Log($"voice: ignored a command heard while typing (\"{query}\")");
             return;
         }
-        await ChatViewModel.SendMessageAsync(query, voiceRoute: voiceRoute);
+        await ChatViewModel.SendMessageAsync(query, voiceRoute: voiceRoute, spoken: true);
     }
 
     private async void ToggleRightPanel_Click(object sender, RoutedEventArgs e)
