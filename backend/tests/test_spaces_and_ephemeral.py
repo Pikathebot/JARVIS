@@ -269,3 +269,16 @@ def test_session_lists_keep_the_spaces_apart(tmp_path):
     assert default_ws == {"ws-unscoped"}
     assert everything_but_freeform == {"ws-unscoped"}
     assert freeform == {"ff-1"}
+
+
+@pytest.mark.parametrize("ephemeral,shows_reply", [(True, False), (False, True)])
+def test_an_ephemeral_turns_reply_never_reaches_the_log(caplog, ephemeral, shows_reply):
+    from types import SimpleNamespace
+
+    from app.agent.orchestrator import AgentOrchestrator
+
+    with caplog.at_level("INFO", logger="jarvis.agent.orchestrator"):
+        AgentOrchestrator._log_model_reply(
+            SimpleNamespace(is_ephemeral=ephemeral), "m", "my secret reply", None
+        )
+    assert ("my secret reply" in caplog.text) is shows_reply

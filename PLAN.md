@@ -2835,6 +2835,15 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
 6. **Backup and restore.** One action exports chats (SQLite online backup, never a file copy of the live DB), projects,
    memories, `data/*.json` and settings; restore onto a clean checkout is tested, not assumed. Indexes (RAG) are rebuilt,
    not backed up. Also check that ephemeral turns leave nothing in `backend.log` or payload dumps.
+   **BUILT 2026-11-01, uncommitted; build/test-verified only.** `app/backup.py` (`create_backup`, `restore_backup`):
+   one zip with the DB (SQLite online backup, WAL-safe), repo-root `data/` (not `webview_cache`; Google token/client
+   secret and the push key only with `--include-secrets`), workspace files and artifacts (not `indexes/`) and the notes
+   folder. Restore refuses to overwrite unless told, refuses entries that escape their folder, integrity-checks the DB.
+   `scripts/backup.py backup|restore` (restore with Jarvis closed), `POST /api/backup` -> `backups/` (gitignored), not on
+   the phone port. A real backup of this machine ran (24 files, 7 MB); restore was only tested onto temp dirs
+   (`test_backup.py`), not onto the live checkout. No UI button yet. Ephemeral: the memory/PROJECT.md captures were
+   already skipped; the one leak was `_log_model_reply` putting 160 chars of the reply in `backend.log` -- fixed and
+   tested. Payload dumps only exist when `LLAMA_PAYLOAD_DUMP_DIR` is set (a debug switch, left as is).
 7. **First C# tests.** `Jarvis.Core` has none. Start a small test project (not in the App build): SSE reader with events
    split at arbitrary byte boundaries, malformed/duplicated events, a confirmation that ends the stream without `done`,
    and DTOs round-tripping real backend JSON under `JarvisJson.Options`.

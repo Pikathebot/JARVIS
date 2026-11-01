@@ -1365,8 +1365,7 @@ class AgentOrchestrator:
                 names.append(getattr(t, "__name__", str(t)))
         return names
 
-    @staticmethod
-    def _log_model_reply(model: str, content: str, tool_calls: Optional[list[Any]]) -> None:
+    def _log_model_reply(self, model: str, content: str, tool_calls: Optional[list[Any]]) -> None:
         called = [
             (tc.get("function", {}).get("name") or tc.get("name") or "?") if isinstance(tc, dict) else str(tc)
             for tc in (tool_calls or [])
@@ -1374,6 +1373,8 @@ class AgentOrchestrator:
         head = (content or "").strip().replace("\n", " ")
         if len(head) > 160:
             head = head[:160] + "..."
+        if self.is_ephemeral:  # off the record: nothing of the reply reaches backend.log
+            head = "<ephemeral>"
         logger.info("Model '%s' replied: tool_calls=%s content=%r", model, called, head)
 
     def _prefer_loaded_slot(

@@ -57,6 +57,7 @@ from app.routers.google import router as google_router
 from app.routers.thread import router as thread_router
 from app.routers.remote import router as remote_router
 from app.routers.updates import router as updates_router
+from app.routers.backup import router as backup_router
 from app.api_token import ApiTokenMiddleware
 from app.remote import RemoteGateMiddleware, is_remote_request, set_remote_turn
 from app.memory.thread import THREAD_SESSION_ID
@@ -677,6 +678,7 @@ app.include_router(feedback_router)
 app.include_router(google_router)
 app.include_router(remote_router)
 app.include_router(updates_router)
+app.include_router(backup_router)
 
 # Phone and iPad (PLAN 4.19): requests on the remote port are marked remote, gated to the routes
 # the phone app needs, and need a paired device's token (app/remote.py). Outermost, so it runs
