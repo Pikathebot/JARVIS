@@ -167,8 +167,8 @@ mmap+mlock|dio) and the old one is refused, so every ladder rung failed; the use
 the comparison (Ornith 32k, real command, two runs each, port 8011): none 14.5-14.8 s load, 6.66 GB private, 0.94 GB
 working set; mmap 17.8-18.0 s, 6.25 GB private, 3.6-3.8 GB working set; VRAM ~5.1 GB and decode ~31 tok/s both. So
 mmap frees only 0.4 GB of commit and costs 3 s and 2.7 GB resident: the 6.6 GB is not weights in RAM but tracks the
-VRAM allocated (likely WDDM backing video memory with commit; unconfirmed). Unverified on device: the app launching
-the model with the fix.
+VRAM allocated (likely WDDM backing video memory with commit; unconfirmed). Seen on device 11-01: the model loads,
+no more RAM spiking (user).
 
 ### 4.0 Startup: done for now
 
@@ -2820,7 +2820,7 @@ from the fast slot for leaving no headroom (4.14), and Spark is about the same s
 override for the eval's backend (env for the isolated process only, never the user's selection). Check the chat
 template's tool calling and `<think>` handling before scoring. Jarvis closed for every run.
 
-### 4.31 Settings → Updates: llama.cpp and the voice packages (raised by the user 2026-11-01) -- BUILT, unverified on device
+### 4.31 Settings → Updates: llama.cpp and the voice packages (raised by the user 2026-11-01) -- DONE (user: "update works good", 11-01)
 **The ask (user):** "llama.cpp was updated by me, so add stuff in the frontend settings to update the tools that we
 have." Agreed: llama.cpp plus the Python voice packages; check, then the user presses Update; Roll back restores.
 **Built:** `app/updates/` (`llama_cpp.py`, `packages.py`, `manager.py`), `routers/updates.py` (`/api/updates`, not on
