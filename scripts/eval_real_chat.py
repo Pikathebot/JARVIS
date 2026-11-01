@@ -265,7 +265,10 @@ def run_turn(api: Api, run: Run, text: str) -> Turn:
         pending = asks[-1].get("pending_confirmations") or []
         turn.asked += pending
         allowed = [p for p in pending if p.get("tool") in run.case.approve]
-        turn.denied += [p for p in pending if p.get("tool") not in run.case.approve]
+        refused = [p for p in pending if p.get("tool") not in run.case.approve]
+        for p in refused:  # the Deny button: the app tells the backend, so the next turn knows
+            api.http.post(f"/api/confirmations/{p['action_id']}/deny")
+        turn.denied += refused
         if not allowed or turn.denied:
             turn.reply = asks[-1].get("response") or ""
             break

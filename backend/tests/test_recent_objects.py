@@ -48,3 +48,27 @@ def test_the_block_rides_in_the_turn_context_only_when_there_is_one():
     assert "RECENT ACTIONS" not in build_turn_context("")
     block = "RECENT ACTIONS (from real tool results, newest first):\n- 1 turn ago: write_file a.txt (ok)"
     assert block in build_turn_context("", recent=block)
+
+
+def test_a_declined_card_is_remembered_as_not_done():
+    sid = "ro-declined"
+    ro.forget(sid)
+    ro.begin_turn(sid)
+    ro.record_declined(sid, "delete_file", {"file_path": "important.txt"})
+    ro.begin_turn(sid)
+    assert "- 1 turn ago: delete_file important.txt (declined by the user, not done)" in ro.describe(sid)
+
+
+def test_deny_endpoint_records_the_declined_action():
+    from fastapi.testclient import TestClient
+    from app.agent.confirmations import get_confirmation_registry
+    from app.main import app
+
+    sid = "ro-deny-endpoint"
+    ro.forget(sid)
+    ro.begin_turn(sid)
+    entry = get_confirmation_registry().ask(
+        sid, [{"action_id": "act_deny_test", "tool": "delete_file", "args": {"file_path": "x.txt"}}])[0]
+    assert TestClient(app).post(f"/api/confirmations/{entry.action_id}/deny").status_code == 200
+    ro.begin_turn(sid)
+    assert "delete_file x.txt (declined by the user, not done)" in ro.describe(sid)

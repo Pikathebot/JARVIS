@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.agent import paused_turns
+from app.agent import paused_turns, recent_objects
 from app.agent.confirmations import get_confirmation_registry
 
 logger = logging.getLogger("jarvis.routers.confirmations")
@@ -38,4 +38,5 @@ async def deny(action_id: str) -> dict[str, Any]:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No pending confirmation with id {action_id}.",
         )
+    recent_objects.record_declined(entry.session_id, entry.tool, entry.args)
     return {"denied": entry.to_dict()}

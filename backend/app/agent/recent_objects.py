@@ -35,6 +35,7 @@ class Entry:
     tool: str
     obj: str
     ok: bool
+    declined: bool = False
 
 
 @dataclass
@@ -92,6 +93,16 @@ def record(session_id: str, item: dict[str, Any]) -> None:
         s.entries.append(Entry(s.turn, tool, _object_of(tool, args), _succeeded(item)))
 
 
+def record_declined(session_id: str, tool: str, args: dict[str, Any] | None) -> None:
+    """The user pressed Deny on a card: the action did not happen, and a later "did you do it?"
+    has to be answerable without asking for the same approval again."""
+    if not tool:
+        return
+    with _lock:
+        s = _sessions.setdefault(session_id, _Session())
+        s.entries.append(Entry(s.turn, tool, _object_of(tool, args or {}), False, declined=True))
+
+
 def describe(session_id: str) -> str:
     """The block for the turn context, or "" when nothing recent happened."""
     with _lock:
@@ -107,7 +118,8 @@ def describe(session_id: str) -> str:
         ago = current - e.turn
         when = "this turn" if ago == 0 else ("1 turn ago" if ago == 1 else f"{ago} turns ago")
         obj = f" {e.obj}" if e.obj else ""
-        lines.append(f"- {when}: {e.tool}{obj} ({'ok' if e.ok else 'failed'})")
+        outcome = "declined by the user, not done" if e.declined else ("ok" if e.ok else "failed")
+        lines.append(f"- {when}: {e.tool}{obj} ({outcome})")
     return "\n".join(lines)
 
 
