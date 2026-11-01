@@ -16,6 +16,8 @@ CLUTTER_DIRS = frozenset({
 })
 
 SNIFF_BYTES = 8192
+# Tab, LF, CR, printable ASCII, and every byte >= 128 (UTF-8 and friends) count as text.
+_TEXT_LIKE_BYTES = bytes([9, 10, 13]) + bytes(range(32, 127)) + bytes(range(128, 256))
 
 
 def is_binary(path: Path) -> bool:
@@ -29,7 +31,8 @@ def is_binary(path: Path) -> bool:
         return False
     if b"\x00" in head:
         return True
-    text_like = sum(1 for b in head if b in (9, 10, 13) or 32 <= b < 127 or b >= 128)
+    # translate() runs in C; counting byte by byte in Python was ~100x slower per file.
+    text_like = len(head) - len(head.translate(None, _TEXT_LIKE_BYTES))
     return text_like / len(head) < 0.7
 
 
