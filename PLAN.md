@@ -161,7 +161,8 @@ loop (`run`) logs no nets; reloaded history has no flag. Next in (1): 1a real-ch
 first), then 1c mmap.
 **1c mmap -- measured 2026-11-01, kept off.** First found: since the user's llama.cpp update (10-26 18:13, build
 11899) every main launch died on "invalid argument: --no-mmap" -- the flag became `--load-mode` (auto|none|mmap|mlock|
-mmap+mlock|dio) and the old one is refused, so every ladder rung failed. Fixed: `no_mmap_flags()` reads the exe's
+mmap+mlock|dio) and the old one is refused, so every ladder rung failed; the user worked around it with
+`LLAMA_USE_MMAP=true` in `backend/.env` (no flag sent), set back to false on 11-01 once the fix was in. Fixed: `no_mmap_flags()` reads the exe's
 `--help` (cached by mtime) and passes `--load-mode none`, or `--no-mmap` to older builds and the PrismML fork. Then
 the comparison (Ornith 32k, real command, two runs each, port 8011): none 14.5-14.8 s load, 6.66 GB private, 0.94 GB
 working set; mmap 17.8-18.0 s, 6.25 GB private, 3.6-3.8 GB working set; VRAM ~5.1 GB and decode ~31 tok/s both. So
