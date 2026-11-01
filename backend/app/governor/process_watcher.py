@@ -16,6 +16,7 @@ class WatchedProcess:
     match: str
     match_type: str = "exact"  # "exact" | "contains" (case-insensitive)
     label: str = ""
+    game: bool = False  # a game: launching it through Jarvis turns Game mode on first (PLAN 4.16b)
 
     def matches(self, process_name: str) -> bool:
         if not process_name:
@@ -58,7 +59,8 @@ def load_watchlist(config_path: Optional[Union[str, Path]] = None) -> list[Watch
                             match_type = item.get("match_type", "exact")
                             label = item.get("label", match)
                             watchlist.append(
-                                WatchedProcess(match=match, match_type=match_type, label=label)
+                                WatchedProcess(match=match, match_type=match_type, label=label,
+                                               game=bool(item.get("game", True)))
                             )
             logger.info("Loaded %d watched process rules (including defaults) from %s", len(watchlist), path_obj)
         except Exception as e:

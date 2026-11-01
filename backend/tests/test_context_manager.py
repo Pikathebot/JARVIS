@@ -360,7 +360,7 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # Ornith re-eval found no cost: 28/30 with it, 24/30 without; PLAN 4.23c).
 # FREEFORM 26300 -> 26800 on 2026-11-01 for delete_file in Freeform (the user's call: asked to delete a
 # file there, the model had no delete tool and reached for kill_process).
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 26800, "WORKSPACE": 37300}
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 27100, "WORKSPACE": 37600}  # +300 on 2026-11-01 for enter_game_mode (the user's call)
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])

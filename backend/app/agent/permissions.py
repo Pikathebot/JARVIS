@@ -67,6 +67,8 @@ BASE_TOOL_RISK_MAP: dict[str, RiskTier] = {
     # Phase 3: Windows OS Power Controls & Desktop Toast Alerts
     "launch_app": RiskTier.CONFIRMATION_REQUIRED,
     "focus_app": RiskTier.LOW_RISK,
+    # Parks a request; Game mode comes on after the reply. The user said it needn't ask first.
+    "enter_game_mode": RiskTier.LOW_RISK,
     "set_volume": RiskTier.LOW_RISK,
     "set_mute": RiskTier.LOW_RISK,
     "media_control": RiskTier.LOW_RISK,
@@ -126,8 +128,7 @@ REMOTE_ASKS: dict[str, str] = {
     "press_keys": "presses keys on your PC, and you can't see the screen from here.",
     "scroll": "scrolls a window on your PC, and you can't see the screen from here.",
     "focus_app": "switches apps on your PC, and you can't see the screen from here.",
-    "launch_app": "opens an app on your PC, and you can't see the screen from here.",
-    "set_clipboard": "changes your PC's clipboard.",
+    "launch_app": "opens an app on your PC, and you can't see the screen from here.",    "set_clipboard": "changes your PC's clipboard.",
     "write_file": "changes a file on your PC.",
     "patch_file": "changes a file on your PC.",
 }

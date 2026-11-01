@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from typing import Optional, Any
 
+from app.governor.game_mode import game_mode, turn_in_progress
+
 try:
     import psutil
     HAS_PSUTIL = True
@@ -297,6 +299,31 @@ def launch_app(name_or_path: str) -> str:
             "(not on PATH, not in the Start Menu, and not a known system app)."
         )
 
+    game = game_mode.game_for(name_or_path, target)
+    if game and turn_in_progress.get() and not game_mode.active:
+        # A game wants the GPU and RAM free before it starts, and the model can't unload itself
+        # mid-reply: park the launch until the turn ends (game_mode.run_after_turn).
+        game_mode.request_after_turn(f"launching {game}", lambda: _start(name_or_path, target))
+        return (f"Not started yet: {game} is a game, so Game mode comes on first to free the GPU. It "
+                f"turns on as soon as this reply ends and {game} starts right after. Tell the user that; "
+                "they say \"game mode off\" when they're done.")
+    return _start(name_or_path, target)
+
+
+def enter_game_mode() -> str:
+    """
+    Turn on Game mode after this reply: unloads the model until the user says "game mode off". Only when they say they're about to play.
+    """
+    if not turn_in_progress.get():
+        return "Error: Game mode can only be turned on from a chat turn."
+    if game_mode.active:
+        return "Game mode is already on."
+    game_mode.request_after_turn("asked by the user")
+    return ("Game mode turns on as soon as this reply ends. Now write your reply: tell the user "
+            "the model unloads right after it, and that they say \"game mode off\" when they're done.")
+
+
+def _start(name_or_path: str, target: str) -> str:
     try:
         if is_uri_or_shortcut(target):
             # Shortcuts and URI schemes go through the shell, exactly as a Start Menu click would.

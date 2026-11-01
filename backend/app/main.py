@@ -28,7 +28,7 @@ from app.governor.resource_governor import (
     GovernorEvent,
 )
 from app.governor.process_watcher import ProcessWatcher
-from app.governor.game_mode import command as game_mode_command, game_mode
+from app.governor.game_mode import command as game_mode_command, game_mode, turn_in_progress as game_turn_in_progress
 from app.memory.store import MemoryStore
 from app.memory.ephemeral import EphemeralMemoryStore, ephemeral_registry
 from app.memory.compactor import ContextCompactor
@@ -288,6 +288,8 @@ game_mode.configure(
     release=release_for_game_mode,
     vram_used_mb=lambda: governor.collect_metrics().vram_used_mb,
 )
+game_mode.set_games((rule.label or rule.match, rule.matches)
+                    for rule in process_watcher.watchlist if rule.game)
 
 async def release_for_voice_packages() -> None:
     """A tools/laya-venv update: Bark and Laya stopped, so their packages can be replaced."""
@@ -1305,6 +1307,7 @@ async def chat(request: ChatRequest):
         mcp_manager=mcp_manager,
     )
 
+    game_turn_in_progress.set(True)
     try:
         async with governor.activity(ActivityType.INFERENCING, label=request.session_id or "chat_turn"):
             result = await orchestrator.run(
@@ -1319,6 +1322,7 @@ async def chat(request: ChatRequest):
                 attachments=request.attachments,
                 voice_route=request.voice_route,
             )
+        await game_mode.run_after_turn()
 
         return ChatResponse(
             response=result.response,
@@ -1341,6 +1345,8 @@ async def chat(request: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Chat execution error: {str(e)}"
         )
+    finally:
+        game_mode.drop_after_turn()
 
 
 @app.post("/chat/stream")
@@ -1394,6 +1400,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
     async def event_generator():
         set_remote_turn(remote)
+        game_turn_in_progress.set(True)
         publish("turn_start", {"message": active_message, "resumed": bool(request.approved_action_ids),
                                "new_topic": request.new_topic, "remote": remote})
         try:
@@ -1417,12 +1424,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     publish(event_type, data)
                     data_json = json.dumps(data)
                     yield f"event: {event_type}\ndata: {data_json}\n\n"
+            # The reply is out: now Game mode can unload the model, and a parked game launch starts.
+            await game_mode.run_after_turn()
         except Exception as e:
             logger.error("Error in streaming response generator: %s", e)
             publish("error", {"error": str(e)})
             err_data = json.dumps({"error": str(e)})
             yield f"event: error\ndata: {err_data}\n\n"
         finally:
+            game_mode.drop_after_turn()  # a stopped or failed turn asks for nothing
             publish("turn_end", {})  # also when the sender stopped it (the generator is closed)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

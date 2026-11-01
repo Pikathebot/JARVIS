@@ -2020,7 +2020,14 @@ pill and tray item are build-verified only.
 (a) `launch_app` of a watchlisted game enters it, and (b) a tool for "free up the GPU / I'm about to play" asks.
 Both switch *after the turn ends* (the model can't unload itself mid-reply); turning it off stays the code command,
 since no model is loaded then. Today only an exact switch phrase, the popover, the tray or the HUD can toggle it.
-**Not built (next, with the user):** `launch_app` entering Game mode for a watchlisted game (the model is
+**BUILT 2026-11-01, uncommitted, unverified on device:** (a) `launch_app` of a watchlisted *game* (`WatchedProcess.game`,
+default True for `governor_watchlist.json` entries, False for the built-in engines/editors) inside a chat turn parks
+the launch; (b) new tool `enter_game_mode` (LOW_RISK, no card) parks a request. `/chat` and `/chat/stream` run
+`game_mode.run_after_turn()` once the reply is out: Game mode enters, then the parked launch starts; a stopped or
+failed turn drops it (`drop_after_turn`). `turn_in_progress` (a ContextVar) keeps voice mode's direct `launch_app`
+launching at once. Tests: `test_game_mode_by_model.py`. **Head budget:** the tool pushes the always-on head to
+26,988 / 37,562 chars; caps raised to 27,100 / 37,600 (user, 11-01).
+~~**Not built (next, with the user):** `launch_app` entering Game mode for a watchlisted game (the model is
 mid-turn when the tool runs -- it must switch after the turn ends); the rule for unlisted games (card
 >= ~90% and external growth >= ~256 MiB); RAM/commit in the governor's picture. Measure on device first:
 RAM and commit charge with Jarvis open in Game mode (the WinUI app + backend stay resident).
@@ -2775,7 +2782,7 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
    uvicorn (env var) and to `JarvisApiClient` (header); a middleware refuses 8000 requests without it; requests with a
    foreign `Origin` are refused. Tests and the snapshot/eval scripts need a way in (read the token from a file beside
    the backend, or an env override in conftest).
-   **BUILT 2026-11-01, UNVERIFIED ON DEVICE, uncommitted.** `app/api_token.py` (`ApiTokenMiddleware`, outermost): with
+   **DONE 2026-11-01 (e2bd33f), device-verified: the app behaves as before.** `app/api_token.py` (`ApiTokenMiddleware`, outermost): with
    `JARVIS_API_TOKEN` set, port 8000 needs `X-Jarvis-Token` (401) and refuses an `Origin` outside
    `allowed_cors_origins` (403); the remote port is left to its own gate; token unset = open (tests, a hand-started dev
    server, scripts). `App.xaml.cs` makes the token, sets it on both HttpClients, `BackendHost` passes it to uvicorn.

@@ -12,7 +12,7 @@ from app.agent.tools.research import research
 from app.agent.tools.write_file import write_file
 from app.agent.tools.patch_file import patch_file
 from app.agent.tools.file_search import find_files, grep_in_files
-from app.agent.tools.app_control import launch_app, focus_app
+from app.agent.tools.app_control import launch_app, focus_app, enter_game_mode
 from app.agent.tools.media_control import set_volume, set_mute, media_control
 from app.agent.tools.input_control import type_text, press_keys, scroll
 from app.agent.tools.clipboard_control import get_clipboard, set_clipboard
@@ -52,6 +52,7 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     # Phase 3 OS Tools
     "launch_app": launch_app,
     "focus_app": focus_app,
+    "enter_game_mode": enter_game_mode,
     "set_volume": set_volume,
     "set_mute": set_mute,
     "media_control": media_control,
@@ -110,6 +111,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     # Phase 3 OS Tools
     launch_app,
     focus_app,
+    enter_game_mode,
     set_volume,
     set_mute,
     media_control,
@@ -311,6 +313,10 @@ class RemindersArgs(BaseModel):
     reminder_id: str = Field(default="", description="For cancel: the reminder's id from the list")
 
 
+class EnterGameModeArgs(BaseModel):
+    pass
+
+
 class GetSystemStatusArgs(BaseModel):
     about: Optional[Literal["games", "apps"]] = Field(default=None, description="List installed games or apps instead")
 
@@ -436,6 +442,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     # Phase 3 OS Tools
     "launch_app": LaunchAppArgs,
     "focus_app": FocusAppArgs,
+    "enter_game_mode": EnterGameModeArgs,
     "set_volume": SetVolumeArgs,
     "set_mute": SetMuteArgs,
     "media_control": MediaControlArgs,

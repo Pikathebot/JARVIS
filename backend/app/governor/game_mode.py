@@ -12,11 +12,14 @@ backend starts with it off.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 import time
 from contextlib import contextmanager
-from typing import Any, Awaitable, Callable, Iterator, Optional
+from contextvars import ContextVar
+from typing import Any, Awaitable, Callable, Iterable, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,8 @@ class GameMode:
         self._resume: Callable[[], None] = lambda: None
         self._release: Callable[[], Awaitable[list[str]]] = _nothing_to_release
         self._vram_used_mb: Callable[[], Optional[float]] = lambda: None
+        self._after_turn: list[tuple[str, Optional[Callable[[], str]]]] = []
+        self._games: list[tuple[str, Callable[[str], bool]]] = []
 
     def configure(self, *, pause: Callable[[], None], resume: Callable[[], None],
                   release: Callable[[], Awaitable[list[str]]],
@@ -104,6 +109,45 @@ class GameMode:
         logger.info("Game mode OFF: models load again on demand.")
         return self.status()
 
+    # --- the model asking for Game mode (PLAN 4.16b) ----------------------------------------------
+    # A tool runs while the model is mid-reply, and Game mode unloads that model, so a request is
+    # parked and honoured when the turn is over (``run_after_turn``, called by the chat endpoints,
+    # which are also what set ``turn_in_progress``). A launch parked here starts only after the
+    # GPU is free: God of War III needed that, and failed within a second when it was not.
+
+    def request_after_turn(self, reason: str, launch: Optional[Callable[[], str]] = None) -> None:
+        self._after_turn.append((reason, launch))
+
+    def drop_after_turn(self) -> None:
+        self._after_turn.clear()
+
+    async def run_after_turn(self) -> None:
+        requests, self._after_turn = self._after_turn, []
+        if not requests:
+            return
+        logger.info("Game mode requested by the model: %s", "; ".join(r for r, _ in requests))
+        await self.enter()
+        for reason, launch in requests:
+            if launch is None:
+                continue
+            try:
+                logger.info("Game mode: %s", await asyncio.to_thread(launch))
+            except Exception:
+                logger.exception("Game mode: the launch parked for '%s' failed", reason)
+
+    def set_games(self, games: Iterable[tuple[str, Callable[[str], bool]]]) -> None:
+        """(label, matches(process or app name)) for each watchlisted game."""
+        self._games = list(games)
+
+    def game_for(self, name_or_path: str, target: str) -> Optional[str]:
+        """The watchlisted game's label when a launch of *name_or_path* (resolved to *target*)
+        would start one, else None."""
+        wanted = {_stem(name_or_path), _stem(target)}
+        for label, matches in self._games:
+            if _stem(label) in wanted or matches(os.path.basename(target)) or matches(os.path.basename(name_or_path)):
+                return label
+        return None
+
     async def reply_for(self, message: str) -> Optional[str]:
         """The answer in code for a chat/voice message while Game mode matters, else None (the
         turn goes to the model as usual)."""
@@ -123,6 +167,15 @@ class GameMode:
         if self.active:
             return _IDLE_REPLY
         return None
+
+
+def _stem(name: str) -> str:
+    base = os.path.basename((name or "").strip().strip('"')).lower()
+    return base[:-4] if base.endswith((".exe", ".lnk")) else base
+
+
+# Set by the chat endpoints around a turn: only a launch inside one can wait for the turn's end.
+turn_in_progress: ContextVar[bool] = ContextVar("game_mode_turn_in_progress", default=False)
 
 
 async def _nothing_to_release() -> list[str]:
