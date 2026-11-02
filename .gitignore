@@ -71,6 +71,7 @@ backend/files/
 # A workspace's own bookkeeping (PROJECT.md, uploads, backups) -- the Default Workspace points at backend/
 .jarvis/
 scripts/eval_results/
+scripts/soak_results/
 
 # Backups made by scripts/backup.py and POST /api/backup (PLAN 4.29 B6)
 backups/

@@ -2625,7 +2625,7 @@ Record (what went wrong, the fixes, the Ornith re-eval of `list_directory`, the 
 - The Freeform eval runs every task with thinking off, while the live main model thinks every turn.
 - `get_system_status(about='games')` lists Steam apps (Blender, Wallpaper Engine) as games: Steam's manifests don't say.
 
-### 4.26 PROJECT.md not updated, and llama-server's RAM (device report 2026-10-25) -- DONE 2026-10-25 (a8261b7), capture device-verified; RAM over a long session not yet
+### 4.26 PROJECT.md not updated, and llama-server's RAM (device report 2026-10-25) -- DONE 2026-10-25 (a8261b7), capture device-verified; RAM over a long session: 3 h soak flat (11-02, 4.29 B8)
 
 The user lined up "first Orver's lore, next the battle system" and said "we have also decided that songs carry both
 the cutscene and the story"; two tries, PROJECT.md unchanged. Ornith's thinking planned the `project_state` call, read
@@ -2649,8 +2649,9 @@ the design document first and never came back to it. Meanwhile the governor unlo
   (commit 30.2 of 32.2 GB) with Claude, Brave and VS Code open. Its 6.6 GB at load with the weights on the GPU is
   `--no-mmap` host memory, committed but not resident -- a later look (mmap) could free most of it. (11-01: it
   doesn't; mmap frees 0.4 GB -- see 1c above.)
-- Unverified on device: the capture writing the right lines on a real message; RAM staying down over a long session;
-  turn latency after narrated turns. Takes a model restart (next launch of the app).
+- Unverified on device: the capture writing the right lines on a real message; turn latency after narrated turns.
+  Takes a model restart (next launch of the app). RAM over a long session: a 3 h soak (11-02, 4.29 B8) held flat,
+  llama-server 8.2-9.3 GB private, backend 1.4 GB.
 
 ### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
 **The ask (user):** "Since I am a college student -- integration of competitive programming websites like LeetCode and
@@ -2858,6 +2859,18 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
    from a live turn.
 8. **A long soak.** Hours of chat, voice, RAG, compaction and eviction with RAM commit/working set logged, not only
    VRAM -- the open item in 4.26 ("RAM over a long session not yet"). Needs the user to leave it running.
+   **DONE 2026-11-02 (3 h, no leak found); results in `scripts/soak_results/20261102-071003/`, git-ignored, summary.txt
+   + samples.csv.** `scripts/soak.py --hours 3` starts its own isolated backend on :8010 (`eval_real_chat.Backend`, temp
+   state, Jarvis closed) and mixes long non-ephemeral chat (grows toward compaction), ephemeral chat, RAG over a copy
+   of CLAUDE.md and PLAN.md, and cancelled turns; every 30 s it logs private bytes of the backend and each child, system
+   free RAM, commit and VRAM. 458 turns, 1 error: a `ReadError` ("connection forcibly closed") on one long-chat turn,
+   nothing in `backend.log` around it, cause unknown. p50/p95: long chat 19.2/73.5 s, ephemeral 6.8/30.1, RAG
+   16.3/45.4, cancel 1.2/1.6. Private memory, first vs last quarter: backend 1363 -> 1387 MB, llama-server :8001
+   8616 -> 8755 (bounces 8.2-9.3 GB, peak 9.6, no trend after the first hour), embedder 286 -> 283. System: free RAM
+   mostly 1.3-2.4 GB with a minimum of 463 MB; commit 0.9 -> 2.2 GB in two steps, not a steady climb; VRAM at most
+   6.5 of 8 GB. So: no leak in 3 h, but the whole stack leaves little RAM headroom on 16 GB (Windows still showed 85%
+   used right after the run). Not covered: voice mode and governor eviction (do by hand), runs longer than 3 h.
+   Follow-ups: a short run with voice mode on; work out what else holds the RAM when Jarvis is idle.
 
 **C. Proposed after (4) student integrations -- the user hasn't placed these**
 9. **Read the focused window through Windows UI Automation** ("summarize this error" without a screenshot): a
