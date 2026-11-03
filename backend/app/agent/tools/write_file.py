@@ -85,6 +85,12 @@ def write_file(
             result += f" The previous version is saved as '{shown(backup, ws_root)}'."
         checked = check_written(path, content_str)
         return f"{result} {checked}" if checked else result
+    except PermissionError as e:
+        logger.error("Failed to write file '%s': %s", file_path, e)
+        if document is not None:
+            return (f"Error: '{file_path}' is open in another program (Word or Excel?) or read-only, so it can't be replaced. "
+                    "Ask the user to close it, then try again.")
+        return f"Error writing file '{file_path}': {str(e)}"
     except Exception as e:
         logger.error("Failed to write file '%s': %s", file_path, e)
         return f"Error writing file '{file_path}': {str(e)}"

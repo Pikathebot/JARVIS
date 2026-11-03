@@ -240,3 +240,117 @@ def test_build_document_rejects_unknown_extensions_and_huge_input():
         build_document(".pptx", "x")
     with pytest.raises(BuildError, match="limit"):
         build_document(".docx", "x" * (doc_writers.MAX_CONTENT_CHARS + 1))
+
+
+# ---------------- read -> change -> write: what read_file prints is accepted back ----------------
+def _round_trip(ws: Path, name: str):
+    """(first read, second read) after writing the first read back to the same file."""
+    first = _read(ws, name)
+    out = _write(ws, name, first)
+    assert out.startswith("Successfully wrote"), out
+    return first, _read(ws, name)
+
+
+def test_word_round_trip_is_stable_and_keeps_paragraphs_separate(tmp_path):
+    _write(tmp_path, "d.docx", DOC)
+    first, second = _round_trip(tmp_path, "d.docx")
+    assert first == second
+    assert "Some text between." in second and "Prepared for Autumn" in second     # one paragraph per line, none merged
+    assert second.count("[Word document]") == 1                                       # the header is not written in as text
+
+
+def test_excel_round_trip_keeps_rows_formulas_hidden_flag_and_gaps(tmp_path):
+    # a hidden sheet, an empty row 3, a formula that carries a saved value (what Excel writes), a quoted comma
+    from tests.test_doc_readers import R, S, _rels
+    parts = {
+        "xl/workbook.xml": (f'<workbook {S} {R}><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/>'
+                            '<sheet name="Old" sheetId="2" state="hidden" r:id="rId2"/></sheets></workbook>'),
+        "xl/_rels/workbook.xml.rels": _rels(("rId1", "worksheets/sheet1.xml"), ("rId2", "worksheets/sheet2.xml")),
+        "xl/worksheets/sheet1.xml": (f'<worksheet {S}><sheetData>'
+                                     '<row r="1"><c r="A1" t="inlineStr"><is><t>Item, big</t></is></c><c r="B1"><v>2</v></c></row>'
+                                     '<row r="4"><c r="A4" t="inlineStr"><is><t>Sum</t></is></c><c r="B4"><f>SUM(B1:B1)</f><v>2</v></c></row>'
+                                     '</sheetData></worksheet>'),
+        "xl/worksheets/sheet2.xml": f'<worksheet {S}><sheetData/></worksheet>',
+    }
+    with zipfile.ZipFile(tmp_path / "x.xlsx", "w") as zf:
+        for n, d in parts.items():
+            zf.writestr(n, d)
+    first = _read(tmp_path, "x.xlsx")
+    assert "=SUM(B1:B1) -> 2" in first and "(hidden)" in first and "4: Sum" in first and "\n2:" not in first
+    out = _write(tmp_path, "x.xlsx", first)
+    assert "2 sheets, 2 rows, 1 formula" in out
+    sheet1 = _parts(tmp_path / "x.xlsx")["xl/worksheets/sheet1.xml"]
+    assert '<row r="4">' in sheet1 and '<c r="B4"><f>SUM(B1:B1)</f></c>' in sheet1   # row 4 stayed row 4; no "-> 2" in the formula
+    assert "<row r=\"2\">" not in sheet1 and "Item, big" in sheet1                    # the gap stayed a gap; the comma stayed in the cell
+    second = _read(tmp_path, "x.xlsx")
+    assert second == first.replace("=SUM(B1:B1) -> 2", "=SUM(B1:B1)").replace("Old (hidden)", "Old")  # value gone (Excel recalcs), flag gone
+
+
+def test_excel_round_trip_of_a_written_workbook_is_stable(tmp_path):
+    _write(tmp_path, "b.xlsx", SHEET)
+    first, second = _round_trip(tmp_path, "b.xlsx")
+    assert first == second
+    assert "Sheet1 (2)" not in second and "[Excel workbook" not in "\n".join(l for l in second.splitlines()[1:])
+
+
+def test_pdf_round_trip_is_stable_and_drops_page_markers_from_the_body(tmp_path):
+    _write(tmp_path, "r.pdf", PDF_TEXT)
+    first, second = _round_trip(tmp_path, "r.pdf")
+    assert first == second and second.count("--- page 1 ---") == 1 and second.startswith("[PDF, 1 page]")
+
+
+def test_a_cut_document_is_refused_not_written_back_short(tmp_path):
+    for marker in ("[... 7 more rows not read (limit 2000 per sheet) ...]", "[... 3 more pages not read (limit 1000) ...]",
+                   "[... cut at 1,500,000 characters ...]", "[... 5,000 characters omitted from the middle of this read_file result ...]",
+                   "[... 9 more chars not kept in history; run the tool again for them]"):
+        out = _write(tmp_path, "cut.docx", f"# Title\n\nbody\n{marker}\n")
+        assert out.startswith("Error: could not build 'cut.docx'") and "only part of the document" in out, marker
+    assert not (tmp_path / "cut.docx").exists()
+
+
+def test_a_line_range_from_read_file_is_refused_unless_it_is_the_whole_file(tmp_path):
+    _write(tmp_path, "d.docx", DOC)
+    part = _read(tmp_path, "d.docx", start_line=2, end_line=4)
+    assert _write(tmp_path, "copy.docx", part).startswith("Error: could not build") and not (tmp_path / "copy.docx").exists()
+    whole = _read(tmp_path, "d.docx", start_line=1, end_line=999)       # a range that covers everything is fine
+    assert _write(tmp_path, "copy.docx", whole).startswith("Successfully wrote")
+    assert "[Lines" not in _read(tmp_path, "copy.docx")
+
+
+def test_excel_text_that_only_looks_like_a_row_number_is_not_one(tmp_path):
+    # no read_file header: "3: apples" is a value in column A, not a row number
+    _write(tmp_path, "w.xlsx", "3: apples,5\n12: pears,7\n")
+    text = _read(tmp_path, "w.xlsx")
+    assert "1: 3: apples\t5" in text and "2: 12: pears\t7" in text
+
+
+# ---------------- tool-level behaviour ----------------
+def test_patch_file_refuses_a_document_and_says_what_to_do_instead(tmp_path):
+    from app.agent.tools.patch_file import patch_file
+    _write(tmp_path, "p.docx", "# Title\n")
+    out = patch_file("p.docx", "Title", "New", workspace_path=str(tmp_path))
+    assert out.startswith("Error:") and "write_file the whole new text" in out
+    (tmp_path / "s.pptx").write_bytes(b"PK\x03\x04")
+    assert "can't change this kind of file" in patch_file("s.pptx", "a", "b", workspace_path=str(tmp_path))
+
+
+def test_a_locked_document_says_to_close_it(tmp_path, monkeypatch):
+    _write(tmp_path, "locked.docx", "# one\n")
+    monkeypatch.setattr(doc_writers.os, "replace", lambda *a, **k: (_ for _ in ()).throw(PermissionError("[WinError 32]")))
+    out = _write(tmp_path, "locked.docx", "# two\n")
+    assert out.startswith("Error:") and "open in another program" in out and "WinError" not in out
+    assert not list(tmp_path.glob("*.tmp"))                                  # the temp file was cleaned up
+
+
+def test_the_pdf_font_choice_prefers_a_family_with_an_italic_face(tmp_path, monkeypatch):
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    for name in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf",                    # no italic: would render upright
+                 "LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf", "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf"):
+        (fonts / name).write_bytes(b"x")
+    monkeypatch.setattr(doc_writers, "_font_dirs", lambda: [fonts])
+    family = doc_writers._find_font_family()
+    assert [p.name for p in family] == ["LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf",
+                                        "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf"]
+    (fonts / "LiberationSans-Italic.ttf").unlink()
+    assert doc_writers._find_font_family()[0].name == "DejaVuSans.ttf"        # none complete: first regular found

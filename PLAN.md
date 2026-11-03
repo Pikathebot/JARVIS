@@ -2774,7 +2774,7 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
   `write_file` builds the file when the path ends in `.docx`, `.xlsx` or `.pdf` (`app/agent/tools/doc_writers.py`), so replacing
   a file still asks first and keeps a `.jarvis/backups` copy; the build runs *before* the backup and the write, so a failed
   build (empty content, over 2M characters) leaves the old file alone; the swap is atomic (temp file + `os.replace`). CSV needs
-  nothing (text). Input is what `read_file` prints, so read -> edit -> write works: **Word/PDF** take Markdown (`#` headings,
+  nothing (text). **Read -> change -> write works** (found missing by review before it shipped, then built and tested): `prepare_text` strips `read_file`'s own scaffolding (the `[Word document]` / `[PDF, N pages]` / `[Excel workbook, ...]` header, `--- page N ---`, `(empty)`, the legend line, `[Nothing at ...]`), Excel row numbers (`7: a<TAB>b`) place each row where it was so gaps and formula references hold, ` (hidden)` and `=F -> value` are stripped; read -> write -> read gives identical text for all three formats (tests). **Text `read_file` cut is refused** (`more rows not read`, `more pages not read`, `characters omitted`, a line range that is not the whole file): writing it back would drop what was never read. Lost on a round trip: numbered lists become bullets, page breaks, hidden-sheet state, styling, cached formula values (Excel recalculates), images/headers/footers/comments. Input: **Word/PDF** take Markdown, one paragraph per line (`#` headings,
   `-` bullets, `1.` lists that each restart at 1, `| a | b |` tables with a header row, `**bold**`, `*italic*`); **Excel** takes CSV
   rows or tab-separated lines, `--- sheet: Name ---` starts a sheet, `=SUM(..)` is a formula (the workbook is flagged to
   recalculate on open, so there is no cached value until Excel opens it), `2026-10-03` / `2026-10-03 09:30` become real dates,
@@ -2790,7 +2790,12 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
   - **Checked beyond the tests** (hand, outside the repo): files read back by python-docx and openpyxl (styles, lists, table, date,
     formula, bool, `007`), and opened by LibreOffice 24.2 headless -- docx -> PDF showed bullets, restarting numbered lists and the
     table; xlsx -> CSV showed the formula calculated, the date and both sheets; the PDF was rendered to an image and looked right.
-    Not Word or Excel themselves. 20 tests in `test_doc_writers.py`.
+    Not Word or Excel themselves. 30 tests in `test_doc_writers.py` (write -> read, read -> write -> read per format, refusals, patch_file, locked file, fonts); a round-tripped workbook with a gap row and a cross-sheet formula also opened in LibreOffice (`SUM` and `Sheet1!B6*2` came out right).
+  - **Also:** `patch_file` on a PDF/Word/Excel/PowerPoint file now says to read_file it and write_file the whole new text (it used
+    to hit a UTF-8 decode error); a Word/Excel file open on Windows reports "open in another program, close it" instead of a raw
+    WinError (the swap is atomic, the backup was already made); the PDF font choice prefers a family with an italic face (DejaVu
+    Sans on Linux has none, so it picks Liberation Sans there). The approval card for a replace shows no diff for any file, only
+    "Replaces the existing 'x.docx' (the old version is backed up first)", so documents need nothing extra.
   - **Not done:** PPTX writing; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
     document in place (the model rewrites the whole file: read -> change -> write).
 - **Still open:** (a) the other formats (item 3: RTF, EPUB, ODT/ODS, OCR) -- not started; (b) whether an

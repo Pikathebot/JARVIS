@@ -4,11 +4,14 @@ Build Word, Excel and PDF files from text the model writes (PLAN 4.27, writing).
 ``write_file`` calls ``build_document`` for a ``.docx`` / ``.xlsx`` / ``.pdf`` path, so no new tool or approval tier
 exists: replacing a file still asks and backs up first. CSV needs nothing here (it is text).
 
-The text conventions are the ones ``doc_readers`` prints, so a document read with ``read_file`` can be edited and
-written back the same way:
+The text conventions are the ones ``doc_readers`` prints, and ``prepare_text`` takes ``read_file``'s own output back (its
+header line, page and sheet markers, row numbers, ``=F -> cached value``), so read -> change -> write works. What does not survive a
+round trip: numbered lists come back as bullets, page breaks, hidden-sheet state, fonts/colours/column widths, cached formula
+values (Excel recalculates), anything the reader doesn't show (images, headers/footers, comments). Text that ``read_file`` cut
+(``more rows not read``, a line range, ``characters omitted``) is refused, because writing it back would drop the unread part.
 
-* Word and PDF: Markdown. ``#``..``######`` headings, ``-``/``*`` bullets, ``1.`` numbered items, ``| a | b |`` table rows
-  (first row is the header), blank line between paragraphs, ``**bold**`` and ``*italic*``.
+* Word and PDF: Markdown, one paragraph per line. ``#``..``######`` headings, ``-``/``*`` bullets, ``1.`` numbered items,
+  ``| a | b |`` table rows (first row is the header), ``**bold**`` and ``*italic*``.
 * Excel: CSV rows (a tab-separated line works too); ``--- sheet: Name ---`` starts a sheet. ``=SUM(A1:A3)`` is a formula
   (Excel recalculates on open), numbers are numbers, ``2026-10-03`` is a date, ``TRUE``/``FALSE`` are booleans.
 
@@ -52,7 +55,7 @@ def _attr(text: str) -> str:
 
 # ---------------------------------------------------------------- Markdown-ish parsing (Word, PDF)
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-_BULLET = re.compile(r"^\s*[-*+]\s+(.*)$")
+_BULLET = re.compile(r"^\s*[-*+\u2022]\s+(.*)$")  # •: what a PDF read back shows for a bullet
 _NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_RULE = re.compile(r"^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*$")
@@ -60,15 +63,10 @@ _INLINE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|\*(?=\S)(.+?)(?<=\S)\*")
 
 
 def parse_blocks(text: str) -> list:
-    """[('heading', level, text) | ('para', text) | ('bullet', text) | ('number', text) | ('table', [[cell]])]"""
+    """[('heading', level, text) | ('para', text) | ('bullet', text) | ('number', text) | ('table', [[cell]])].
+    Every non-blank line is its own paragraph (what read_file prints, and what a model writing a document means)."""
     blocks: list = []
-    para: list = []
     table: list = []
-
-    def flush_para():
-        if para:
-            blocks.append(("para", " ".join(para)))
-            para.clear()
 
     def flush_table():
         if table:
@@ -78,32 +76,25 @@ def parse_blocks(text: str) -> list:
     for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = raw.rstrip()
         if _TABLE_ROW.match(line):
-            flush_para()
             if not _TABLE_RULE.match(line):
-                cells = [c.strip() for c in line.strip().strip("|").split("|")]
-                table.append(cells)
+                table.append([c.strip() for c in line.strip().strip("|").split("|")])
             continue
         flush_table()
         if not line.strip():
-            flush_para()
             continue
         m = _HEADING.match(line)
         if m:
-            flush_para()
             blocks.append(("heading", len(m.group(1)), m.group(2)))
             continue
         m = _BULLET.match(line)
         if m:
-            flush_para()
             blocks.append(("bullet", m.group(1)))
             continue
         m = _NUMBERED.match(line)
         if m:
-            flush_para()
             blocks.append(("number", m.group(1)))
             continue
-        para.append(line.strip())
-    flush_para()
+        blocks.append(("para", line.strip()))
     flush_table()
     return blocks
 
@@ -122,6 +113,48 @@ def _runs(text: str) -> list:
     if pos < len(text):
         out.append((text[pos:], False, False))
     return out or [("", False, False)]
+
+
+# ---------------------------------------------------------------- taking read_file's output back
+_HEADER = re.compile(r"^\[(?:Word document|PDF, \d+ pages?|Excel workbook, .*|PowerPoint, .*)\]\s*$")
+_READFILE_NOTE = re.compile(r"^\[Nothing at '.*'; this is '.*'\]\s*$")
+_LINES_NOTE = re.compile(r"^\[Lines (\d+)-(\d+) of (\d+) in '.*'\]\s*$")
+_READBACK_LINE = re.compile(r"^(?:--- page \d+ ---|\(empty\)|\(no text on this page\)|\(no text in it\)"
+                            r"|\(row number first, then the columns .*|\(sheet data is missing\))\s*$")
+_CUT = re.compile(r"more (?:rows|pages) not read|\bcut at [\d,]+ characters|characters omitted from the middle"
+                  r"|more chars not kept in history")
+
+
+def prepare_text(text: str) -> tuple:
+    """(text without read_file's own scaffolding, readback). ``readback`` is True when the text is a document read with
+    read_file (it starts with the reader's header), which switches on row numbers and ``=F -> value`` handling for Excel.
+    Raises BuildError for text that read_file cut short."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if _CUT.search(text):
+        raise BuildError("the text has a cut marker ('more rows not read', 'characters omitted ...'): it is only part of the "
+                         "document, and writing it back would drop the part that was never read. Read the whole file "
+                         "(in line ranges if it is long) and send everything")
+    out, readback = [], False
+    for line in lines:
+        m = _LINES_NOTE.match(line)
+        if m:
+            first, last, total = (int(g) for g in m.groups())
+            if first != 1 or last < total:
+                raise BuildError(f"the text is lines {first}-{last} of {total} from read_file, only part of the document: "
+                                 "writing it back would drop the rest. Send the whole document")
+            continue
+        if _READFILE_NOTE.match(line):
+            continue
+        if _HEADER.match(line):
+            readback = True
+            continue
+        out.append(line)
+    if readback:
+        out = [l for l in out if not _READBACK_LINE.match(l)]
+    elif any(_READBACK_LINE.match(l) and l.startswith("(row number first") for l in out):
+        readback = True
+        out = [l for l in out if not _READBACK_LINE.match(l)]
+    return "\n".join(out), readback
 
 
 # ---------------------------------------------------------------- DOCX
@@ -274,7 +307,11 @@ def _serial(d: datetime) -> float:
     return delta.days + delta.seconds / 86400
 
 
-def _split_sheets(text: str) -> list:
+_HIDDEN = re.compile(r"\s*\(hidden\)\s*$")
+_ROW_PREFIX = re.compile(r"^(\d+):(?: (.*))?$")
+
+
+def _split_sheets(text: str, readback: bool = False) -> list:
     """[(name, [lines])]; text before any marker is the first sheet."""
     sheets: list = []
     name, lines = "Sheet1", []
@@ -284,7 +321,7 @@ def _split_sheets(text: str) -> list:
         if m:
             if started or lines:
                 sheets.append((name, lines))
-            name, lines, started = m.group(1), [], True
+            name, lines, started = (_HIDDEN.sub("", m.group(1)) if readback else m.group(1)), [], True
             continue
         lines.append(raw)
     sheets.append((name, lines))
@@ -335,23 +372,32 @@ def _cell_xml(ref: str, raw: str) -> str:
     return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{_x(raw)}</t></is></c>'
 
 
-def _build_xlsx(text: str) -> tuple:
-    sheets = _split_sheets(text)
+def _build_xlsx(text: str, readback: bool = False) -> tuple:
+    sheets = _split_sheets(text, readback)
     used: set = set()
     parts, n_rows_total, n_formulas = [], 0, 0
     notes: list = []
     for name, lines in sheets:
         sheet_name = _clean_sheet_name(name, used)
         rows = []
-        for r, line in enumerate(lines, 1):
+        r = 0
+        for line in lines:
+            r += 1
+            if readback:
+                m = _ROW_PREFIX.match(line)
+                if m:  # read_file's "7: a<TAB>b": the number is the row, so gaps and formula references stay where they were
+                    r, line = int(m.group(1)), m.group(2) or ""
+                cells = [c for c in line.split("\t")] if line else []
+                cells = [c.rsplit(" -> ", 1)[0] if c.startswith("=") and " -> " in c else c for c in cells]
+            else:
+                cells = _parse_row(line) if line.strip() else []
             if r > MAX_XLSX_ROWS:
                 notes.append(f"sheet '{sheet_name}' was cut at {MAX_XLSX_ROWS:,} rows")
                 break
-            if not line.strip():
+            if not any(c.strip() for c in cells):
                 continue
-            cells = _parse_row(line)[:MAX_XLSX_COLS]
             xml_cells = []
-            for c, raw in enumerate(cells):
+            for c, raw in enumerate(cells[:MAX_XLSX_COLS]):
                 cx = _cell_xml(f"{_col_name(c)}{r}", raw)
                 if cx:
                     xml_cells.append(cx)
@@ -426,13 +472,19 @@ def _font_dirs() -> list:
 
 
 def _find_font_family() -> Optional[tuple]:
+    """A family with all four faces if any is installed (italic must not silently render upright), else the first with a regular."""
     dirs = _font_dirs()
+    partial = None
     for family in _FONT_CANDIDATES:
         for d in dirs:
             files = [d / f for f in family]
-            if files[0].is_file():
-                return tuple(f if f.is_file() else files[0] for f in files)
-    return None
+            if not files[0].is_file():
+                continue
+            if all(f.is_file() for f in files):
+                return tuple(files)
+            if partial is None:
+                partial = tuple(f if f.is_file() else files[0] for f in files)
+    return partial
 
 
 def _register_fonts():
@@ -568,10 +620,15 @@ def build_document(extension: str, content: str) -> tuple:
     if len(text) > MAX_CONTENT_CHARS:
         raise BuildError(f"the content is {len(text):,} characters, over the {MAX_CONTENT_CHARS:,} limit")
     ext = extension.lower()
+    if ext not in BUILDABLE_EXTENSIONS:
+        raise BuildError(f"{extension} files are not supported")
+    text, readback = prepare_text(text)
+    if not text.strip():
+        raise BuildError("the content is empty")
     if ext == ".docx":
         return _build_docx(text)
     if ext == ".xlsx":
-        return _build_xlsx(text)
+        return _build_xlsx(text, readback)
     if ext == ".pdf":
         return _build_pdf(text)
     raise BuildError(f"{extension} files are not supported")

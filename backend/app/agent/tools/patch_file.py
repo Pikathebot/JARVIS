@@ -5,6 +5,8 @@ from typing import Optional
 from app.config import settings
 from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
+from app.agent.tools.doc_readers import kind_of
+from app.agent.tools.doc_writers import BUILDABLE_EXTENSIONS
 from app.agent.tools.file_kinds import closest_region
 from app.agent.tools.paths import is_inside, resolve_tool_path
 
@@ -57,6 +59,12 @@ def patch_file(
 
     if path.is_dir():
         return f"Error: Cannot patch '{file_path}' because it is a directory."
+
+    if kind_of(path) is not None:  # PDF / Word / Excel / PowerPoint: not text, so a text patch has nothing to match
+        if path.suffix.lower() in BUILDABLE_EXTENSIONS:
+            return (f"Error: '{file_path}' is not a text file, so patch_file can't edit it. read_file it, change the text, "
+                    "then write_file the whole new text to the same path (a Word, Excel or PDF file is rebuilt from it).")
+        return f"Error: '{file_path}' is not a text file and Jarvis can't change this kind of file; read_file shows its text."
 
     if not search_block:
         return "Error: Search block cannot be empty."
