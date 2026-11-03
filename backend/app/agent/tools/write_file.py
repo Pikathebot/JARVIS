@@ -20,7 +20,7 @@ def write_file(
 ) -> str:
     """
     Create a file, or replace an existing one, with the given text (in the workspace; replacing a file or writing outside the workspace asks the user first, and the old version is backed up). Fill `reason` with why, in a few words.
-    A .docx, .xlsx or .pdf path is built from Markdown text (xlsx: CSV rows, '--- sheet: Name ---' starts a sheet).
+    A .docx/.xlsx/.pdf/.pptx path is built from Markdown (pptx: '---' = new slide; xlsx: CSV, '--- sheet: Name ---' = sheet).
     Automatically creates any missing parent directories.
 
     Args:
@@ -41,11 +41,11 @@ def write_file(
     if path.exists() and path.is_dir():
         return f"Error: Cannot write to '{file_path}' because it is a directory."
 
-    # A document format Jarvis can read but not build (.pptx, .odt, .rtf, .epub, .xlsm, legacy .doc/.xls/.ppt): writing text
+    # A document format Jarvis can read but not build (.odt, .rtf, .epub, .xlsm, legacy .doc/.xls/.ppt): writing text
     # there would save plain text under a document name -- a corrupt file reported as a success.
     if kind_of(path) is not None and path.suffix.lower() not in BUILDABLE_EXTENSIONS:
         return (f"Error: Jarvis can't write {path.suffix.lower()} files (the text would be saved as plain text and the file "
-                "would no longer open). Write a .docx, .xlsx or .pdf instead, or a .md / .txt / .csv file.")
+                "would no longer open). Write a .docx, .xlsx, .pdf or .pptx instead, or a .md / .txt / .csv file.")
 
     if path.exists() and not overwrite:
         return f"Error: File '{file_path}' already exists and overwrite is set to False."

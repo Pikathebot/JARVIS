@@ -237,7 +237,7 @@ def test_no_temp_file_is_left_behind(tmp_path):
 
 def test_build_document_rejects_unknown_extensions_and_huge_input():
     with pytest.raises(BuildError):
-        build_document(".pptx", "x")
+        build_document(".odt", "x")
     with pytest.raises(BuildError, match="limit"):
         build_document(".docx", "x" * (doc_writers.MAX_CONTENT_CHARS + 1))
 
@@ -330,8 +330,8 @@ def test_patch_file_refuses_a_document_and_says_what_to_do_instead(tmp_path):
     _write(tmp_path, "p.docx", "# Title\n")
     out = patch_file("p.docx", "Title", "New", workspace_path=str(tmp_path))
     assert out.startswith("Error:") and "write_file the whole new text" in out
-    (tmp_path / "s.pptx").write_bytes(b"PK\x03\x04")
-    assert "can't change this kind of file" in patch_file("s.pptx", "a", "b", workspace_path=str(tmp_path))
+    (tmp_path / "s.odt").write_bytes(b"PK\x03\x04")
+    assert "can't change this kind of file" in patch_file("s.odt", "a", "b", workspace_path=str(tmp_path))
 
 
 def test_a_locked_document_says_to_close_it(tmp_path, monkeypatch):
@@ -357,10 +357,10 @@ def test_the_pdf_font_choice_prefers_a_family_with_an_italic_face(tmp_path, monk
 
 
 # ---------------- write_file never writes plain text into a format it cannot build ----------------
-@pytest.mark.parametrize("name", ["deck.pptx", "notes.odt", "sheet.ods", "book.epub", "memo.rtf", "macro.xlsm", "old.doc", "old.xls", "old.ppt"])
+@pytest.mark.parametrize("name", ["notes.odt", "sheet.ods", "book.epub", "memo.rtf", "macro.xlsm", "old.doc", "old.xls", "old.ppt"])
 def test_a_new_file_of_a_readable_but_unbuildable_format_is_refused(tmp_path, name):
     out = _write(tmp_path, name, "some text\n")
-    assert out.startswith(f"Error: Jarvis can't write {Path(name).suffix} files") and "Write a .docx, .xlsx or .pdf" in out
+    assert out.startswith(f"Error: Jarvis can't write {Path(name).suffix} files") and "Write a .docx, .xlsx, .pdf or .pptx" in out
     assert not (tmp_path / name).exists()
 
 
@@ -437,3 +437,35 @@ def test_the_reader_and_writer_share_one_set_of_markers():
     for line in ("--- page 2 ---", "--- section 3 ---", "--- slide 1 ---", "(empty)", "(no text on this slide)", "(too large to read)"):
         assert doc_readers.SCAFFOLD_RE.match(line), line
     assert not doc_readers.HEADER_RE.match("[Draft] my own bracketed line")
+
+
+# ---------------- PPTX writing ----------------
+_DECK = ("# Atlas kickoff\n- Goals\n- Scope\n1. one\n2. two\n\nplain para\n---\n# Budget\n"
+         "| Quarter | Spend |\n|---|---|\n| Q1 | 10 |\nNotes: mention risk")
+
+
+def test_pptx_is_built_with_slides_table_notes_and_reads_back(tmp_path):
+    out = _write(tmp_path, "d.pptx", _DECK)
+    assert out.startswith("Successfully wrote") and "2 slides" in out and "1 table" in out and "speaker notes" in out
+    names = _parts(tmp_path / "d.pptx")
+    assert "ppt/slides/slide1.xml" in names and "ppt/slides/slide2.xml" in names and "ppt/notesSlides/notesSlide2.xml" in names
+    back = _read(tmp_path, "d.pptx")
+    assert "--- slide 1 ---" in back and "Atlas kickoff" in back and "- Goals" in back
+    assert "| Quarter | Spend |" in back and "Notes: mention risk" in back
+
+
+def test_pptx_round_trip_is_stable(tmp_path):
+    _write(tmp_path, "d.pptx", _DECK)
+    first = _read(tmp_path, "d.pptx")
+    _write(tmp_path, "e.pptx", first)
+    assert _read(tmp_path, "e.pptx") == first
+
+
+def test_pptx_markup_is_escaped_and_the_package_is_well_formed(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    _write(tmp_path, "x.pptx", "# A & B <c>\n- 1 < 2 \"q\"\n")
+    for name, data in _parts(tmp_path / "x.pptx").items():
+        if name.endswith((".xml", ".rels")):
+            ET.fromstring(data)
+    assert "A & B <c>" in _read(tmp_path, "x.pptx")

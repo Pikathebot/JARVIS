@@ -480,7 +480,13 @@ def _shape_text(tree: ET.Element) -> list:
         if el.tag == f"{_P}sp":
             tx = el.find(f"{_P}txBody")
             if tx is not None:
-                lines.extend(_a_paragraphs(tx))
+                ph = el.find(f"{_P}nvSpPr/{_P}nvPr/{_P}ph")
+                bulleted = ph is not None and ph.get("type", "obj") in ("body", "obj")   # the layout bullets these paragraphs
+                for p in tx.findall(f"{_A}p"):
+                    text = "".join(x.text or "" for x in p.iter(f"{_A}t")).strip()
+                    if text:
+                        no_bullet = p.find(f"{_A}pPr/{_A}buNone") is not None
+                        lines.append(f"- {text}" if bulleted and not no_bullet else text)
         elif el.tag == f"{_A}tbl":
             for tr in el.findall(f"{_A}tr"):
                 cells = [" ".join(_a_paragraphs(tc)) for tc in tr.findall(f"{_A}tc")]

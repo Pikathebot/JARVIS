@@ -2836,7 +2836,8 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     WinError (the swap is atomic, the backup was already made); the PDF font choice prefers a family with an italic face (DejaVu
     Sans on Linux has none, so it picks Liberation Sans there). The approval card for a replace shows no diff for any file, only
     "Replaces the existing 'x.docx' (the old version is backed up first)", so documents need nothing extra.
-  - **Not done:** PPTX writing; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
+  - **PPTX writing: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen in PowerPoint.** `write_file` builds a `.pptx` from the same Markdown: a `---` line starts a slide, `#` is the slide title, bullets/numbered lists/plain lines fill the body (font size shrinks to fit), a `|` table becomes a real table, a `Notes:` line becomes speaker notes. Raw OOXML (master, layout, theme, notes master), no python-pptx. Checked by opening with python-pptx and rendering with LibreOffice; read->write->read is stable (numbering reads back as bullets). The reader now marks body-placeholder lines with `- `. Prompt head: docstring clause reworded to fit the existing cap, no raise.
+  - **Not done:** images in decks, themes/layout choice, animations; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
     document in place (the model rewrites the whole file: read -> change -> write).
 - **Other formats: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device** (item 3, reading only).
   `read_file` also reads **OpenDocument** (`.odt` headings/lists/tables with footnotes left out; `.ods` rows with their numbers,

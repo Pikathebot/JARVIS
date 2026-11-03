@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Optional
 from xml.sax.saxutils import escape as _esc
 
-BUILDABLE_EXTENSIONS = frozenset({".docx", ".xlsx", ".pdf"})
+BUILDABLE_EXTENSIONS = frozenset({".docx", ".xlsx", ".pdf", ".pptx"})
 MAX_CONTENT_CHARS = 2_000_000
 MAX_XLSX_ROWS = 100_000
 MAX_XLSX_COLS = 200
@@ -122,7 +122,7 @@ _READFILE_NOTE = re.compile(r"^\[Nothing at '.*'; this is '.*'\]\s*$")
 _LINES_NOTE = re.compile(r"^\[Lines (\d+)-(\d+) of (\d+) in '.*'\]\s*$")
 
 
-def prepare_text(text: str) -> tuple:
+def prepare_text(text: str, keep_slides: bool = False) -> tuple:
     """(text without read_file's own scaffolding, readback). ``readback`` is True when the text is a document read with
     read_file (it starts with the reader's header), which switches on row numbers and ``=F -> value`` handling for Excel.
     Raises BuildError for text that read_file cut short."""
@@ -146,11 +146,14 @@ def prepare_text(text: str) -> tuple:
             readback = True
             continue
         out.append(line)
+    def scaffold(line: str) -> bool:
+        return bool(_READBACK_LINE.match(line)) and not (keep_slides and _SLIDE_MARK.match(line))  # a deck needs its slide markers
+
     if readback:
-        out = [l for l in out if not _READBACK_LINE.match(l)]
+        out = [l for l in out if not scaffold(l)]
     elif any(_READBACK_LINE.match(l) and l.startswith("(row number first") for l in out):
         readback = True
-        out = [l for l in out if not _READBACK_LINE.match(l)]
+        out = [l for l in out if not scaffold(l)]
     return "\n".join(out), readback
 
 
@@ -445,6 +448,283 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
     return buf.getvalue(), summary, ("; ".join(notes) + "." if notes else "")
 
 
+# ---------------------------------------------------------------- PPTX
+_SLIDE_MARK = re.compile(r"^\s*-{2,}\s*slide\s*\d*\s*-{2,}\s*$", re.I)
+_HR = re.compile(r"^\s*-{3,}\s*$")
+_H1 = re.compile(r"^#\s+\S")
+_A_NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+_P_NS = 'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+_R_NS = f'xmlns:r="{_OD}"'
+_SLIDE_W, _SLIDE_H = 12192000, 6858000
+_MARGIN_X = 609600
+_TITLE_Y, _TITLE_H = 304800, 1066800
+_BODY_Y, _BODY_H = 1524000, 4572000
+_BODY_W = _SLIDE_W - 2 * _MARGIN_X
+_BOTTOM = 6553200                          # nothing should run past this
+_FONT_SIZES = (2800, 2400, 2200, 2000, 1800, 1600, 1400, 1200)
+_GRP = ('<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/>'
+        '<a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>')
+_NOTES_RE = re.compile(r"^\s*notes\s*:\s*(.*)$", re.I)
+
+_THEME = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme {_A_NS} name="Jarvis"><a:themeElements><a:clrScheme name="Jarvis">
+<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+<a:dk2><a:srgbClr val="1F2A44"/></a:dk2><a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+<a:accent1><a:srgbClr val="2F5597"/></a:accent1><a:accent2><a:srgbClr val="C55A11"/></a:accent2><a:accent3><a:srgbClr val="548235"/></a:accent3>
+<a:accent4><a:srgbClr val="7F6000"/></a:accent4><a:accent5><a:srgbClr val="7030A0"/></a:accent5><a:accent6><a:srgbClr val="C00000"/></a:accent6>
+<a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>
+<a:fontScheme name="Jarvis"><a:majorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>
+<a:fmtScheme name="Jarvis"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
+<a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="28575"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>
+<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+</a:fmtScheme></a:themeElements></a:theme>'''
+
+_CLRMAP = ('<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" '
+           'accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>')
+
+
+def _ph_sp(sid: int, name: str, ph: str, x: int, y: int, w: int, h: int, body: str = "") -> str:
+    return (f'<p:sp><p:nvSpPr><p:cNvPr id="{sid}" name="{name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>{ph}</p:nvPr></p:nvSpPr>'
+            f'<p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{w}" cy="{h}"/></a:xfrm></p:spPr>{body}</p:sp>')
+
+
+_MASTER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster {_A_NS} {_R_NS} {_P_NS}><p:cSld>'
+           '<p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>' + _GRP
+           + _ph_sp(2, "Title Placeholder 1", '<p:ph type="title"/>', _MARGIN_X, _TITLE_Y, _BODY_W, _TITLE_H,
+                    '<p:txBody><a:bodyPr anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Title</a:t></a:r></a:p></p:txBody>')
+           + _ph_sp(3, "Text Placeholder 2", '<p:ph type="body" idx="1"/>', _MARGIN_X, _BODY_Y, _BODY_W, _BODY_H,
+                    '<p:txBody><a:bodyPr><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr lvl="0"/><a:r><a:rPr lang="en-US"/><a:t>Text</a:t></a:r></a:p></p:txBody>')
+           + f'</p:spTree></p:cSld>{_CLRMAP}<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles>'
+           '<p:titleStyle><a:lvl1pPr algn="l"><a:defRPr sz="3600" b="1" kern="1200"><a:solidFill><a:schemeClr val="tx2"/></a:solidFill>'
+           '<a:latin typeface="+mj-lt"/><a:ea typeface="+mj-ea"/><a:cs typeface="+mj-cs"/></a:defRPr></a:lvl1pPr></p:titleStyle>'
+           '<p:bodyStyle>' + "".join(
+               f'<a:lvl{n}pPr marL="{342900 * n}" indent="-342900" algn="l"><a:spcBef><a:spcPts val="600"/></a:spcBef><a:buFont typeface="Arial"/>'
+               f'<a:buChar char="&#8226;"/><a:defRPr sz="{2400 - 200 * (n - 1)}" kern="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill>'
+               '<a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr>' + f'</a:lvl{n}pPr>' for n in range(1, 4))
+           + '</p:bodyStyle><p:otherStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr></p:otherStyle></p:txStyles></p:sldMaster>')
+
+_LAYOUT = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout {_A_NS} {_R_NS} {_P_NS} type="obj" preserve="1">'
+           '<p:cSld name="Title and Content"><p:spTree>' + _GRP
+           + _ph_sp(2, "Title 1", '<p:ph type="title"/>', _MARGIN_X, _TITLE_Y, _BODY_W, _TITLE_H,
+                    '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Click to edit the title</a:t></a:r></a:p></p:txBody>')
+           + _ph_sp(3, "Content Placeholder 2", '<p:ph idx="1"/>', _MARGIN_X, _BODY_Y, _BODY_W, _BODY_H,
+                    '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr lvl="0"/><a:r><a:rPr lang="en-US"/><a:t>Click to edit the text</a:t></a:r></a:p></p:txBody>')
+           + '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>')
+
+_NOTES_MASTER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:notesMaster {_A_NS} {_R_NS} {_P_NS}><p:cSld>'
+                 '<p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>' + _GRP
+                 + _ph_sp(2, "Slide Image Placeholder 1", '<p:ph type="sldImg" idx="2"/>', 685800, 1143000, 5486400, 3086100)
+                 + _ph_sp(3, "Notes Placeholder 2", '<p:ph type="body" sz="quarter" idx="3"/>', 685800, 4400550, 5486400, 3600450,
+                          '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr lvl="0"/><a:r><a:rPr lang="en-US"/><a:t>Notes</a:t></a:r></a:p></p:txBody>')
+                 + f'</p:spTree></p:cSld>{_CLRMAP}<p:notesStyle><a:lvl1pPr marL="0" algn="l"><a:defRPr sz="1200" kern="1200">'
+                 '<a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></p:notesStyle></p:notesMaster>')
+
+
+def _a_runs(text: str, size: Optional[int] = None, bold_all: bool = False) -> str:
+    out = []
+    for t, b, i in _runs(text):
+        if not t:
+            continue
+        attrs = 'lang="en-US"' + (f' sz="{size}"' if size else "") + (' b="1"' if (b or bold_all) else "") + (' i="1"' if i else "")
+        out.append(f'<a:r><a:rPr {attrs} dirty="0"/><a:t>{_x(t)}</a:t></a:r>')
+    return "".join(out) or '<a:endParaRPr lang="en-US"/>'
+
+
+def _text_lines(blocks: list, size: int) -> int:
+    """How many lines the blocks take at ``size`` (hundredths of a point) in the body placeholder: about half an em per character."""
+    per_line = max(10, int((_BODY_W - 457200) / (size / 100 * 12700 * 0.5)))
+    return sum(max(1, -(-len(b[-1]) // per_line)) if isinstance(b[-1], str) else 0 for b in blocks)
+
+
+def _fit_size(blocks: list, height: int) -> tuple:
+    """(font size, fits) -- the biggest size whose estimated text height fits ``height`` EMU."""
+    for size in _FONT_SIZES:
+        if _text_lines(blocks, size) * (size / 100 * 12700 * 1.25 + 76200) <= height:
+            return size, True
+    return _FONT_SIZES[-1], False
+
+
+def _slide_table(sid: int, rows: list, y: int) -> tuple:
+    """(graphicFrame xml, its height). Column widths follow the longest text in each column; row heights follow the wrapped lines."""
+    cols = max(len(r) for r in rows)
+    weights = [max(6, min(40, max(len(r[c]) if c < len(r) else 0 for r in rows))) for c in range(cols)]
+    widths = [_BODY_W * w // sum(weights) for w in weights]
+    size = 1600 if len(rows) <= 8 else 1400
+    row_xml, total = [], 0
+    for n, row in enumerate(rows):
+        lines = max(max(1, -(-int(len(row[c] if c < len(row) else "") * size / 100 * 12700 * 0.5) // max(1, widths[c] - 182880)))
+                    for c in range(cols))
+        h = int(lines * size / 100 * 12700 * 1.2 + 182880)
+        cells = []
+        for c in range(cols):
+            border = "".join(f'<a:ln{k} w="12700"><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:ln{k}>' for k in "LRTB")
+            fill = '<a:solidFill><a:srgbClr val="E7E6E6"/></a:solidFill>' if n == 0 else ""
+            cells.append(f'<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>{_a_runs(row[c] if c < len(row) else "", size, n == 0)}</a:p></a:txBody>'
+                         f"<a:tcPr>{border}{fill}</a:tcPr></a:tc>")
+        row_xml.append(f'<a:tr h="{h}">{"".join(cells)}</a:tr>')
+        total += h
+    grid = "".join(f'<a:gridCol w="{w}"/>' for w in widths)
+    frame = (f'<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="{sid}" name="Table {sid}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>'
+             f'</p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="{_MARGIN_X}" y="{y}"/><a:ext cx="{sum(widths)}" cy="{total}"/></p:xfrm>'
+             f'<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1"/>'
+             f'<a:tblGrid>{grid}</a:tblGrid>{"".join(row_xml)}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>')
+    return frame, total
+
+
+def _split_slides(text: str, readback: bool) -> list:
+    """[[line]] per slide: a '--- slide N ---' marker or (written fresh) a lone '---' or a '# ' heading starts the next slide."""
+    slides: list = [[]]
+    for line in text.split("\n"):
+        if _SLIDE_MARK.match(line) or (not readback and (_HR.match(line) or (_H1.match(line) and any(l.strip() for l in slides[-1])))):
+            if _SLIDE_MARK.match(line) or _HR.match(line):
+                if any(l.strip() for l in slides[-1]) or len(slides) > 1:
+                    slides.append([])
+                continue
+            slides.append([line])
+            continue
+        slides[-1].append(line)
+    return [s for s in slides if any(l.strip() for l in s)]
+
+
+def _build_pptx(text: str, readback: bool = False) -> tuple:
+    raw_slides = _split_slides(text, readback)
+    if not raw_slides:
+        raise BuildError("there is no text to put on a slide")
+    slides, warnings = [], []
+    for n, lines in enumerate(raw_slides, 1):
+        blocks = parse_blocks("\n".join(lines))
+        title, notes = "", []
+        if blocks and blocks[0][0] == "heading" and (blocks[0][1] <= 2 or not readback):
+            title, blocks = blocks[0][2], blocks[1:]
+        elif readback and blocks and blocks[0][0] in ("para", "bullet", "number"):
+            title, blocks = blocks[0][1], blocks[1:]       # read_file prints the title first, as a plain line
+        for i, b in enumerate(blocks):
+            if b[0] in ("para", "bullet") and _NOTES_RE.match(b[1]):
+                notes = [_NOTES_RE.match(b[1]).group(1)] + [x[-1] for x in blocks[i + 1:] if isinstance(x[-1], str)]
+                blocks = blocks[:i]
+                break
+        slides.append({"title": title, "blocks": blocks, "notes": [t for t in notes if t.strip()]})
+    has_notes = any(s["notes"] for s in slides)
+    n_tables = n_notes = 0
+    parts: dict = {}
+    for n, s in enumerate(slides, 1):
+        text_blocks = [b for b in s["blocks"] if b[0] != "table"]
+        tables = [b[1] for b in s["blocks"] if b[0] == "table"]
+        y_top = _BODY_Y
+        shapes = []
+        sid = 2
+        if s["title"]:
+            shapes.append(_ph_sp(sid, "Title 1", '<p:ph type="title"/>', _MARGIN_X, _TITLE_Y, _BODY_W, _TITLE_H,
+                                 f'<p:txBody><a:bodyPr><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p>{_a_runs(s["title"])}</a:p></p:txBody>'))
+            sid += 1
+        if text_blocks:
+            size, fits = _fit_size(text_blocks, _BODY_H if not tables else int(_BODY_H * 0.5))
+            if not fits:
+                warnings.append(f"slide {n} has more text than fits; split it")
+            height = _BODY_H if not tables else int(_BODY_H * 0.5)
+            paras, counter = [], 0
+            for b in text_blocks:
+                kind = b[0]
+                counter = counter + 1 if kind == "number" else 0
+                if kind == "heading":
+                    paras.append(f'<a:p><a:pPr marL="0" indent="0"><a:buNone/></a:pPr>{_a_runs(b[2], size, True)}</a:p>')
+                elif kind == "para":
+                    paras.append(f'<a:p><a:pPr marL="0" indent="0"><a:buNone/></a:pPr>{_a_runs(b[1], size)}</a:p>')
+                elif kind == "number":
+                    paras.append(f'<a:p><a:pPr marL="457200" indent="-457200"><a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/></a:pPr>'
+                                 f"{_a_runs(b[1], size)}</a:p>")
+                else:
+                    paras.append(f"<a:p>{_a_runs(b[1], size)}</a:p>")
+            shapes.append(_ph_sp(sid, "Content Placeholder 2", '<p:ph idx="1"/>', _MARGIN_X, _BODY_Y, _BODY_W, height,
+                                 f'<p:txBody><a:bodyPr><a:normAutofit/></a:bodyPr><a:lstStyle/>{"".join(paras)}</p:txBody>'))
+            sid += 1
+            if tables:
+                y_top = _BODY_Y + min(height, int(_text_lines(text_blocks, size) * (size / 100 * 12700 * 1.25 + 76200))) + 152400
+        for rows in tables:
+            frame, h = _slide_table(sid, rows, y_top)
+            shapes.append(frame)
+            sid += 1
+            y_top += h + 152400
+            n_tables += 1
+        if tables and y_top - 152400 > _BOTTOM:
+            warnings.append(f"slide {n} has a table that runs past the bottom; split it")
+        rels = [f'<Relationship Id="rId1" Type="{_OD}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>']
+        if s["notes"]:
+            n_notes += 1
+            rels.append(f'<Relationship Id="rId2" Type="{_OD}/notesSlide" Target="../notesSlides/notesSlide{n}.xml"/>')
+            note_paras = "".join(f'<a:p>{_a_runs(t)}</a:p>' for t in s["notes"])
+            parts[f"ppt/notesSlides/notesSlide{n}.xml"] = (
+                f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:notes {_A_NS} {_R_NS} {_P_NS}><p:cSld><p:spTree>{_GRP}'
+                '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>'
+                '<p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>'
+                '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>'
+                '<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/>'
+                f'<p:txBody><a:bodyPr/><a:lstStyle/>{note_paras}</p:txBody></p:sp></p:spTree></p:cSld>'
+                '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>')
+            parts[f"ppt/notesSlides/_rels/notesSlide{n}.xml.rels"] = (
+                f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
+                f'<Relationship Id="rId1" Type="{_OD}/notesMaster" Target="../notesMasters/notesMaster1.xml"/>'
+                f'<Relationship Id="rId2" Type="{_OD}/slide" Target="../slides/slide{n}.xml"/></Relationships>')
+        parts[f"ppt/slides/slide{n}.xml"] = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld {_A_NS} {_R_NS} {_P_NS}><p:cSld><p:spTree>{_GRP}'
+            f'{"".join(shapes)}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>')
+        parts[f"ppt/slides/_rels/slide{n}.xml.rels"] = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">{"".join(rels)}</Relationships>')
+    count = len(slides)
+    pres_rels = [f'<Relationship Id="rId1" Type="{_OD}/slideMaster" Target="slideMasters/slideMaster1.xml"/>']
+    pres_rels += [f'<Relationship Id="rId{i + 1}" Type="{_OD}/slide" Target="slides/slide{i}.xml"/>' for i in range(1, count + 1)]
+    pres_rels.append(f'<Relationship Id="rId{count + 2}" Type="{_OD}/theme" Target="theme/theme1.xml"/>')
+    notes_list = ""
+    if has_notes:
+        pres_rels.append(f'<Relationship Id="rId{count + 3}" Type="{_OD}/notesMaster" Target="notesMasters/notesMaster1.xml"/>')
+        notes_list = f'<p:notesMasterIdLst><p:notesMasterId r:id="rId{count + 3}"/></p:notesMasterIdLst>'
+        parts["ppt/notesMasters/notesMaster1.xml"] = _NOTES_MASTER
+        parts["ppt/notesMasters/_rels/notesMaster1.xml.rels"] = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
+            f'<Relationship Id="rId1" Type="{_OD}/theme" Target="../theme/theme2.xml"/></Relationships>')
+        parts["ppt/theme/theme2.xml"] = _THEME
+    ids = "".join(f'<p:sldId id="{255 + i}" r:id="rId{i + 1}"/>' for i in range(1, count + 1))
+    parts["ppt/presentation.xml"] = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation {_A_NS} {_R_NS} {_P_NS} saveSubsetFonts="1">'
+        f'<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>{notes_list}<p:sldIdLst>{ids}</p:sldIdLst>'
+        f'<p:sldSz cx="{_SLIDE_W}" cy="{_SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>')
+    parts["ppt/_rels/presentation.xml.rels"] = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">{"".join(pres_rels)}</Relationships>')
+    parts["ppt/slideMasters/slideMaster1.xml"] = _MASTER
+    parts["ppt/slideMasters/_rels/slideMaster1.xml.rels"] = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
+        f'<Relationship Id="rId1" Type="{_OD}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>'
+        f'<Relationship Id="rId2" Type="{_OD}/theme" Target="../theme/theme1.xml"/></Relationships>')
+    parts["ppt/slideLayouts/slideLayout1.xml"] = _LAYOUT
+    parts["ppt/slideLayouts/_rels/slideLayout1.xml.rels"] = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
+        f'<Relationship Id="rId1" Type="{_OD}/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>')
+    parts["ppt/theme/theme1.xml"] = _THEME
+    pml = "application/vnd.openxmlformats-officedocument.presentationml"
+    overrides = [("/ppt/presentation.xml", f"{pml}.presentation.main+xml"), ("/ppt/slideMasters/slideMaster1.xml", f"{pml}.slideMaster+xml"),
+                 ("/ppt/slideLayouts/slideLayout1.xml", f"{pml}.slideLayout+xml"), ("/ppt/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml")]
+    overrides += [(f"/ppt/slides/slide{i}.xml", f"{pml}.slide+xml") for i in range(1, count + 1)]
+    overrides += [(f"/ppt/notesSlides/notesSlide{i}.xml", f"{pml}.notesSlide+xml") for i in range(1, count + 1) if f"ppt/notesSlides/notesSlide{i}.xml" in parts]
+    if has_notes:
+        overrides += [("/ppt/notesMasters/notesMaster1.xml", f"{pml}.notesMaster+xml"), ("/ppt/theme/theme2.xml", "application/vnd.openxmlformats-officedocument.theme+xml")]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml",
+                    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="{_CT_NS}">'
+                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                    '<Default Extension="xml" ContentType="application/xml"/>'
+                    + "".join(f'<Override PartName="{p}" ContentType="{c}"/>' for p, c in overrides) + "</Types>")
+        zf.writestr("_rels/.rels", f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
+                                   f'<Relationship Id="rId1" Type="{_OD}/officeDocument" Target="ppt/presentation.xml"/></Relationships>')
+        for name, data in parts.items():
+            zf.writestr(name, data)
+    summary = (f"a PowerPoint deck ({count} slide{'s' if count != 1 else ''}"
+               + (f", {n_notes} with speaker notes" if n_notes else "") + (f", {n_tables} table{'s' if n_tables != 1 else ''}" if n_tables else "") + ")")
+    return buf.getvalue(), summary, ("Warning: " + "; ".join(warnings) + "." if warnings else "")
+
+
 # ---------------------------------------------------------------- PDF
 _FONT_CANDIDATES = [  # (regular, bold, italic, bold-italic) -- the first family whose regular file exists wins
     ("segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"),
@@ -619,7 +899,7 @@ def build_document(extension: str, content: str) -> tuple:
     ext = extension.lower()
     if ext not in BUILDABLE_EXTENSIONS:
         raise BuildError(f"{extension} files are not supported")
-    text, readback = prepare_text(text)
+    text, readback = prepare_text(text, keep_slides=(ext == ".pptx"))
     if not text.strip():
         raise BuildError("the content is empty")
     if ext == ".docx":
@@ -628,6 +908,8 @@ def build_document(extension: str, content: str) -> tuple:
         return _build_xlsx(text, readback)
     if ext == ".pdf":
         return _build_pdf(text)
+    if ext == ".pptx":
+        return _build_pptx(text, readback)
     raise BuildError(f"{extension} files are not supported")
 
 
