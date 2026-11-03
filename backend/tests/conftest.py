@@ -61,3 +61,13 @@ def ensure_test_healthy_governor(request):
          patch("app.main.governor.is_throttled", return_value=(False, None)):
         yield
 
+
+
+@pytest.fixture(autouse=True)
+def no_judge_handles(monkeypatch):
+    """A real backend/.env with LeetCode/Codeforces/AtCoder handles must not send any test (the day briefing, the thread
+    keeper) to the live judge sites. Tests that want a handle set it themselves."""
+    from app.config import settings
+
+    for name in ("codeforces_handle", "leetcode_username", "atcoder_user"):
+        monkeypatch.setattr(settings, name, "")

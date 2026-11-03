@@ -80,3 +80,24 @@ def test_personal_details_are_redacted_everywhere(tmp_path):
 def test_missing_inputs_give_an_empty_export(tmp_path):
     m = ex.export(tmp_path / "a", tmp_path / "b", tmp_path / "out")
     assert m["dpo_pairs"] == 0 and m["review_rows"] == {} and (tmp_path / "out" / "manifest.json").exists()
+
+
+def test_in_app_votes_carry_their_context_and_old_ones_are_counted(tmp_path):
+    ctx = [{"role": "user", "content": "my sister is Kiran"}, {"role": "assistant", "content": "Noted."}]
+    votes = _jsonl(tmp_path / "v.jsonl", [{**_vote("c1", earlier_turns=ctx), "source": "in-app"},
+                                          {**_vote("c2"), "source": "in-app"}])
+    m = ex.export(votes, tmp_path / "none.jsonl", tmp_path / "out", names=["Kiran"])
+    rows = {r["id"]: r for r in map(json.loads, (tmp_path / "out" / "dpo.jsonl").read_text().splitlines())}
+    assert rows["c1"]["prompt"] == [{"role": "user", "content": "my sister is <name>"}, {"role": "assistant", "content": "Noted."},
+                                    {"role": "user", "content": "Turn the volume to 30"}]
+    assert rows["c1"]["context_stored"] and not rows["c2"]["context_stored"]
+    assert m["dpo_in_app_without_context"] == 1
+
+
+def test_compare_keeps_the_plain_turns_before_the_voted_one():
+    from app.agent import compare
+    msgs = [{"role": "system", "content": "sys"}] + [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"t{i}"} for i in range(9)] + [
+        {"role": "tool", "content": "result"}, {"role": "assistant", "content": None}, {"role": "user", "content": "now"}]
+    turns = compare.earlier_turns(msgs)
+    assert [t["content"] for t in turns] == ["t3", "t4", "t5", "t6", "t7", "t8"] and len(turns) == compare.CONTEXT_TURNS

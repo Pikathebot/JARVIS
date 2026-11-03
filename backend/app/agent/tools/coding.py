@@ -50,6 +50,7 @@ AC_PAGES = 10                 # kenkoooo returns 500 submissions a page, oldest 
 PICK_COUNT = 3
 CONTESTS_MAX_DAYS = 60
 REMINDER_LEAD = timedelta(minutes=15)
+BRIEFING_DEADLINE_S = 6.0     # the day briefing waits this long for the judge sites in all, then goes without them
 
 
 class SiteError(Exception):
@@ -282,6 +283,17 @@ def briefing_lines(now: Optional[datetime] = None) -> list:
     if not any((settings.leetcode_username, settings.codeforces_handle, settings.atcoder_user)):
         return []
     now = now or datetime.now()
+    pool = ThreadPoolExecutor(max_workers=1)
+    job = pool.submit(_briefing_lines, now)
+    pool.shutdown(wait=False)          # a slow site finishes in the background (and fills the cache); the briefing doesn't wait
+    try:
+        return job.result(timeout=BRIEFING_DEADLINE_S)
+    except Exception as e:
+        logger.info("briefing judge lines skipped: %s", e)
+        return []
+
+
+def _briefing_lines(now: datetime) -> list:
     lines: list = []
     try:
         cutoff = datetime.combine((now - timedelta(hours=4)).date() + timedelta(days=1), datetime.min.time()) + timedelta(hours=4)

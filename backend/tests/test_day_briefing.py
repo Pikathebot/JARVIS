@@ -165,3 +165,14 @@ def test_a_site_that_is_down_never_breaks_the_briefing(day, monkeypatch):
     monkeypatch.setattr(cp, "_graphql", lambda *a, **k: (_ for _ in ()).throw(cp.SiteError("LeetCode is down")))
     obs = db.build(Persona(), NOW)
     assert "Lunch with Sam" in obs.detail and "Contest" not in obs.detail and "daily" not in obs.detail
+
+
+def test_a_slow_judge_site_does_not_hold_up_the_briefing(day, monkeypatch):
+    import time
+    monkeypatch.setattr(settings, "codeforces_handle", "me")
+    cp = _judges(monkeypatch)
+    monkeypatch.setattr(cp, "BRIEFING_DEADLINE_S", 0.2)
+    monkeypatch.setattr(cp, "upcoming_contests", lambda *a: (time.sleep(1.5), ([], []))[1])
+    t = time.monotonic()
+    obs = db.build(Persona(), NOW)
+    assert time.monotonic() - t < 1.0 and "Lunch with Sam" in obs.detail and "Contest" not in obs.detail

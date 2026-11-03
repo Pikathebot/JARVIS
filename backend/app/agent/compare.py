@@ -71,6 +71,7 @@ class Compare:
     status: str = "judging"   # judging -> writing -> ready | none | failed; voted at the end
     axis: str = ""
     alternative: str = ""
+    context: list = field(default_factory=list)   # the chat turns before this one, for the fine-tune export
     created: float = field(default_factory=time.monotonic)
 
     def public(self) -> dict[str, Any]:
@@ -119,11 +120,22 @@ def steered(messages: list[dict[str, Any]], axis: str) -> Optional[list[dict[str
     return messages[:-1] + [last]
 
 
+CONTEXT_TURNS = 6
+
+
+def earlier_turns(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """The plain user/assistant text turns before the current one (last ``CONTEXT_TURNS``): the reply depended on them, so a
+    vote without them isn't a single-turn pair. System and tool messages stay out (the system prompt is the same every turn)."""
+    turns = [{"role": m["role"], "content": m["content"]} for m in messages[:-1]
+             if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str) and m["content"].strip()]
+    return turns[-CONTEXT_TURNS:]
+
+
 def start(provider: Any, model: str, session_id: str, user_message: str, messages: list[dict[str, Any]],
           answer: str) -> str:
     """Register a compare and start the judge + alternative in the background; returns its id."""
     c = Compare(id=f"cmp_{uuid.uuid4().hex[:12]}", session_id=session_id, prompt=user_message,
-                original=answer, model=model)
+                original=answer, model=model, context=earlier_turns(messages))
     with _lock:
         _sweep()
         _compares[c.id] = c
@@ -181,7 +193,7 @@ def vote(compare_id: str, choice: str, path: Path = VOTES_PATH) -> Optional[dict
         "source": "in-app",
         "session_id": c.session_id,
         "prompt": c.prompt,
-        "earlier_turns": [],
+        "earlier_turns": c.context,     # [{role, content}] (the review page stores user-only strings)
         "chosen": c.alternative if winner_alt else c.original,
         "rejected": c.original if winner_alt else c.alternative,
         "chosen_model": alt_label if winner_alt else c.model,

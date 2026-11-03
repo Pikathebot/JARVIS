@@ -8,8 +8,9 @@ Reads (all local, git-ignored):
 Writes to ``data/finetune/`` (git-ignored, under ``/data/``):
 - ``dpo.jsonl``: training-ready preference pairs in the conversational form TRL-style trainers (Soup included) take:
   ``{"prompt": [{"role": "user", ...}], "chosen": [{"role": "assistant", ...}], "rejected": [...], "source", "id"}``.
-  Only single-turn votes go here: the review page stores the earlier *user* turns but not the answers between them, so a
-  multi-turn vote can't be rebuilt honestly. Ties, empty or identical sides, and votes whose chosen answer failed the
+  An in-app vote carries the chat turns before it (``compare.earlier_turns``), which become the start of ``prompt``; one saved
+  before that was stored is kept with ``context_stored: false`` (counted in the manifest -- filter them out if they look wrong).
+  A multi-turn review-page vote is dropped: the page stores the earlier *user* turns but not the answers between them. Ties, empty or identical sides, and votes whose chosen answer failed the
   eval's check while the rejected one passed are dropped. A later vote on the same pair replaces an earlier one.
 - ``review.jsonl``: rows that need a person (or a teacher model) before they can train anything -- each net-fired turn
   (the draft that was sent back, the note, the tools, the reply that was kept) and each flagged reply with what the user
@@ -109,13 +110,17 @@ def dpo_rows(votes: list[dict], red: Redactor, dropped: Counter) -> list[dict]:
             dropped["empty side or prompt"] += 1
         elif chosen == rejected:
             dropped["identical answers"] += 1
-        elif v.get("earlier_turns"):
+        elif v.get("earlier_turns") and not all(isinstance(t, dict) for t in v["earlier_turns"]):
             dropped["multi-turn (answers between turns not stored)"] += 1
         elif v.get("chosen_passed") is False and v.get("rejected_passed") is True:
             dropped["chosen failed the check, rejected passed"] += 1
         else:
+            context = [{"role": t.get("role"), "content": red.text(str(t.get("content") or ""))}
+                       for t in v.get("earlier_turns") or []]
             out.append({"id": key, "source": v.get("source") or "review-page",
-                        "prompt": [{"role": "user", "content": red.text(prompt)}],
+                        # an in-app vote from before compare.py stored the context: the reply may lean on turns not here
+                        "context_stored": bool(context) or v.get("source") != "in-app",
+                        "prompt": context + [{"role": "user", "content": red.text(prompt)}],
                         "chosen": [{"role": "assistant", "content": red.text(chosen)}],
                         "rejected": [{"role": "assistant", "content": red.text(rejected)}],
                         "chosen_model": v.get("chosen_model"), "rejected_model": v.get("rejected_model")})
@@ -161,6 +166,7 @@ def export(votes_path: Path = VOTES, log_path: Path = LOG, out_dir: Path = OUT, 
     manifest = {
         "dpo_pairs": len(dpo),
         "dpo_by_source": dict(Counter(r["source"] for r in dpo)),
+        "dpo_in_app_without_context": sum(1 for r in dpo if not r["context_stored"]),
         "dropped_votes": dict(dropped),
         "review_rows": dict(Counter(r["kind"] for r in review)),
         "captures_in_log": sum(1 for r in log if r.get("kind") == "capture"),

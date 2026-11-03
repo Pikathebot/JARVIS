@@ -1357,8 +1357,10 @@ carry planted facts, so only a real search + read passes the current-events task
    with its sent-back draft, note, tools and kept reply, and each "got it wrong" flag with what the user meant, unflagged ones
    removed) and `manifest.json` (counts, drops by reason, redactions). Net turns are *not* auto-paired: the kept reply was written
    after tools ran, so pairing it with the draft against the bare user message would teach answering without tool results -- they
-   need a corrected reply written first (by the user or a teacher). **Multi-turn votes are dropped**: the review page stores the
-   earlier user turns but not the answers between them. Redaction on the way out: e-mails, phone numbers (10+ digits, dates kept),
+   need a corrected reply written first (by the user or a teacher). **Multi-turn review-page votes are dropped**: the page stores
+   the earlier user turns but not the answers between them. In-app compare votes now store the last six plain user/assistant turns
+   (`compare.earlier_turns`) and the export puts them before the prompt; an in-app vote saved before this has no context and is kept
+   with `context_stored: false`, counted in the manifest. Redaction on the way out: e-mails, phone numbers (10+ digits, dates kept),
    `C:\Users\<name>`, and `--names "A,B"`. `review_answers.py` votes now record `chosen_passed` / `rejected_passed` for the drop rule
    (older votes lack them and are kept). Open: Soup's exact DPO field names (TRL's conversational form assumed; check in the smoke test).
 11. Compact per-family tool sets (theirs) vs Jarvis's fixed set (KV-cache stable): measure before changing.
@@ -2737,11 +2739,13 @@ and contest were folded into `query` to fit the budget.
   below the rating; **contest mode**: no solving or hinting a running contest's problems), `paper_search` (arXiv's public API through
   `fetch_url`; checked live: the Atom feed reads as flat text -- title, date, abstract, authors -- and the cloud IP got 429s, so the
   skill retries once), `flashcards` (`flashcards/<subject>.csv` in the workspace, Leitner boxes 1-5 due 1/3/7/14/30 days, saved once per
-  session through read_file/write_file), `focus_timer` (Pomodoro 25/5, 15 after four; one `remind_me` at a time, never a chain).
+  session through read_file/write_file), `focus_timer` (Pomodoro 25/5, 15 after four; one `remind_me` at a time, never a chain; stopping early cancels through `reminders`).
   **Day briefing:** `coding.briefing_lines` adds "Contest today: Codeforces Round ... at 20:05" (before the next 4 AM) and "LeetCode daily
   not done yet: #42 ... (Hard)" -- only when at least one judge handle is set, and any failure leaves the lines out (the briefing never
-  breaks over a judge's site; worst case it waits one 12 s timeout). The briefing tests blank the handles so a real `.env` can't reach
-  the network.
+  breaks over a judge's site): one overall 6 s deadline (`BRIEFING_DEADLINE_S`), after which a slow site finishes in the
+  background and only fills the cache. `conftest.py` blanks the three handles for every test, so a real `.env` can't send a test to the
+  live sites. **Known gap:** contest titles are scraped site text, and the briefing text is carried into the Freeform thread's first
+  episode, so that outside text reaches the model outside the taint path (short, from three fixed sites; not gated).
   **Not built:** LMS (Classroom/Moodle/Canvas -- depends on the user's college), timetable with weekly repeat, GitHub beyond local git,
   CodeChef / clist.by. The flashcard and timer skills lean on the model following a recipe; check them in the real-chat eval.
 - **Needs the user:** their three handles (say them in chat, or set the `.env` keys); a device check; then the real-chat eval cases
