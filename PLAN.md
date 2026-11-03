@@ -2758,9 +2758,20 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
   style (no `numPr`) being missed -- fixed.
 - **Prompt head:** the one-line docstring addition ("Also reads PDF, docx, xlsx, pptx.") leaves `test_real_head_prefix_is_stable_
   and_within_budget` ~3 chars under the WORKSPACE cap (37600). Any further tool-text change needs room made first.
+- **Two PDF paths now.** `fetch_url` already extracted PDF text from the web *if pypdf was installed*, which it wasn't on
+  the user's machine -- now `pypdf` is a requirement, so a PDF link is read too. Found when its test
+  (`test_fetch_url_says_when_a_page_is_javascript_only_or_a_pdf`) started failing: a damaged PDF surfaced pypdf's raw
+  error; `_pdf_text` now returns None on any parse failure and the "is a PDF" message stays. Not merged with
+  `doc_readers._read_pdf` (that one adds page markers, a no-text-layer message and a cache).
+- **Memory:** `_read_xlsx` parses each sheet with `ET.fromstring`, so a worksheet part up to 64 MB uncompressed becomes
+  an in-memory tree (several hundred MB). Fine for study files; if a big sheet shows up, switch to `iterparse` and stop at
+  `MAX_SHEET_ROWS`.
+- **Uploads:** `routers/artifacts.py` `ALLOWED_EXTENSIONS` has `.pdf` but **not** `.docx`, `.xlsx`, `.pptx`, so only a
+  PDF dropped into chat reaches `read_file`; the other three are refused at upload (400). Adding them is one line but
+  it widens an upload filter, so it waits for the user (check the WinUI file picker's filter too).
 - **Still open:** (a) writing DOCX/XLSX/PDF (item 2) and the other formats (item 3) -- not started; (b) whether an
   uploaded file goes through `read_file` (what happens now: the attachment note tells the model to `read_file` it) or the
-  RAG indexer -- the user's call; (c) real files from the user, then a device check.
+  RAG indexer -- the user's call; (c) the upload allowlist above; (d) real files from the user, then a device check.
 
 ### 4.28 Portability: one runtime, and hardware-driven profiles (raised from Argon's review 2026-10-25) -- QUEUED, after 4.27
 **Why:** the goal is that someone else can clone Jarvis and run it on their own machine. Two things in the code

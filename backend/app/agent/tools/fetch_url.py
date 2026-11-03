@@ -68,14 +68,17 @@ def _sign_in_wall(asked: str, landed: str, text: str) -> bool:
 
 
 def _pdf_text(data: bytes):
-    """A PDF's text with pypdf if it is installed, else None."""
+    """A PDF's text with pypdf, or None when pypdf is missing or the file can't be parsed (damaged, encrypted)."""
     try:
         from pypdf import PdfReader
     except ImportError:
         return None
     import io
-    reader = PdfReader(io.BytesIO(data))
-    return "\n\n".join((page.extract_text() or "") for page in reader.pages)
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:  # pypdf's own errors ("Stream has ended unexpectedly") are not an answer for the model
+        return None
 
 
 def _resolves_to_local_network(host: str) -> bool:
@@ -170,7 +173,7 @@ def fetch_url(url: str, max_chars: int = 8000, offset: int = 0) -> str:
                 text = _pdf_text(response.content)
                 if text is None:
                     return (f"'{current}' is a PDF ({len(response.content) // 1024} KB). Its text can't be "
-                            "extracted here (no PDF reader installed); tell the user rather than guessing.")
+                            "extracted here (no PDF reader, or the file is damaged or protected); tell the user rather than guessing.")
             # If plain text, json, or markdown
             elif "text/plain" in content_type or "application/json" in content_type or "text/markdown" in content_type:
                 text = response.text
