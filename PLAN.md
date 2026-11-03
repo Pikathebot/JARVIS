@@ -2753,6 +2753,7 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
 - **Limits:** Excel dates come back as serial numbers; a formula in a file never opened in Excel has no value; a PDF
   table comes out one cell per line (pypdf); 1000 PDF pages, 2000 rows x 100 columns per sheet; Word headers/footers/
   footnotes and PowerPoint master text are not read.
+- **Requirements:** `backend/requirements.txt` now has `pypdf`, `pytest-asyncio` (the suite needs it; `asyncio_mode = strict`) and `sqlmodel<0.0.45` (0.0.45+ rejects the models' timezone-naive datetimes: ~60 tests failed; 0.0.43/0.0.44 pass).
 - **Tests:** `test_doc_readers.py` (24; fixtures built from raw zip/XML and a hand-made PDF). Also run once by hand
   against files written by python-docx, openpyxl, python-pptx and reportlab: that found Word's built-in `List Bullet`
   style (no `numPr`) being missed -- fixed.
@@ -2766,12 +2767,12 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
 - **Memory:** `_read_xlsx` parses each sheet with `ET.fromstring`, so a worksheet part up to 64 MB uncompressed becomes
   an in-memory tree (several hundred MB). Fine for study files; if a big sheet shows up, switch to `iterparse` and stop at
   `MAX_SHEET_ROWS`.
-- **Uploads:** `routers/artifacts.py` `ALLOWED_EXTENSIONS` has `.pdf` but **not** `.docx`, `.xlsx`, `.pptx`, so only a
-  PDF dropped into chat reaches `read_file`; the other three are refused at upload (400). Adding them is one line but
-  it widens an upload filter, so it waits for the user (check the WinUI file picker's filter too).
+- **Uploads:** `.docx`, `.xlsx`, `.pptx` added to `routers/artifacts.py` `ALLOWED_EXTENSIONS` (`.pdf` was there); an uploaded
+  file's note tells the model to `read_file` it, and `test_office_documents_upload_and_read_file_returns_their_text` covers
+  the round trip. The WinUI picker already allows `*`. Uploads still bypass RAG -- see (b).
 - **Still open:** (a) writing DOCX/XLSX/PDF (item 2) and the other formats (item 3) -- not started; (b) whether an
   uploaded file goes through `read_file` (what happens now: the attachment note tells the model to `read_file` it) or the
-  RAG indexer -- the user's call; (c) the upload allowlist above; (d) real files from the user, then a device check.
+  RAG indexer -- the user's call; (c) real files from the user, then a device check.
 
 ### 4.28 Portability: one runtime, and hardware-driven profiles (raised from Argon's review 2026-10-25) -- QUEUED, after 4.27
 **Why:** the goal is that someone else can clone Jarvis and run it on their own machine. Two things in the code

@@ -39,6 +39,26 @@ def upload_test_env(tmp_path, monkeypatch):
 
 
 
+def test_office_documents_upload_and_read_file_returns_their_text(upload_test_env):
+    import zipfile
+
+    from app.agent.tools.read_file import read_file
+
+    client, _ws, *rest = upload_test_env
+    project_id = client.post("/api/projects", json={"name": "Docs"}).json()["id"]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body><w:p><w:r><w:t>Uploaded words</w:t></w:r></w:p></w:body></w:document>")
+    for name in ("notes.docx", "sheet.xlsx", "deck.pptx"):
+        res = client.post("/api/upload", files={"file": (name, io.BytesIO(buf.getvalue()), "application/octet-stream")},
+                          data={"project_id": project_id, "session_id": "s"})
+        assert res.status_code == 201, (name, res.text)
+    saved = client.post("/api/upload", files={"file": ("again.docx", io.BytesIO(buf.getvalue()), "application/octet-stream")},
+                        data={"project_id": project_id, "session_id": "s"}).json()["path"]
+    assert "Uploaded words" in read_file(saved, workspace_path=str(Path(saved).parents[1]))
+
+
 def test_upload_allowed_file_success(upload_test_env):
     client, test_workspace, *rest = upload_test_env
 
