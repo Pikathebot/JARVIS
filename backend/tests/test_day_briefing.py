@@ -35,6 +35,8 @@ def day(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "notes_dir", str(tmp_path / "notes"))
     monkeypatch.setattr(auth, "DATA_DIR", tmp_path / "google")
     monkeypatch.setenv("JARVIS_BRIEFING_STATE", str(tmp_path / "briefing.json"))
+    for name in ("codeforces_handle", "leetcode_username", "atcoder_user"):  # no judge sites unless a test asks
+        monkeypatch.setattr(settings, name, "")
     nm.notes_dir().mkdir(parents=True)
     (nm.notes_dir() / "tasks.md").write_text(
         "# Tasks\n\n- [ ] Pay rent (due 2026-10-20) <!-- id:t0001 -->\n"
@@ -116,3 +118,50 @@ def test_a_scheduled_briefing_routine_is_the_day_briefing(day):
     # the real clock (the scheduler's), so only the shape: a greeting, the date line, the day's tasks
     assert obs.title.startswith("Good ") and obs.detail.splitlines()[0].endswith(".")
     assert "Return library book" in obs.detail and "GPU" not in obs.detail
+
+
+# ---------------- competitive programming line (PLAN 4.23b) ----------------
+def _judges(monkeypatch, contests=(), solved=(), fail=False):
+    from app.agent.tools import coding as cp
+
+    cp._cache.clear()
+    def upcoming(site, days, now):
+        if fail:
+            raise RuntimeError("down")
+        return [c for c in contests if c.start >= now], []
+    monkeypatch.setattr(cp, "upcoming_contests", upcoming)
+    monkeypatch.setattr(cp, "_graphql", lambda *a, **k: {"activeDailyCodingChallengeQuestion": {"question": {
+        "questionFrontendId": "42", "title": "Trapping Rain Water", "titleSlug": "trapping-rain-water", "difficulty": "Hard"}}})
+    monkeypatch.setattr(cp, "_lc_recent_ac", lambda user: list(solved))
+    return cp
+
+
+def test_no_judge_lines_without_a_handle(day, monkeypatch):
+    cp = _judges(monkeypatch, fail=True)
+    assert cp.briefing_lines(NOW) == []
+    assert "Contest" not in db.build(Persona(), NOW).detail
+
+
+def test_contests_today_and_the_unsolved_daily_are_in_the_briefing(day, monkeypatch):
+    from datetime import timedelta
+    monkeypatch.setattr(settings, "leetcode_username", "me")
+    mk = lambda site, title, at: __import__("app.agent.tools.coding", fromlist=["Contest"]).Contest(site, "1", title, at, 120, "u")
+    cp = _judges(monkeypatch, contests=[mk("codeforces", "Round 999 (Div. 2)", NOW.replace(hour=20, minute=5)),
+                                        mk("atcoder", "ABC 999", NOW.replace(hour=2) + timedelta(days=1)),   # before 4 AM: still today
+                                        mk("leetcode", "Weekly 500", NOW + timedelta(days=1, hours=1))])     # tomorrow
+    obs = db.build(Persona(), NOW)
+    assert "Contest today: Codeforces Round 999 (Div. 2) at 20:05" in obs.detail
+    assert "Contest today: AtCoder ABC 999 at 02:15" in obs.detail and "Weekly 500" not in obs.detail
+    assert "LeetCode daily not done yet: #42 Trapping Rain Water (Hard)" in obs.detail
+    assert "number 42" in obs.spoken
+    _judges(monkeypatch, solved=["trapping-rain-water"])
+    assert cp.briefing_lines(NOW) == []
+
+
+def test_a_site_that_is_down_never_breaks_the_briefing(day, monkeypatch):
+    monkeypatch.setattr(settings, "codeforces_handle", "me")
+    monkeypatch.setattr(settings, "leetcode_username", "me")
+    cp = _judges(monkeypatch, fail=True)
+    monkeypatch.setattr(cp, "_graphql", lambda *a, **k: (_ for _ in ()).throw(cp.SiteError("LeetCode is down")))
+    obs = db.build(Persona(), NOW)
+    assert "Lunch with Sam" in obs.detail and "Contest" not in obs.detail and "daily" not in obs.detail

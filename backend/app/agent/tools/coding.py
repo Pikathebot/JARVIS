@@ -275,6 +275,35 @@ def _contests(site: str, days: int) -> str:
     return text
 
 
+def briefing_lines(now: Optional[datetime] = None) -> list:
+    """Lines for the day briefing: contests starting before the next 4 AM, and the LeetCode daily when it isn't among the user's
+    recent accepted. Empty unless the user set at least one handle (a briefing line about a hobby they never mentioned would be
+    noise), and empty on any failure -- the briefing must never wait on, or break over, a judge's site."""
+    if not any((settings.leetcode_username, settings.codeforces_handle, settings.atcoder_user)):
+        return []
+    now = now or datetime.now()
+    lines: list = []
+    try:
+        cutoff = datetime.combine((now - timedelta(hours=4)).date() + timedelta(days=1), datetime.min.time()) + timedelta(hours=4)
+        found, _ = upcoming_contests("", 2, now)
+        for c in [c for c in found if c.start < cutoff][:3]:
+            lines.append(f"Contest today: {_SITE_NAMES[c.site]} {c.title} at {c.start:%H:%M}")
+    except Exception as e:
+        logger.info("briefing contests skipped: %s", e)
+    if settings.leetcode_username.strip():
+        try:
+            user = _handle("leetcode", "")
+            data = _cached(("lc", "daily", now.strftime("%Y-%m-%d")), 3600, lambda: _graphql(
+                "query { activeDailyCodingChallengeQuestion { date link question { questionFrontendId title titleSlug difficulty acRate "
+                "topicTags { name } } } }"))
+            q = (data.get("activeDailyCodingChallengeQuestion") or {}).get("question")
+            if q and q["titleSlug"] not in _lc_recent_ac(user):
+                lines.append(f"LeetCode daily not done yet: #{q.get('questionFrontendId')} {q['title']} ({q.get('difficulty')})")
+        except Exception as e:
+            logger.info("briefing daily skipped: %s", e)
+    return lines
+
+
 # ---------------------------------------------------------------- LeetCode daily
 def _lc_recent_ac(user: str) -> list:
     data = _cached(("lc", "recent", user), 300, lambda: _graphql(

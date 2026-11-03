@@ -183,3 +183,16 @@ def test_skills_loader_legacy_backward_compatibility(mock_skills_environment):
 
     injection = loader.build_skill_prompt_injection(matched)
     assert "Skill Active: code_review" in injection
+
+
+def test_the_shipped_study_skills_load_on_their_own_words():
+    loader = SkillsLoader()   # the repo's skills/ folder
+    cases = {"give me a hint for this leetcode problem": "practice_help", "find papers on arxiv about diffusion": "paper_search",
+             "quiz me on my os notes": "flashcards", "start a pomodoro": "focus_timer"}
+    for query, skill in cases.items():
+        assert skill in loader.determine_relevance(query), query
+        assert skill in [s.name for s in loader.match_skills(query)], query     # what the orchestrator runs
+        body = loader.load_skill_instructions([skill])
+        assert body and "instructions" in body.lower()
+    for everyday in ("what's the weather tomorrow", "I revised the plan", "the paper on my desk", "a contested decision"):
+        assert loader.match_skills(everyday) == [], everyday

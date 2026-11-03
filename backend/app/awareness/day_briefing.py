@@ -95,9 +95,11 @@ def gather(now: datetime) -> dict[str, Any]:
         tasks = []
     iso = day.isoformat()
     from app.agent.tools.gmail import unread_summary
+    from app.agent.tools.coding import briefing_lines
 
     return {
         "mail": unread_summary(),  # None when Gmail isn't connected or allowed
+        "coding": briefing_lines(now),  # [] unless the user set a judge handle; never raises
         "day": day,
         "timed": [e for e in today if not ce.is_all_day(e)],
         "all_day": [e for e in today if ce.is_all_day(e)],
@@ -154,6 +156,10 @@ def compose(persona: Any, now: datetime, day: dict[str, Any],
                           + (f", from {_join(senders[:3])}." if senders else "."))
         else:
             lines.append("No unread mail in Primary.")
+
+    for line in day.get("coding") or []:
+        lines.append(line)
+        spoken.append(line.replace(" #", " number ").rstrip(".") + ".")
 
     nxt = day["next"]
     if nxt is not None:
