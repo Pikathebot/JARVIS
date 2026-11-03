@@ -4,6 +4,7 @@ from typing import Optional
 from app.config import settings
 from app.agent.tools.paths import resolve_tool_path
 from app.agent.tools.file_kinds import binary_refusal, is_binary
+from app.agent.tools.doc_readers import kind_of, read_document
 
 def read_file(
     file_path: str,
@@ -14,6 +15,7 @@ def read_file(
 ) -> str:
     """
     Read and return the text contents of a LOCAL file on disk (in the workspace; a path outside it asks the user first).
+    Also reads PDF, docx, xlsx, pptx.
     Do NOT use this tool for web URLs (http/https); use fetch_url instead.
     For a long file, read it in parts with start_line/end_line -- a very long result is cut down
     to its beginning and end, so the middle of a big file is only reachable by line range.
@@ -64,20 +66,29 @@ def read_file(
         return f"Error: File not found at '{file_path}' within workspace '{ws_root}'."
     if path.is_dir():
         return f"Error: '{file_path}' is a directory, not a file."
-    if is_binary(path):
+    document = kind_of(path) is not None  # PDF / Word / Excel / PowerPoint: text is extracted, not read raw
+    if not document and is_binary(path):
         return binary_refusal(path, file_path)
     # Found by name somewhere else in the workspace: say so, or the model reports on the wrong file.
     note = ""
     if path != given:
         note = f"[Nothing at '{file_path}'; this is '{os.path.relpath(path, ws_root).replace(os.sep, '/')}']\n"
 
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            if start_line is None and end_line is None:
-                return note + f.read()
-            lines = f.readlines()
-    except Exception as e:
-        return f"Error reading file '{file_path}': {str(e)}"
+    if document:
+        content = read_document(path, file_path)
+        if content.startswith("Error:"):
+            return content
+        if start_line is None and end_line is None:
+            return note + content
+        lines = content.splitlines(keepends=True)
+    else:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                if start_line is None and end_line is None:
+                    return note + f.read()
+                lines = f.readlines()
+        except Exception as e:
+            return f"Error reading file '{file_path}': {str(e)}"
 
     # A line range: say which lines these are, so the model can ask for the next part.
     total = len(lines)

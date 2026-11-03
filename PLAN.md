@@ -2735,7 +2735,32 @@ Windows); whether reading is one tool or one per format; and whether an uploaded
 same reader or the RAG path. Measure one real file of each kind before committing to a library.
 
 **Needs the user:** a few real files (a Word doc, a PDF with a table, an Excel sheet) to test against, and a device check
-after the first slice lands. **Not yet started.**
+after the first slice lands.
+
+**Reading: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device, not tried on the user's real files.**
+`read_file` now reads PDF, `.docx`, `.xlsx`/`.xlsm` and `.pptx` as text (no new tool, no new risk tier; the taint list
+already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before `read_file`'s binary check;
+`start_line`/`end_line` apply to the extracted text; a long result is cut to head and tail by the tool pipeline like any other.
+- **Libraries (measured, scratch venv):** `pypdf` 4 MB, ~100 ms import, pure Python -- the only new dependency
+  (`backend/requirements.txt`), imported on the first PDF only. DOCX, XLSX and PPTX are read with `zipfile` +
+  `xml.etree`: `python-docx` + `python-pptx` + `openpyxl` would add 58 MB with lxml and Pillow (80-150 ms each) for
+  the same text. `pypdf` on Windows is unverified from here (pure-Python wheel, so expected fine).
+- **Markers:** `--- page N ---`, `--- sheet: Name ---` (hidden sheets say so), `--- slide N ---` + `Notes:`; Word headings
+  as `#`, lists as `-`, tables as `| a | b |` rows; Excel rows as `row: A<tab>B...` with formulas as `=F -> last saved value`.
+- **Refusals are sentences:** misnamed/damaged file, password-protected PDF, a PDF with no text layer (a scan; no OCR),
+  XML with entities, a part over 64 MB uncompressed, a file over 100 MB, and legacy `.doc`/`.xls`/`.ppt` (re-save as the
+  new format). Results are cached per (path, mtime, size), 6 files, so paging through a long file doesn't re-parse it.
+- **Limits:** Excel dates come back as serial numbers; a formula in a file never opened in Excel has no value; a PDF
+  table comes out one cell per line (pypdf); 1000 PDF pages, 2000 rows x 100 columns per sheet; Word headers/footers/
+  footnotes and PowerPoint master text are not read.
+- **Tests:** `test_doc_readers.py` (24; fixtures built from raw zip/XML and a hand-made PDF). Also run once by hand
+  against files written by python-docx, openpyxl, python-pptx and reportlab: that found Word's built-in `List Bullet`
+  style (no `numPr`) being missed -- fixed.
+- **Prompt head:** the one-line docstring addition ("Also reads PDF, docx, xlsx, pptx.") leaves `test_real_head_prefix_is_stable_
+  and_within_budget` ~3 chars under the WORKSPACE cap (37600). Any further tool-text change needs room made first.
+- **Still open:** (a) writing DOCX/XLSX/PDF (item 2) and the other formats (item 3) -- not started; (b) whether an
+  uploaded file goes through `read_file` (what happens now: the attachment note tells the model to `read_file` it) or the
+  RAG indexer -- the user's call; (c) real files from the user, then a device check.
 
 ### 4.28 Portability: one runtime, and hardware-driven profiles (raised from Argon's review 2026-10-25) -- QUEUED, after 4.27
 **Why:** the goal is that someone else can clone Jarvis and run it on their own machine. Two things in the code
