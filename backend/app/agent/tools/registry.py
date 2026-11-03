@@ -28,6 +28,7 @@ from app.agent.tools.notes import notes, tasks
 from app.agent.tools.recall import recall
 from app.agent.tools.forget_conversation import forget_conversation
 from app.agent.tools.calendar_events import calendar
+from app.agent.tools.coding import coding
 from app.agent.tools.gmail import email
 
 logger = logging.getLogger("jarvis.agent.tools")
@@ -89,6 +90,8 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "tasks": tasks,
     "calendar": calendar,
     "email": email,
+    # LeetCode / Codeforces / AtCoder (PLAN 4.23b)
+    "coding": coding,
 }
 
 AVAILABLE_TOOLS: list[Callable[..., Any]] = [
@@ -148,6 +151,7 @@ AVAILABLE_TOOLS: list[Callable[..., Any]] = [
     tasks,
     calendar,
     email,
+    coding,
 ]
 
 
@@ -413,6 +417,13 @@ class CalendarArgs(BaseModel):
     repeat: str = Field(default="", description="'yearly' or empty (add)")
 
 
+class CodingArgs(BaseModel):
+    action: Literal["contests", "daily", "profile", "pick", "schedule"] = Field(default="contests", description="What to do")
+    site: str = Field(default="", description="leetcode, codeforces or atcoder; empty = all or saved")
+    user: str = Field(default="", description="Handle; empty = the saved one")
+    query: str = Field(default="", description="contests: days ahead (7). pick: topic + level ('dp medium', 'graph 1200-1600'). schedule: contest id or name")
+
+
 class EmailArgs(BaseModel):
     action: Literal["inbox", "search", "read", "draft"] = Field(default="inbox", description="What to do")
     query: str = Field(default="", description="Gmail search words (search), e.g. 'from:amazon'")
@@ -474,6 +485,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "tasks": TasksArgs,
     "calendar": CalendarArgs,
     "email": EmailArgs,
+    "coding": CodingArgs,
 }
 
 

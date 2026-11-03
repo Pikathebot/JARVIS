@@ -185,6 +185,10 @@ class Settings(BaseSettings):
     # Tool execution pipeline (app/agent/tool_pipeline.py): every tool runs off the event loop
     # under a timeout, and oversized results are trimmed (head + tail) before the model sees them.
     tool_default_timeout_seconds: float = Field(default=60.0, alias="TOOL_DEFAULT_TIMEOUT_SECONDS")
+    # The user's public handles for the `coding` tool (PLAN 4.23b). Empty = the model asks, and passes user= per call.
+    codeforces_handle: str = Field(default="", alias="CODEFORCES_HANDLE")
+    leetcode_username: str = Field(default="", alias="LEETCODE_USERNAME")
+    atcoder_user: str = Field(default="", alias="ATCODER_USER")
     tool_result_max_chars: int = Field(default=12000, alias="TOOL_RESULT_MAX_CHARS")
     confirmation_timeout_action: str = Field(default="deny", alias="CONFIRMATION_TIMEOUT_ACTION")
     # How long an unanswered CONFIRMATION_REQUIRED ask stays valid. When it lapses Jarvis says

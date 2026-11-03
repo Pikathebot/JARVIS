@@ -25,6 +25,7 @@ SOURCES: dict[str, str] = {
     "research": "web pages",
     "look_at_screen": "the screen",
     "get_clipboard": "the clipboard",
+    "coding": "a coding site",
 }
 FILE_READS = frozenset({"read_file", "read_artifact"})
 SINKS = frozenset({"type_text", "press_keys", "write_file", "patch_file", "set_clipboard", "remember"})
@@ -35,6 +36,7 @@ ACTION_SINKS: dict[str, frozenset[str]] = {
     "tasks": frozenset({"add", "done", "reopen", "edit", "remove"}),
     "calendar": frozenset({"add", "move", "delete"}),
     "email": frozenset({"draft"}),
+    "coding": frozenset({"schedule"}),
 }
 
 

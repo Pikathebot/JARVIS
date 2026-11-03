@@ -2653,7 +2653,7 @@ the design document first and never came back to it. Meanwhile the governor unlo
   Takes a model restart (next launch of the app). RAM over a long session: a 3 h soak (11-02, 4.29 B8) held flat,
   llama-server 8.2-9.3 GB private, backend 1.4 GB.
 
-### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- QUEUED: after 4.23, before 4.24
+### 4.23b Integrations for a college student: competitive programming and study (raised by the user 2026-10-23) -- FIRST SLICE BUILT 2026-11-03 (contests, daily, profile, pick, schedule); not seen on device
 **The ask (user):** "Since I am a college student -- integration of competitive programming websites like LeetCode and
 other useful integrations that might help me."
 
@@ -2685,6 +2685,40 @@ other useful integrations that might help me."
 
 **Constraints:** each new tool = the four registration points (CLAUDE.md) and costs prompt-head budget in Freeform; prefer
 one `coding` tool with actions (like `calendar`) over many. Network data is untrusted (taint rules apply).
+
+**First slice BUILT 2026-11-03 (cloud session): tests pass on Linux and it ran against the live sites; NOT seen on device, never
+used through the model.** The user chose (11-03) LeetCode + Codeforces + AtCoder (no clist.by: it needs a key), all four features, one
+`coding` tool in both spaces, +900 chars of head budget (cap FREEFORM 28150, WORKSPACE 38650; the tool's schema is 921 chars).
+`app/agent/tools/coding.py`, args `action` (contests | daily | profile | pick | schedule), `site`, `user`, `query` (contests: days
+ahead, default 7; pick: topic + level such as `dp medium` / `graph 1200-1600`; schedule: contest id or name words) -- topic, level, days
+and contest were folded into `query` to fit the budget.
+- **contests:** the next N days merged across sites in local time, with id and link. Codeforces `contest.list` (phase BEFORE);
+  LeetCode GraphQL `upcomingContests`; AtCoder from the `atcoder.jp/contests` page (kenkoooo's feed has no future contests; the one
+  fragile source -- a changed page reads as "no contests", and one site failing never hides the others).
+- **daily:** LeetCode's daily with difficulty, acceptance and topics; with a handle, whether it is among the 20 latest accepted.
+- **profile:** LeetCode (solved by difficulty, streak, active days, contest rating/rank), Codeforces (rating, max, last five rating
+  changes, distinct solves in the last 1000 submissions, accepted this week), AtCoder (rating, highest, last five, accepted count/rank).
+  An unknown handle returns the site's own message (Codeforces explains in the 400 body).
+- **pick:** three problems by topic and level, with links; LeetCode (topic aliases `dp` -> `dynamic-programming`, paid-only skipped),
+  Codeforces (rating bands easy <=1200, medium 1300-1800, hard >=1900, or a range; tag aliases), AtCoder (difficulty from
+  kenkoooo's models, clipped as the site shows it; no topic tags, so a topic is ignored and says so; the original contest named, not
+  the practice set that reuses the task). Solved problems are skipped: exact for Codeforces (last 1000 submissions), up to 5000
+  submissions from the start for AtCoder, **only the 20 latest accepted for LeetCode** (all its public API lists) -- each result says which.
+- **schedule:** finds the contest by id or words (an ambiguous match lists ids), adds it through the existing `calendar` tool
+  (local time, real duration) and a `remind_me` 15 minutes before; a repeat call adds no second reminder; an off-the-record chat saves
+  nothing; one starting in under 15 minutes gets the event only.
+- **Plumbing:** handles from the call, else `CODEFORCES_HANDLE` / `LEETCODE_USERNAME` / `ATCODER_USER` in `backend/.env` (validated to
+  letters, digits, `_.-` before they reach a URL); results cached 5-60 min; Codeforces calls spaced 2 s; every failure is a sentence.
+  `coding` is a taint *source* (site text is outside text) and `schedule` a taint *sink* (like `calendar add`), so after a read in the same
+  turn the schedule asks; read actions are not "changes" for the claim check, schedule backs a calendar/reminder claim. 46 tests
+  (`test_coding.py`, fixtures shaped like the live responses, all times relative to now). Live run: every action answered in 1-10 s
+  (the first AtCoder pick downloads ~2 MB of problem data).
+- **Needs the user:** their three handles (say them in chat, or set the `.env` keys); a device check; then the real-chat eval cases
+  ("any contests this weekend?", "what's today's LeetCode daily?", "put the Codeforces round on my calendar").
+- **Not built (still queued):** practice-help skill (explain an approach, review a solution without handing over the answer) and
+  contest mode (no solving during a live contest) -- a skill, not always-on text; a line in the day briefing; clist.by / CodeChef;
+  the other student integrations (LMS, timetable with weekly repeat, GitHub, arXiv, flashcards, Pomodoro). LeetCode's GraphQL is not a
+  published API and can change; the tool reports a refused query rather than guessing.
 
 ### 4.24 A lean speech-to-text engine for Bark (raised by the user 2026-10-23) -- QUEUED, after the app work ahead of it
 **Why:** Bark 3.0 Pro on PyTorch costs ~3.4 GB of RAM on the CPU and a 25-30 s start (most of it importing torch), where

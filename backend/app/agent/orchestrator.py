@@ -540,9 +540,9 @@ _FILE_TOOLS = frozenset({"write_file", "patch_file", "delete_file", "create_arti
 _CLAIM_FAMILIES: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
     ("the file", re.compile(r"\b[\w-]+\.[a-z][a-z0-9]{0,4}\b|\b(?:files?|folders?|directory)\b", re.IGNORECASE),
      _FILE_TOOLS),
-    ("the reminder", re.compile(r"\b(?:remind\w*|alarms?|timers?)\b", re.IGNORECASE), frozenset({"remind_me", "reminders"})),
+    ("the reminder", re.compile(r"\b(?:remind\w*|alarms?|timers?)\b", re.IGNORECASE), frozenset({"remind_me", "reminders", "coding"})),
     ("the calendar", re.compile(r"\b(?:calendar|events?|appointments?|meetings?|scheduled)\b", re.IGNORECASE),
-     frozenset({"calendar"})),
+     frozenset({"calendar", "coding"})),
     ("the email", re.compile(r"\b(?:e-?mails?|drafts?|drafted|inbox|replied)\b", re.IGNORECASE), frozenset({"email"})),
     ("the clipboard", re.compile(r"\bclipboard\b", re.IGNORECASE), frozenset({"set_clipboard", "execute_command"})),
     ("the list", re.compile(r"\b(?:to-?dos?|tasks?|lists?|ticked|marked|notes?|noted)\b", re.IGNORECASE),
@@ -651,6 +651,7 @@ def changed_tools(tools_used: list[Any]) -> set[str]:
             continue
         if ((name == "notes" and action in ("find", "read", "list")) or (name == "tasks" and action == "list")
                 or (name == "calendar" and action in ("agenda", "find", "list"))
+                or (name == "coding" and action != "schedule")
                 or (name == "email" and action in ("inbox", "search", "read", "list"))):
             continue
         if name not in _READ_ONLY_TOOLS:

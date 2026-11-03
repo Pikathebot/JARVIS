@@ -361,7 +361,8 @@ def test_per_turn_material_rides_on_the_user_turn_not_the_prefix(memory_test_env
 # FREEFORM 26300 -> 26800 on 2026-11-01 for delete_file in Freeform (the user's call: asked to delete a
 # file there, the model had no delete tool and reached for kill_process).
 # +150 on 2026-11-03 for write_file building .docx/.xlsx/.pdf from text (the user's call, PLAN 4.27 writing)
-HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 27250, "WORKSPACE": 37750}  # +300 on 2026-11-01 for enter_game_mode (the user's call)
+# +900 on 2026-11-03 for the `coding` tool, LeetCode / Codeforces / AtCoder (the user's call, PLAN 4.23b)
+HEAD_BUDGET_CHARS = {"system": 6200, "FREEFORM": 28150, "WORKSPACE": 38650}  # +300 on 2026-11-01 for enter_game_mode (the user's call)
 
 
 @pytest.mark.parametrize("space", ["FREEFORM", "WORKSPACE"])
