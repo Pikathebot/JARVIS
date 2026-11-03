@@ -2750,7 +2750,7 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
 - **Refusals are sentences:** misnamed/damaged file, password-protected PDF, a PDF with no text layer (a scan; no OCR),
   XML with entities, a part over 64 MB uncompressed, a file over 100 MB, and legacy `.doc`/`.xls`/`.ppt` (re-save as the
   new format). Results are cached per (path, mtime, size), 6 files, so paging through a long file doesn't re-parse it.
-- **Limits:** Excel dates come back as serial numbers; a formula in a file never opened in Excel has no value; a PDF
+- **Limits:** Excel dates read as dates (`2026-10-03`, `2026-10-03 12:00`, `18:00`) when the cell's number format is a date/time one (built-in ids and custom codes, 1900 and 1904 systems); other number formats are not applied; a formula in a file never opened in Excel has no value; a PDF
   table comes out one cell per line (pypdf); 1000 PDF pages, 2000 rows x 100 columns per sheet; Word headers/footers/
   footnotes and PowerPoint master text are not read.
 - **Requirements:** `backend/requirements.txt` now has `pypdf`, `pytest-asyncio` (the suite needs it; `asyncio_mode = strict`) and `sqlmodel<0.0.45` (0.0.45+ rejects the models' timezone-naive datetimes: ~60 tests failed; 0.0.43/0.0.44 pass).

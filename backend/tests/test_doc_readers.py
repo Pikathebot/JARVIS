@@ -302,3 +302,55 @@ def test_an_edited_file_is_not_served_from_the_cache(ws):
     _zip(p, {"word/document.xml": f'<w:document {W}><w:body><w:p><w:r><w:t>Changed</w:t></w:r></w:p></w:body></w:document>'})
     second = _read(ws, "report.docx")
     assert first != second and "Changed" in second
+
+
+# ---------------- Excel dates: shown as dates only where the number format says so ----------------
+def _xlsx_with_styles(path: Path, numfmts: str, xfs: list, cells: str, workbook_pr: str = "") -> Path:
+    """xfs = numFmtId per cell style index (0, 1, 2...). cells = <c> elements of one row."""
+    styles = (f'<styleSheet {S}><numFmts>{numfmts}</numFmts><cellXfs>'
+              + "".join(f'<xf numFmtId="{i}"/>' for i in xfs) + "</cellXfs></styleSheet>")
+    return _zip(path, {
+        "xl/workbook.xml": f'<workbook {S} {R}>{workbook_pr}<sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels": _rels(("rId1", "worksheets/sheet1.xml")),
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": f'<worksheet {S}><sheetData><row r="1">{cells}</row></sheetData></worksheet>',
+    })
+
+
+def test_excel_dates_times_and_plain_numbers(ws):
+    numfmts = ('<numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm"/>'
+               '<numFmt numFmtId="165" formatCode="0.00&quot; months&quot;"/>'   # d and m only inside quotes: a number
+               '<numFmt numFmtId="166" formatCode="[Red]#,##0.0"/>'
+               '<numFmt numFmtId="167" formatCode="h:mm:ss"/>')
+    # style 0 General, 1 builtin date (14), 2 custom datetime, 3 "months" number, 4 [Red] number, 5 time, 6 builtin 2 (0.00)
+    cells = ('<c r="A1" s="1"><v>46298</v></c>'          # 2026-10-03
+             '<c r="B1" s="2"><v>46298.5</v></c>'        # + noon
+             '<c r="C1" s="3"><v>46298</v></c>'          # not a date
+             '<c r="D1" s="4"><v>46298</v></c>'          # not a date
+             '<c r="E1" s="5"><v>0.75</v></c>'           # 18:00:00 -> time only
+             '<c r="F1" s="6"><v>46298</v></c>'          # builtin 2 is not a date format
+             '<c r="G1"><v>46298</v></c>'                # General
+             '<c r="H1" s="1" t="s"><v>0</v></c>')       # a date style on a text cell stays text
+    p = _xlsx_with_styles(ws / "d.xlsx", numfmts, [0, 14, 164, 165, 166, 167, 2], cells)
+    with zipfile.ZipFile(p, "a") as zf:
+        zf.writestr("xl/sharedStrings.xml", f'<sst {S}><si><t>n/a</t></si></sst>')
+    out = _read(ws, "d.xlsx")
+    assert "1: 2026-10-03\t2026-10-03 12:00\t46298\t46298\t18:00\t46298\t46298\tn/a" in out
+
+
+def test_excel_1900_quirk_and_the_1904_system(ws):
+    # serial 1 = 1900-01-01, 59 = 1900-02-28; 61 = 1900-03-01 (Excel has a phantom 1900-02-29 at 60)
+    cells = '<c r="A1" s="1"><v>1</v></c><c r="B1" s="1"><v>59</v></c><c r="C1" s="1"><v>61</v></c><c r="D1" s="1"><v>0</v></c>'
+    _xlsx_with_styles(ws / "e.xlsx", "", [0, 14], cells)
+    assert "1: 1900-01-01\t1900-02-28\t1900-03-01\t0" in _read(ws, "e.xlsx")  # day 0 has no date: left as the number
+    _xlsx_with_styles(ws / "m.xlsx", "", [0, 14], '<c r="A1" s="1"><v>0</v></c>', workbook_pr='<workbookPr date1904="1"/>')
+    assert "1: 1904-01-01" in _read(ws, "m.xlsx")
+
+
+def test_a_workbook_without_styles_keeps_raw_numbers(ws):
+    _zip(ws / "n.xlsx", {
+        "xl/workbook.xml": f'<workbook {S} {R}><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels": _rels(("rId1", "worksheets/sheet1.xml")),
+        "xl/worksheets/sheet1.xml": f'<worksheet {S}><sheetData><row r="1"><c r="A1" s="1"><v>46298</v></c></row></sheetData></worksheet>',
+    })
+    assert "1: 46298" in _read(ws, "n.xlsx")

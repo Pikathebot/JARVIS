@@ -10,8 +10,9 @@ The text carries its own structure markers (``--- page 3 ---``, ``--- sheet: Bud
 ``read_file``'s ``start_line`` / ``end_line`` mean something, and a long result is cut to head and tail by the
 tool pipeline like any other. Every failure is a sentence the model can pass on, never a traceback.
 
-Limits (not bugs): Excel dates come back as their serial numbers (the number format is not applied); formulas are
-shown with the value Excel last saved, which is empty for a file never opened in Excel; a PDF with no text layer
+Limits (not bugs): Excel dates are shown as dates only when the cell's number format is a date format (other formats are
+not applied); formulas are shown with the value Excel last saved, which is empty for a file never opened in Excel;
+a PDF with no text layer
 (a scan) says so and is not OCR'd; legacy ``.doc`` / ``.xls`` / ``.ppt`` are not read.
 """
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 import re
 import threading
 import zipfile
+from datetime import datetime, timedelta
 from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
@@ -299,7 +301,71 @@ def _shared_strings(zf: zipfile.ZipFile) -> list:
     return out
 
 
-def _cell_text(c: ET.Element, shared: list) -> str:
+_BUILTIN_DATE_FORMATS = frozenset(list(range(14, 23)) + list(range(27, 37)) + list(range(45, 48)) + list(range(50, 59)))
+_BUILTIN_TIME_ONLY = frozenset({18, 19, 20, 21, 45, 46, 47})
+_QUOTED_OR_BRACKETED = re.compile(r'"[^"]*"|\[[^\]]*\]|\\.|_.|\*.')
+_DATE_TOKENS = re.compile(r"[ymdhs]", re.I)
+_DAY_PART = re.compile(r"[ydg]", re.I)  # a year or a day: the format shows a date, not only a time
+
+
+def _custom_kind(code: str) -> Optional[str]:
+    """'date' | 'time' for a custom number format that shows one (d, m, y, h, s outside quotes, brackets, escapes)."""
+    bare = _QUOTED_OR_BRACKETED.sub("", code or "")
+    if not _DATE_TOKENS.search(bare):
+        return None
+    return "date" if _DAY_PART.search(bare) else ("time" if re.search(r"[hs]", bare, re.I) else "date")
+
+
+def _date_styles(zf: zipfile.ZipFile) -> dict:
+    """{cell style index (the c@s attribute): 'date' | 'time'} for styles whose number format is a date or time."""
+    root = _xml(zf, "xl/styles.xml", optional=True)
+    if root is None:
+        return {}
+    custom = {n.get("numFmtId"): n.get("formatCode") or "" for n in root.iter(f"{_S}numFmt")}
+    xfs = root.find(f"{_S}cellXfs")
+    out = {}
+    for i, xf in enumerate(xfs.findall(f"{_S}xf") if xfs is not None else []):
+        fid = xf.get("numFmtId", "0")
+        if fid in custom:
+            kind = _custom_kind(custom[fid])
+        elif fid.isdigit() and int(fid) in _BUILTIN_DATE_FORMATS:
+            kind = "time" if int(fid) in _BUILTIN_TIME_ONLY else "date"
+        else:
+            kind = None
+        if kind:
+            out[str(i)] = kind
+    return out
+
+
+def _serial_to_text(value: str, kind: str, date1904: bool) -> str:
+    """'46298' -> '2026-10-03'; '46298.5' -> '2026-10-03 12:00'; a time format on '0.75' -> '18:00'.
+    The value unchanged if it isn't a plausible serial."""
+    try:
+        serial = float(value)
+    except ValueError:
+        return value
+    if serial < 0 or serial > 2_958_465:  # past 9999-12-31
+        return value
+    if kind == "time":
+        seconds = round((serial % 1) * 86400)
+        h, rest = divmod(seconds, 3600)
+        m, sec = divmod(rest, 60)
+        return f"{h % 24:02d}:{m:02d}" + (f":{sec:02d}" if sec else "")
+    if date1904:
+        base = datetime(1904, 1, 1)
+    elif serial < 1:
+        return value  # Excel's "day 0" (1/0/1900) has no calendar date
+    else:
+        base = datetime(1899, 12, 30)  # absorbs Excel's phantom 1900-02-29 for every date after it
+        if serial < 61:
+            base = datetime(1899, 12, 31)  # 1 Jan 1900 .. 28 Feb 1900 sit before the phantom day
+    moment = base + timedelta(seconds=round(serial * 86400))
+    if moment.hour == 0 and moment.minute == 0 and moment.second == 0:
+        return f"{moment:%Y-%m-%d}"
+    return f"{moment:%Y-%m-%d %H:%M}" + (f":{moment:%S}" if moment.second else "")
+
+
+def _cell_text(c: ET.Element, shared: list, dates: Optional[dict] = None, date1904: bool = False) -> str:
     t = c.get("t", "n")
     v = c.find(f"{_S}v")
     f = c.find(f"{_S}f")
@@ -314,6 +380,8 @@ def _cell_text(c: ET.Element, shared: list) -> str:
             value = ""
     elif t == "b":
         value = "TRUE" if v.text.strip() == "1" else "FALSE"
+    elif t in ("n", "") and dates and c.get("s") in dates:
+        value = _serial_to_text(v.text.strip(), dates[c.get("s")], date1904)
     else:
         value = v.text
     value = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
@@ -330,6 +398,9 @@ def _read_xlsx(path: Path) -> str:
         wb = _xml(zf, "xl/workbook.xml")
         rels = _rels(zf, "xl/_rels/workbook.xml.rels")
         shared = _shared_strings(zf)
+        dates = _date_styles(zf)
+        pr = wb.find(f"{_S}workbookPr")
+        date1904 = pr is not None and (pr.get("date1904") or "").lower() in ("1", "true")
         sheets = []
         for s in wb.iter(f"{_S}sheet"):
             target = rels.get(s.get(f"{_R}id"))
@@ -359,7 +430,7 @@ def _read_xlsx(path: Path) -> str:
                 for c in row.findall(f"{_S}c"):
                     idx = _col_index(c.get("r", ""))
                     if 0 <= idx < MAX_SHEET_COLS:
-                        text = _cell_text(c, shared)
+                        text = _cell_text(c, shared, dates, date1904)
                         if text != "":
                             cells[idx] = text
                 if not cells:
