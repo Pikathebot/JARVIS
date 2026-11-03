@@ -15,7 +15,7 @@ def read_file(
 ) -> str:
     """
     Read and return the text contents of a LOCAL file on disk (in the workspace; a path outside it asks the user first).
-    Also reads PDF, docx, xlsx, pptx.
+    Also reads PDF, docx, xlsx, pptx, odt, ods, odp, epub, rtf.
     Do NOT use this tool for web URLs (http/https); use fetch_url instead.
     For a long file, read it in parts with start_line/end_line -- a very long result is cut down
     to its beginning and end, so the middle of a big file is only reachable by line range.

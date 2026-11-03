@@ -354,3 +354,107 @@ def test_a_workbook_without_styles_keeps_raw_numbers(ws):
         "xl/worksheets/sheet1.xml": f'<worksheet {S}><sheetData><row r="1"><c r="A1" s="1"><v>46298</v></c></row></sheetData></worksheet>',
     })
     assert "1: 46298" in _read(ws, "n.xlsx")
+
+
+# ---------------- OpenDocument, EPUB, RTF ----------------
+OT = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' \
+     'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' \
+     'xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"'
+
+
+def _odf(path: Path, body: str) -> Path:
+    return _zip(path, {"mimetype": "application/vnd.oasis.opendocument.text",
+                       "content.xml": f'<office:document-content {OT}><office:body>{body}</office:body></office:document-content>'})
+
+
+def test_odt_headings_lists_tables_spaces_and_footnotes_left_out(ws):
+    _odf(ws / "a.odt", (
+        '<office:text><text:h text:outline-level="2">Goals</text:h>'
+        '<text:p>Two<text:s text:c="3"/>spaces<text:tab/>and a tab<text:line-break/>break'
+        '<text:note><text:note-body><text:p>FOOTNOTE</text:p></text:note-body></text:note></text:p>'
+        '<text:list><text:list-item><text:p>one</text:p><text:list><text:list-item><text:p>nested</text:p></text:list-item></text:list>'
+        '</text:list-item><text:list-item><text:p>two</text:p></text:list-item></text:list>'
+        '<table:table><table:table-row><table:table-cell><text:p>H1</text:p></table:table-cell>'
+        '<table:table-cell table:number-columns-repeated="2"><text:p>x</text:p></table:table-cell></table:table-row></table:table>'
+        '</office:text>'))
+    out = _read(ws, "a.odt")
+    assert out.startswith("[OpenDocument text]\n## Goals\n")
+    assert "Two   spaces\tand a tab\nbreak" in out and "FOOTNOTE" not in out
+    assert "- one" in out and "- nested" in out and "- two" in out
+    assert "| H1 | x | x |" in out
+
+
+def test_ods_values_dates_booleans_formulas_gaps_and_repeats(ws):
+    _odf(ws / "a.ods", (
+        '<office:spreadsheet><table:table table:name="Budget">'
+        '<table:table-row><table:table-cell office:value-type="string"><text:p>Item</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="float" office:value="3.5"><text:p>3.50</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="date" office:date-value="2026-10-03"><text:p>10/03/26</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="date" office:date-value="2026-10-03T09:30:00"><text:p>x</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="boolean" office:boolean-value="true"><text:p>TRUE</text:p></table:table-cell></table:table-row>'
+        '<table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-repeated="9"/></table:table-row>'
+        '<table:table-row><table:table-cell/><table:table-cell office:value-type="float" office:value="7" '
+        'table:formula="of:=SUM([.B1:.B1];[$Other.A1])"><text:p>7</text:p></table:table-cell></table:table-row>'
+        '<table:table-row table:number-rows-repeated="1048000"><table:table-cell table:number-columns-repeated="1024"/></table:table-row>'
+        '</table:table><table:table table:name="Empty"/></office:spreadsheet>'))
+    out = _read(ws, "a.ods")
+    assert out.startswith("[OpenDocument spreadsheet, 2 sheets]")
+    assert "1: Item\t3.5\t2026-10-03\t2026-10-03 09:30\tTRUE" in out
+    assert "\n4: \t=SUM(B1:B1,Other!A1) -> 7" in out                       # rows 2-3 were an empty repeat: the gap holds
+    assert "--- sheet: Empty ---\n(empty)" in out
+
+
+def _epub(path: Path, chapters: dict, order: list) -> Path:
+    items = "".join(f'<item id="{k}" href="{k}.xhtml" media-type="application/xhtml+xml"/>' for k in chapters)
+    spine = "".join(f'<itemref idref="{k}"/>' for k in order)
+    opf = ('<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+           f'<dc:title>Notes on Graphs</dc:title><dc:creator>A. Student</dc:creator></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>')
+    parts = {"mimetype": "application/epub+zip",
+             "META-INF/container.xml": ('<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles>'
+                                        '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'),
+             "OEBPS/content.opf": opf}
+    for k, html in chapters.items():
+        parts[f"OEBPS/{k}.xhtml"] = html
+    return _zip(path, parts)
+
+
+def test_epub_follows_the_spine_order_and_keeps_headings_lists_and_table_rows(ws):
+    ch1 = ('<html><head><title>IGNORED</title><style>p{}</style></head><body><h1>Intro</h1><p>First &amp; <b>bold</b>.</p>'
+           '<ul><li>a</li><li>b</li></ul><table><tr><td><p>H1</p></td><td>H2</td></tr><tr><td>1</td><td>2</td></tr></table>'
+           '<script>alert(1)</script></body></html>')
+    ch2 = "<html><body><h2>Second</h2><p>Later.</p></body></html>"
+    _epub(ws / "b.epub", {"c1": ch1, "c2": ch2}, order=["c2", "c1"])          # the spine says c2 first
+    out = _read(ws, "b.epub")
+    assert out.startswith("[EPUB: Notes on Graphs by A. Student, 2 sections]")
+    assert out.index("## Second") < out.index("# Intro")
+    assert "First & bold." in out and "- a" in out and "- b" in out
+    assert "| H1 | H2 |" in out and "| 1 | 2 |" in out
+    assert "IGNORED" not in out and "alert" not in out
+
+
+def test_rtf_text_escapes_unicode_and_skipped_destinations(ws):
+    rtf = (r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Arial;}}{\colortbl;\red0\green0\blue0;}"
+           r"{\*\generator Hidden Words;}{\info{\title SECRET}}"
+           r"\pard Caf\'e9 \u8364?  and \u233? \b bold\b0\par Line two with a \{brace\} and a tab\tab here\par "
+           r"{\pict skip me}End\~nbsp\par}")
+    (ws / "a.rtf").write_text(rtf, encoding="latin-1")
+    out = _read(ws, "a.rtf")
+    assert out.startswith("[RTF document]\nCafé €  and é bold")  # the "?" after \\u8364 is its fallback and is dropped; both real spaces stay
+    assert "Line two with a {brace} and a tab\there" in out
+    assert "Hidden Words" not in out and "SECRET" not in out and "skip me" not in out and "Arial" not in out
+    assert "End nbsp" in out
+
+
+@pytest.mark.parametrize("name,payload,fragment", [
+    ("fake.rtf", b"just text", "does not start like an RTF"),
+    ("fake.odt", b"plain", "not a real .odt"),
+    ("fake.epub", b"plain", "not a real .epub"),
+])
+def test_misnamed_open_formats_get_a_clear_message(ws, name, payload, fragment):
+    (ws / name).write_bytes(payload)
+    assert fragment in _read(ws, name) and _read(ws, name).startswith("Error:")
+
+
+def test_an_odf_drawing_is_declined_politely(ws):
+    _odf(ws / "d.odt", "<office:drawing/>")
+    assert "a kind Jarvis does not read" in _read(ws, "d.odt")

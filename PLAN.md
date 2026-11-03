@@ -2798,7 +2798,22 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     "Replaces the existing 'x.docx' (the old version is backed up first)", so documents need nothing extra.
   - **Not done:** PPTX writing; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
     document in place (the model rewrites the whole file: read -> change -> write).
-- **Still open:** (a) the other formats (item 3: RTF, EPUB, ODT/ODS, OCR) -- not started; (b) whether an
+- **Other formats: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device** (item 3, reading only).
+  `read_file` also reads **OpenDocument** (`.odt` headings/lists/tables with footnotes left out; `.ods` rows with their numbers,
+  gaps kept, dates/booleans typed, formulas as `=SUM(B2:B4) -> 7` with `[.B2]`/`$Sheet.B2` converted to Excel form and `;` to `,`;
+  `.odp` slides with notes, slide-number/footer placeholders skipped, tables as pipe rows), **EPUB** (chapters in spine order, title
+  and author, headings/lists/table rows, scripts and styles dropped) and **RTF** (own decoder: `\'hh` and `\uN` escapes, code page,
+  font/colour/info/picture/header destinations skipped; headings and bold are not recoverable from RTF, so it is plain lines). All
+  three use only the standard library. Same refusals as the Office formats (misnamed, damaged, XML entities, oversized part).
+  Checked against files LibreOffice 24.2 wrote from the sample docx/xlsx/pptx (ODT, ODS, ODP, EPUB, RTF), which found: ODS formulas
+  use `;`, ODP notes pages carry the slide-number text, EPUB tables printed a cell per line, RTF bullets left leading whitespace --
+  all fixed. 11 tests. The `read_file` description now names the extensions ("Also reads PDF, docx, xlsx, pptx, odt, ods, odp,
+  epub, rtf."), inside the +150 cap. Uploads accept the five new extensions too. Reading only: these formats are not *written*
+  (a Word file is the answer; ask if ODT/RTF output is wanted).
+- **Left out on purpose:** **OCR** of scanned PDFs and images (the plan says it goes through the vision slot, which needs the
+  GPU model; nothing here can test it -- a scan reads as "no text layer" and says so); **PPTX writing** (not in the plan, and the
+  result could be checked only against python-pptx and LibreOffice, not PowerPoint).
+- **Still open:** (a) OCR via the vision slot -- needs the device; (b) whether an
   uploaded file goes through `read_file` (what happens now: the attachment note tells the model to `read_file` it) or the
   RAG indexer -- the user's call; (c) real files from the user, then a device check.
 

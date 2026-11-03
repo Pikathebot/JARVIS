@@ -24,7 +24,7 @@ ALLOWED_EXTENSIONS = {
     ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml",
     ".cpp", ".h", ".hpp", ".cs", ".ini", ".csv", ".html", ".css", ".svg",
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf",
-    ".docx", ".xlsx", ".pptx",  # read_file extracts their text (PLAN 4.27)
+    ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".epub", ".rtf",  # read_file extracts their text (PLAN 4.27)
 }
 
 

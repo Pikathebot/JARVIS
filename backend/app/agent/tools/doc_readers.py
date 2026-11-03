@@ -1,5 +1,5 @@
 """
-Plain text out of the documents people hand an assistant: PDF, Word, Excel, PowerPoint (PLAN 4.27, reading).
+Plain text out of the documents people hand an assistant: PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, RTF (PLAN 4.27).
 
 ``read_file`` calls ``read_document`` before its binary check. Nothing here is imported at startup: ``pypdf``
 (pure Python, 4 MB, ~100 ms to import) is imported on the first PDF; DOCX, XLSX and PPTX are zip files of XML, so
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree as ET
 
-DOC_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})
+DOC_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".odt", ".ods", ".odp", ".epub", ".rtf"})
 LEGACY_EXTENSIONS = {".doc": "Word 97-2003", ".xls": "Excel 97-2003", ".ppt": "PowerPoint 97-2003"}
 
 MAX_FILE_BYTES = 100 * 1024 * 1024          # refuse to even open anything larger
@@ -64,7 +64,7 @@ def _cached(path: Path) -> Optional[tuple]:
 
 # ---- recognising a document ----
 def kind_of(path: Path) -> Optional[str]:
-    """'pdf' | 'docx' | 'xlsx' | 'pptx' | 'legacy' | None (not a document: read it as text).
+    """'pdf' | 'docx' | 'xlsx' | 'pptx' | 'odf' | 'epub' | 'rtf' | 'legacy' | None (not a document: read it as text).
 
     The extension picks the reader; the first bytes confirm it, so a renamed or damaged file gets a clear
     message instead of a parser crash."""
@@ -73,7 +73,8 @@ def kind_of(path: Path) -> Optional[str]:
         return "legacy"
     if ext not in DOC_EXTENSIONS:
         return None
-    return {".pdf": "pdf", ".docx": "docx", ".xlsx": "xlsx", ".xlsm": "xlsx", ".pptx": "pptx"}[ext]
+    return {".pdf": "pdf", ".docx": "docx", ".xlsx": "xlsx", ".xlsm": "xlsx", ".pptx": "pptx",
+            ".odt": "odf", ".ods": "odf", ".odp": "odf", ".epub": "epub", ".rtf": "rtf"}[ext]
 
 
 def _check_magic(path: Path, kind: str) -> None:
@@ -85,6 +86,9 @@ def _check_magic(path: Path, kind: str) -> None:
     if kind == "pdf":
         if b"%PDF-" not in head:
             raise DocumentError("it does not start like a PDF (renamed, damaged or not finished downloading?)")
+    elif kind == "rtf":
+        if not head.lstrip().startswith(b"{\\rtf"):
+            raise DocumentError("it does not start like an RTF file (renamed or damaged?)")
     elif not head.startswith(b"PK\x03\x04"):
         raise DocumentError(f"it is not a real .{path.suffix.lstrip('.').lower()} file "
                             "(renamed, damaged, or password-protected: those are encrypted, not zipped)")
@@ -108,7 +112,8 @@ def read_document(path: Path, shown_as: str) -> str:
         if size > MAX_FILE_BYTES:
             raise DocumentError(f"it is {size // (1024 * 1024)} MB, over the {MAX_FILE_BYTES // (1024 * 1024)} MB limit")
         _check_magic(path, kind)
-        text = {"pdf": _read_pdf, "docx": _read_docx, "xlsx": _read_xlsx, "pptx": _read_pptx}[kind](path)
+        text = {"pdf": _read_pdf, "docx": _read_docx, "xlsx": _read_xlsx, "pptx": _read_pptx,
+                "odf": _read_odf, "epub": _read_epub, "rtf": _read_rtf}[kind](path)
     except DocumentError as e:
         return f"Error: could not read '{shown_as}': {e}."
     except (zipfile.BadZipFile, ET.ParseError, KeyError, ValueError, OSError) as e:
@@ -509,3 +514,391 @@ def _notes_body(sp: ET.Element) -> list:
         return []
     tx = sp.find(f"{_P}txBody")
     return _a_paragraphs(tx) if tx is not None else []
+
+
+# ---- OpenDocument (.odt, .ods, .odp) ----
+_OT = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
+_OTB = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
+_OO = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
+_OD_ = "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}"
+_OP = "{urn:oasis:names:tc:opendocument:xmlns:presentation:1.0}"
+
+
+def _o_text(el: ET.Element) -> str:
+    out = [el.text or ""]
+    for ch in el:
+        if ch.tag == f"{_OT}s":
+            out.append(" " * min(200, int(ch.get(f"{_OT}c", "1") or 1)))
+        elif ch.tag == f"{_OT}tab":
+            out.append("\t")
+        elif ch.tag == f"{_OT}line-break":
+            out.append("\n")
+        elif ch.tag != f"{_OT}note":  # footnote bodies are not part of the running text
+            out.append(_o_text(ch))
+        out.append(ch.tail or "")
+    return "".join(out)
+
+
+def _o_table_rows(tbl: ET.Element) -> list:
+    rows = []
+    for tr in tbl.iter(f"{_OTB}table-row"):
+        cells = []
+        for tc in tr:
+            if tc.tag not in (f"{_OTB}table-cell", f"{_OTB}covered-table-cell"):
+                continue
+            text = " ".join(filter(None, (_o_text(p).strip() for p in tc.iter(f"{_OT}p"))))
+            cells.extend([text] * min(50, int(tc.get(f"{_OTB}number-columns-repeated", "1") or 1)))
+        while cells and cells[-1] == "":
+            cells.pop()
+        if cells:
+            rows.append("| " + " | ".join(cells) + " |")
+    return rows
+
+
+def _o_blocks(parent: ET.Element, lines: list, listed: bool = False) -> None:
+    for el in parent:
+        tag = el.tag
+        if tag == f"{_OT}h":
+            t = _o_text(el).strip()
+            if t:
+                lines.append("#" * max(1, min(6, int(el.get(f"{_OT}outline-level", "1") or 1))) + " " + t)
+        elif tag == f"{_OT}p":
+            t = _o_text(el).strip()
+            if t:
+                lines.append(("- " if listed else "") + t)
+        elif tag == f"{_OT}list":
+            for item in el.findall(f"{_OT}list-item"):
+                _o_blocks(item, lines, listed=True)  # nested lists recurse through here
+        elif tag == f"{_OTB}table":
+            lines.extend(_o_table_rows(el))
+        elif tag in (f"{_OT}section", f"{_OT}table-of-content", f"{_OT}index-body"):
+            _o_blocks(el, lines, listed)
+
+
+def _o_cell(tc: ET.Element) -> str:
+    vtype = tc.get(f"{_OO}value-type", "")
+    text = " ".join(filter(None, (_o_text(p).strip() for p in tc.iter(f"{_OT}p"))))
+    if vtype == "date":
+        v = tc.get(f"{_OO}date-value", "")
+        if "T" in v:
+            day, _, clock = v.partition("T")
+            clock = clock[:8]
+            v = day if clock.startswith("00:00") and clock[5:] in ("", ":00") else f"{day} {clock[:5]}" + (clock[5:] if clock[5:] not in ("", ":00") else "")
+        return v or text
+    if vtype == "time":
+        m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?", tc.get(f"{_OO}time-value", ""))
+        if m:
+            return f"{int(m.group(1) or 0):02d}:{int(m.group(2) or 0):02d}"
+        return text
+    if vtype == "boolean":
+        return "TRUE" if tc.get(f"{_OO}boolean-value") == "true" else "FALSE"
+    if vtype in ("float", "percentage", "currency"):
+        return tc.get(f"{_OO}value") or text
+    if vtype == "string" and tc.get(f"{_OO}string-value") is not None:
+        return tc.get(f"{_OO}string-value", "")
+    return text
+
+
+def _o_formula(f: str) -> str:
+    """'of:=SUM([.B2:.B4])' -> '=SUM(B2:B4)'; '[$Sheet1.B6]' -> 'Sheet1!B6'."""
+    f = re.sub(r"^(?:of|oooc):", "", f)
+    f = re.sub(r"\[\$?'?([^.\]:'\[]+)'?\.(\$?[A-Za-z]+\$?\d+)", r"[\1!\2", f)  # sheet-qualified references
+    f = f.replace("[.", "[").replace(":.", ":")
+    return f.replace("[", "").replace("]", "").replace(";", ",")  # OpenFormula separates arguments with ';', Excel with ','
+
+
+
+def _read_ods_body(spreadsheet: ET.Element) -> list:
+    tables = list(spreadsheet.iter(f"{_OTB}table"))
+    out = [f"[OpenDocument spreadsheet, {len(tables)} sheet{'s' if len(tables) != 1 else ''}]"]
+    for tbl in tables:
+        out.append(f"--- sheet: {tbl.get(f'{_OTB}name', 'Sheet')} ---")
+        r = 0
+        shown = 0
+        any_row = False
+        for tr in tbl.iter(f"{_OTB}table-row"):
+            repeat = max(1, int(tr.get(f"{_OTB}number-rows-repeated", "1") or 1))
+            cells, col = {}, 0
+            for tc in tr:
+                if tc.tag not in (f"{_OTB}table-cell", f"{_OTB}covered-table-cell"):
+                    continue
+                crep = max(1, int(tc.get(f"{_OTB}number-columns-repeated", "1") or 1))
+                value = _o_cell(tc).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+                formula = tc.get(f"{_OTB}formula")
+                if formula:
+                    text = _o_formula(formula)
+                    value = text + (f" -> {value}" if value != "" else "")
+                if value != "":
+                    for k in range(min(crep, 20)):
+                        if col + k < MAX_SHEET_COLS:
+                            cells[col + k] = value
+                col += crep
+            if not cells:
+                r += repeat
+                continue
+            for k in range(min(repeat, 50)):
+                if shown >= MAX_SHEET_ROWS:
+                    break
+                last = max(cells)
+                out.append(f"{r + 1 + k}: " + "\t".join(cells.get(i, "") for i in range(last + 1)))
+                shown += 1
+                any_row = True
+            r += repeat
+            if shown >= MAX_SHEET_ROWS:
+                out.append(f"[... more rows not read (limit {MAX_SHEET_ROWS} per sheet) ...]")
+                break
+        if not any_row:
+            out.append("(empty)")
+    out.append("(row number first, then the columns A, B, C... separated by tabs; "
+               "a formula reads =FORMULA -> last saved value)")
+    return out
+
+
+_ODP_PLACEHOLDERS = frozenset({"page-number", "footer", "date-time", "header", "handout", "slide-number"})
+
+
+def _odp_paragraphs(el: ET.Element, keep_class: Optional[str]) -> list:
+    """Paragraphs under ``el``. On a slide, frames that are page-number / footer / date placeholders are skipped; on a notes
+    page only the frame of class ``notes`` counts (the page also holds the slide image and the slide number field)."""
+    out = []
+    cls = el.get(f"{_OP}class")
+    if keep_class is None and cls in _ODP_PLACEHOLDERS:
+        return out
+    if keep_class is not None and cls is not None and cls != keep_class and el.tag == f"{_OD_}frame":
+        return out
+    if el.tag == f"{_OTB}table":
+        return _o_table_rows(el)
+    if el.tag in (f"{_OT}p", f"{_OT}h"):
+        t = _o_text(el).strip()
+        return [t] if t else out
+    for ch in el:
+        out.extend(_odp_paragraphs(ch, keep_class))
+    return out
+
+
+def _read_odp_body(presentation: ET.Element) -> list:
+    pages = list(presentation.iter(f"{_OD_}page"))
+    out = [f"[OpenDocument presentation, {len(pages)} slide{'s' if len(pages) != 1 else ''}]"]
+    for n, page in enumerate(pages, 1):
+        out.append(f"--- slide {n} ---")
+        text, notes = [], []
+        for child in page:
+            if child.tag == f"{_OP}notes":
+                notes.extend(_odp_paragraphs(child, "notes"))
+            else:
+                text.extend(_odp_paragraphs(child, None))
+        out.extend(text or ["(no text on this slide)"])
+        if notes:
+            out.append("Notes: " + " ".join(notes))
+    return out
+
+
+def _read_odf(path: Path) -> str:
+    with _open_zip(path) as zf:
+        root = _xml(zf, "content.xml")
+    body = root.find(f"{_OO}body")
+    if body is None:
+        raise DocumentError("it has no document body")
+    text = body.find(f"{_OO}text")
+    if text is not None:
+        lines = ["[OpenDocument text]"]
+        _o_blocks(text, lines)
+        return "\n".join(lines) if len(lines) > 1 else "[OpenDocument text]\n(no text in it)"
+    sheet = body.find(f"{_OO}spreadsheet")
+    if sheet is not None:
+        return "\n".join(_read_ods_body(sheet))
+    pres = body.find(f"{_OO}presentation")
+    if pres is not None:
+        return "\n".join(_read_odp_body(pres))
+    raise DocumentError("it is an OpenDocument file of a kind Jarvis does not read (a drawing or database?)")
+
+
+# ---- EPUB ----
+from html.parser import HTMLParser  # noqa: E402  (stdlib; kept next to its only user)
+from urllib.parse import unquote  # noqa: E402
+
+_EPUB_SKIP = frozenset({"script", "style", "head", "svg", "nav"})
+_EPUB_BLOCK = frozenset({"p", "div", "br", "li", "tr", "section", "article", "blockquote", "pre", "ul", "ol", "table", "hr", "figure"})
+
+
+class _XhtmlText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list = []
+        self._skip = 0
+        self._cell = 0          # inside a table cell: paragraph breaks become spaces so a row stays one line
+        self._first_cell = True
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _EPUB_SKIP:
+            self._skip += 1
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.parts.append("\n" + "#" * int(tag[1]) + " ")
+        elif tag == "li":
+            self.parts.append("\n- ")
+        elif tag == "tr":
+            self.parts.append("\n| ")
+            self._first_cell = True
+        elif tag in ("td", "th"):
+            if not self._first_cell:
+                self.parts.append(" | ")
+            self._first_cell = False
+            self._cell += 1
+        elif tag in _EPUB_BLOCK:
+            self.parts.append(" " if self._cell else "\n")
+
+    def handle_endtag(self, tag):
+        if tag in _EPUB_SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag in ("td", "th"):
+            self._cell = max(0, self._cell - 1)
+        elif tag == "tr":
+            self.parts.append(" |\n")
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6") or tag in _EPUB_BLOCK:
+            self.parts.append(" " if self._cell else "\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self.parts)
+        lines = (re.sub(r"[ \t\r\f\v]+", " ", l).strip() for l in raw.split("\n"))
+        return "\n".join(l for l in lines if l and l != "|")
+
+
+_DC = "{http://purl.org/dc/elements/1.1/}"
+_OPF = "{http://www.idpf.org/2007/opf}"
+_CONTAINER = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+
+
+def _read_epub(path: Path) -> str:
+    with _open_zip(path) as zf:
+        container = _xml(zf, "META-INF/container.xml")
+        rf = container.find(f".//{_CONTAINER}rootfile")
+        if rf is None or not rf.get("full-path"):
+            raise DocumentError("it has no package file (not a valid EPUB)")
+        opf_path = rf.get("full-path")
+        opf = _xml(zf, opf_path)
+        base = opf_path.rpartition("/")[0]
+        manifest = {i.get("id"): i.get("href") for i in opf.iter(f"{_OPF}item") if i.get("href")}
+        spine = [manifest[r.get("idref")] for r in opf.iter(f"{_OPF}itemref") if r.get("idref") in manifest]
+        if not spine:
+            raise DocumentError("the book has no readable chapters")
+        title = (opf.findtext(f".//{_DC}title") or "").strip()
+        author = (opf.findtext(f".//{_DC}creator") or "").strip()
+        head = "[EPUB" + (f": {title}" if title else "") + (f" by {author}" if author else "") + f", {len(spine)} sections]"
+        out, total = [head], 0
+        for n, href in enumerate(spine, 1):
+            member = _join_target(base, unquote(href.split("#")[0]))
+            try:
+                info = zf.getinfo(member)
+            except KeyError:
+                continue
+            if info.file_size > MAX_MEMBER_BYTES:
+                out.append(f"--- section {n} ---\n(too large to read)")
+                continue
+            parser = _XhtmlText()
+            parser.feed(zf.read(member).decode("utf-8", errors="replace"))
+            text = parser.text()
+            if not text:
+                continue
+            out.append(f"--- section {n} ---\n{text}")
+            total += len(text)
+            if total > MAX_TEXT_CHARS:
+                out.append(f"[... more sections not read (cut at {MAX_TEXT_CHARS:,} characters) ...]")
+                break
+        if len(out) == 1:
+            raise DocumentError("no text was found in the book")
+        return "\n".join(out)
+
+
+# ---- RTF ----
+_RTF_SKIP_DESTINATIONS = frozenset({
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer", "headerl", "headerr", "headerf", "footerl",
+    "footerr", "footerf", "themedata", "datastore", "listtable", "listoverridetable", "rsidtbl", "generator", "latentstyles",
+    "xmlnstbl", "fldinst", "objdata", "colorschememapping", "fchars", "lchars", "private", "revtbl", "bkmkstart", "bkmkend",
+})
+_RTF_SYMBOLS = {"bullet": "\u2022", "emdash": "\u2014", "endash": "\u2013", "lquote": "\u2018", "rquote": "\u2019",
+                "ldblquote": "\u201c", "rdblquote": "\u201d", "emspace": " ", "enspace": " ", "tab": "\t", "cell": "\t",
+                "nestcell": "\t", "row": "\n", "nestrow": "\n", "par": "\n", "line": "\n", "page": "\n", "sect": "\n"}
+_RTF_WORD = re.compile(r"\\([a-zA-Z]+)(-?\d+)? ?")
+
+
+def _read_rtf(path: Path) -> str:
+    data = path.read_bytes().decode("latin-1")
+    out: list = []
+    stack: list = []          # (skipping, unicode fallback length) per open group
+    skipping, uc = False, 1
+    codepage = "cp1252"
+    i, n = 0, len(data)
+    skip_chars = 0            # fallback characters after a \uN to drop
+    while i < n:
+        c = data[i]
+        if c == "{":
+            stack.append((skipping, uc))
+            i += 1
+        elif c == "}":
+            if stack:
+                skipping, uc = stack.pop()
+            i += 1
+        elif c == "\\":
+            nxt = data[i + 1] if i + 1 < n else ""
+            if nxt in "\\{}":
+                if not skipping and skip_chars == 0:
+                    out.append(nxt)
+                skip_chars = max(0, skip_chars - 1)
+                i += 2
+            elif nxt == "'":
+                hexv = data[i + 2:i + 4]
+                i += 4
+                if skip_chars:
+                    skip_chars -= 1
+                elif not skipping:
+                    try:
+                        out.append(bytes([int(hexv, 16)]).decode(codepage, errors="replace"))
+                    except ValueError:
+                        pass
+            elif nxt == "*":
+                skipping = True   # an ignorable destination: {\*\something ...}
+                i += 2
+            elif nxt == "~":
+                out.append("\u00a0") if not skipping else None
+                i += 2
+            elif nxt == "_":
+                out.append("-") if not skipping else None
+                i += 2
+            elif nxt in "-\n\r":
+                i += 2
+            else:
+                m = _RTF_WORD.match(data, i)
+                if not m:
+                    i += 2
+                    continue
+                word, param = m.group(1), m.group(2)
+                i = m.end()
+                if word in _RTF_SKIP_DESTINATIONS:
+                    skipping = True
+                elif word == "uc" and param is not None:
+                    uc = max(0, int(param))
+                elif word == "ansicpg" and param is not None:
+                    codepage = f"cp{param}"
+                elif word == "u" and param is not None and not skipping:
+                    code = int(param)
+                    out.append(chr(code + 65536 if code < 0 else code))
+                    skip_chars = uc
+                elif word in _RTF_SYMBOLS and not skipping:
+                    out.append(_RTF_SYMBOLS[word])
+        else:
+            if skip_chars:
+                skip_chars -= 1
+            elif not skipping and c not in "\r\n":
+                out.append(c)
+            i += 1
+    text = "".join(out)
+    lines = [re.sub(r"[ \t]+$", "", l) for l in text.split("\n")]
+    lines = [re.sub(r"^[ \t]+|\t+$", "", l) for l in lines]
+    body = "\n".join(l for l in lines if l.strip())
+    if not body.strip():
+        raise DocumentError("no text was found in it")
+    return "[RTF document]\n" + body
