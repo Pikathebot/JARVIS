@@ -2713,6 +2713,12 @@ and contest were folded into `query` to fit the budget.
   turn the schedule asks; read actions are not "changes" for the claim check, schedule backs a calendar/reminder claim. 46 tests
   (`test_coding.py`, fixtures shaped like the live responses, all times relative to now). Live run: every action answered in 1-10 s
   (the first AtCoder pick downloads ~2 MB of problem data).
+- **Review fixes (same day):** a lone rating in a pick query ("dp 1400") is a level (band +/-100); `profile` with `user=` and no site asks
+  which site instead of saying no handles are saved; only a bare number or "N days" sets the contest window ("Div 2" / "ABC 483" no
+  longer mean 2 / 483 days); the three contest sites are read at once (timeout 12 s each, so a site that is down cannot push the tool
+  past the 60 s limit; live contests 2.3 s -> 0.8 s); and the **claim check no longer reads a link as a file**: "Added the round on
+  codeforces.com to your calendar" after a successful `schedule` was flagged as an unbacked file claim (it would have forced a retry), so
+  `claimed_actions` strips URLs and bare domains first (`orchestrator._LINK_RE`; a real `notes.md` claim is still caught).
 - **Needs the user:** their three handles (say them in chat, or set the `.env` keys); a device check; then the real-chat eval cases
   ("any contests this weekend?", "what's today's LeetCode daily?", "put the Codeforces round on my calendar").
 - **Not built (still queued):** practice-help skill (explain an approach, review a solution without handing over the answer) and
@@ -2844,6 +2850,13 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
   all fixed. 11 tests. The `read_file` description now names the extensions ("Also reads PDF, docx, xlsx, pptx, odt, ods, odp,
   epub, rtf."), inside the +150 cap. Uploads accept the five new extensions too. Reading only: these formats are not *written*
   (a Word file is the answer; ask if ODT/RTF output is wanted).
+- **Review fixes (same day):** `write_file` now **refuses** a path `read_file` can read but Jarvis cannot build (`.pptx`, `.odt`, `.ods`,
+  `.odp`, `.epub`, `.rtf`, `.xlsm`, legacy `.doc/.xls/.ppt`) with "write a .docx, .xlsx or .pdf instead" -- before, it saved plain text under
+  the document's name and said "Successfully wrote", and a new `.pptx` didn't even ask; an existing file is left byte-for-byte and not backed
+  up. The reader's header/marker patterns now live in `doc_readers` (`HEADER_RE`, `SCAFFOLD_RE`, `CUT_RE`) and `doc_writers.prepare_text`
+  imports them, so converting works for every reader (`.ods` -> `.xlsx` no longer grows a phantom sheet; `.odt/.rtf/.epub/.pptx/.odp` ->
+  `.docx/.pdf` carry no `[EPUB ...]`/`--- section N ---` lines into the body); a test pins that the two share one set. OpenFormula sheet
+  names with spaces keep their quotes (`'By category'!A1`).
 - **Left out on purpose:** **OCR** of scanned PDFs and images (the plan says it goes through the vision slot, which needs the
   GPU model; nothing here can test it -- a scan reads as "no text layer" and says so); **PPTX writing** (not in the plan, and the
   result could be checked only against python-pptx and LibreOffice, not PowerPoint).

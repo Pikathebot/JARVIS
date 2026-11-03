@@ -354,3 +354,86 @@ def test_the_pdf_font_choice_prefers_a_family_with_an_italic_face(tmp_path, monk
                                         "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf"]
     (fonts / "LiberationSans-Italic.ttf").unlink()
     assert doc_writers._find_font_family()[0].name == "DejaVuSans.ttf"        # none complete: first regular found
+
+
+# ---------------- write_file never writes plain text into a format it cannot build ----------------
+@pytest.mark.parametrize("name", ["deck.pptx", "notes.odt", "sheet.ods", "book.epub", "memo.rtf", "macro.xlsm", "old.doc", "old.xls", "old.ppt"])
+def test_a_new_file_of_a_readable_but_unbuildable_format_is_refused(tmp_path, name):
+    out = _write(tmp_path, name, "some text\n")
+    assert out.startswith(f"Error: Jarvis can't write {Path(name).suffix} files") and "Write a .docx, .xlsx or .pdf" in out
+    assert not (tmp_path / name).exists()
+
+
+def test_an_existing_unbuildable_file_is_left_alone_and_not_backed_up(tmp_path):
+    (tmp_path / "notes.odt").write_bytes(b"PK\x03\x04 original bytes")
+    out = _write(tmp_path, "notes.odt", "# edited\n")
+    assert out.startswith("Error: Jarvis can't write .odt files")
+    assert (tmp_path / "notes.odt").read_bytes() == b"PK\x03\x04 original bytes"
+    assert not backup_dir(tmp_path).exists() or not list(backup_dir(tmp_path).glob("notes.odt.*"))
+
+
+def test_plain_text_formats_are_still_written(tmp_path):
+    for name in ("a.txt", "b.md", "c.csv", "d.json", "e.py"):
+        assert _write(tmp_path, name, "x\n").startswith("Successfully wrote")
+
+
+# ---------------- converting between formats: what the other readers print is not content ----------------
+def _plain(text: str) -> list:
+    return [l for l in text.splitlines()]
+
+
+def test_ods_converts_to_xlsx_without_a_phantom_sheet_or_junk_rows(tmp_path):
+    from tests.test_doc_readers import OT, _odf
+
+    _odf(tmp_path / "a.ods", (
+        '<office:spreadsheet><table:table table:name="By category"><table:table-row><table:table-cell office:value-type="string"><text:p>Item</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="float" office:value="7" table:formula="of:=SUM([.B1:.B1])+[$\'By category\'.A9]"><text:p>7</text:p></table:table-cell>'
+        '</table:table-row></table:table><table:table table:name="Two"><table:table-row><table:table-cell office:value-type="float" office:value="1">'
+        '<text:p>1</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet>'))
+    first = _read(tmp_path, "a.ods")
+    assert first.startswith("[OpenDocument spreadsheet, 2 sheets]")
+    assert "=SUM(B1:B1)+'By category'!A9 -> 7" in first                       # a quoted sheet name keeps its quotes
+    assert _write(tmp_path, "b.xlsx", first).startswith("Successfully wrote an Excel workbook (2 sheets, 2 rows, 1 formula")
+    wb = _parts(tmp_path / "b.xlsx")["xl/workbook.xml"]
+    assert re.findall(r'<sheet name="([^"]*)"', wb) == ["By category", "Two"]
+    assert "<f>SUM(B1:B1)+'By category'!A9</f>" in _parts(tmp_path / "b.xlsx")["xl/worksheets/sheet1.xml"]
+    assert "OpenDocument" not in " ".join(_parts(tmp_path / "b.xlsx").values()).replace("urn:oasis:names:tc:opendocument", "")
+
+
+@pytest.mark.parametrize("source", ["odt", "rtf", "epub", "pptx", "odp"])
+def test_other_formats_convert_to_docx_and_pdf_with_no_headers_or_markers_in_the_body(tmp_path, source):
+    from tests.test_doc_readers import OT, _epub, _odf, _pptx, _zip
+
+    if source == "odt":
+        _odf(tmp_path / "s.odt", '<office:text><text:h text:outline-level="1">Heading</text:h><text:p>Body line.</text:p></office:text>')
+    elif source == "rtf":
+        (tmp_path / "s.rtf").write_text(r"{\rtf1\ansi Heading\par Body line.\par}", encoding="latin-1")
+    elif source == "epub":
+        _epub(tmp_path / "s.epub", {"c1": "<html><body><h1>Heading</h1><p>Body line.</p></body></html>"}, ["c1"])
+    elif source == "pptx":
+        _pptx(tmp_path / "s.pptx")
+    else:
+        _odf(tmp_path / "s.odp", ('<office:presentation><draw:page draw:name="p1"><draw:frame><draw:text-box><text:p>Heading</text:p>'
+                                  '<text:p>Body line.</text:p></draw:text-box></draw:frame></draw:page></office:presentation>'))
+    first = _read(tmp_path, f"s.{source}")
+    for target in ("docx", "pdf"):
+        assert _write(tmp_path, f"out.{target}", first).startswith("Successfully wrote")
+        text = _read(tmp_path, f"out.{target}")
+        for junk in ("[OpenDocument", "[EPUB", "[RTF document]", "[PowerPoint", "--- slide", "--- section", "(no text"):
+            assert junk not in text, (source, target, junk)
+        assert "Heading" in text or "Welcome" in text
+    docx = _parts(tmp_path / "out.docx")["word/document.xml"]
+    assert docx.count("<w:p>") >= 2 and "[" not in re.sub(r"<[^>]+>", "", docx)[:1]
+
+
+def test_the_reader_and_writer_share_one_set_of_markers():
+    from app.agent.tools import doc_readers
+
+    assert doc_writers._HEADER is doc_readers.HEADER_RE and doc_writers._READBACK_LINE is doc_readers.SCAFFOLD_RE
+    for header in ("[Word document]", "[PDF, 3 pages]", "[Excel workbook, 2 sheets]", "[PowerPoint, 4 slides]", "[OpenDocument text]",
+                   "[OpenDocument spreadsheet, 2 sheets]", "[OpenDocument presentation, 5 slides]", "[EPUB: A Book by Me, 12 sections]",
+                   "[EPUB, 1 section]", "[RTF document]"):
+        assert doc_readers.HEADER_RE.match(header), header
+    for line in ("--- page 2 ---", "--- section 3 ---", "--- slide 1 ---", "(empty)", "(no text on this slide)", "(too large to read)"):
+        assert doc_readers.SCAFFOLD_RE.match(line), line
+    assert not doc_readers.HEADER_RE.match("[Draft] my own bracketed line")

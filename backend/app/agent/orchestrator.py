@@ -559,11 +559,17 @@ _CLAIM_FAMILIES: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
 _FAMILY_TOOLS = {label: tools for label, _, tools in _CLAIM_FAMILIES}
 
 
+# A link or bare domain is not a file ("codeforces.com" looked like "name.ext" to the file family, so "Added the round ... on
+# codeforces.com to your calendar" read as an unbacked file claim after a successful calendar add).
+_LINK_RE = re.compile(r"https?://\S+|\b(?:[a-z0-9-]+\.)+(?:com|org|net|edu|gov|io|dev|jp)\b(?:/\S*)?", re.IGNORECASE)
+
+
 def claimed_actions(content: str) -> list[str]:
     """What each claim in the reply is about (a ``_CLAIM_FAMILIES`` label, "" when it names none)."""
     labels = []
     for sentence in _claim_sentences(content or ""):
-        label = next((lbl for lbl, pattern, _ in _CLAIM_FAMILIES if pattern.search(sentence)), "")
+        plain = _LINK_RE.sub("the site", sentence)
+        label = next((lbl for lbl, pattern, _ in _CLAIM_FAMILIES if pattern.search(plain)), "")
         if label not in labels:
             labels.append(label)
     return labels

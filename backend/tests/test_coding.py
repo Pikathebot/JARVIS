@@ -532,3 +532,57 @@ def test_reads_run_unasked_and_schedule_is_a_write_for_taint_and_for_claims():
     assert changed_tools([{"tool": "coding", "args": {"action": "schedule", "query": "cf:1"}, "status": "success"}]) == {"coding"}
     decision = evaluate_tool_permission("coding", {"action": "contests"})
     assert decision.risk_tier == RiskTier.LOW_RISK and decision.allowed
+
+
+# ---------------- found in review ----------------
+@pytest.mark.parametrize("query,expected", [
+    ("dp 1400", ("dp", "1400")), ("1400", ("", "1400")), ("graph, 1900", ("graph", "1900")), ("dp medium 1400", ("dp 1400", "medium"))])
+def test_a_lone_rating_in_a_pick_query_is_a_level(query, expected):
+    assert cp._split_query(query) == expected
+
+
+def test_a_single_rating_picks_a_band_around_it(sites):
+    sites.json[CF + "problemset.problems"] = cf_problems()
+    out = coding(action="pick", site="codeforces", query="dp 1500")                       # 1400-1600: only the 1500 problem
+    assert out.startswith("1 Codeforces problems match.") and "rating 1500" in out
+
+
+def test_a_handle_without_a_site_asks_which_site_instead_of_claiming_there_is_none(sites):
+    out = coding(action="profile", user="tourist")
+    assert out == "Error: which site is 'tourist' on? Say leetcode, codeforces or atcoder."
+    assert sites.calls == []                                                               # nothing was sent to any site
+
+
+@pytest.mark.parametrize("query,days", [("14", 14), ("30 days", 30), (" 3 d ", 3), ("", 7), ("Div 2", 7), ("ABC 483", 7), ("weekend", 7), ("1000", 7)])
+def test_only_a_bare_day_count_sets_the_window(query, days):
+    assert cp._days(query) == days
+
+
+def test_the_three_contest_sources_are_read_at_the_same_time(monkeypatch):
+    def slow(name):
+        def fn():
+            time.sleep(0.3)
+            return []
+        return fn
+    monkeypatch.setattr(cp, "_CONTEST_SOURCES", {s: slow(s) for s in cp.SITES})
+    started = time.monotonic()
+    found, failed = cp.upcoming_contests("", 7)
+    assert time.monotonic() - started < 0.7 and found == [] and failed == []             # three in a row would be ~0.9 s
+
+
+def test_a_site_that_hangs_or_breaks_is_reported_and_the_others_still_answer(sites):
+    all_sites(sites)
+    sites.graphql[0] = ("upcomingContests", RuntimeError("boom"))
+    out = coding(action="contests")
+    assert "Educational Codeforces Round 196" in out and "AtCoder Beginner Contest 483" in out
+    assert "Couldn't read: LeetCode: its contest list could not be read." in out
+
+
+def test_a_codeforces_message_with_a_url_is_not_a_file_claim_after_scheduling(sites, calendar_env):
+    from app.agent.orchestrator import unbacked_claims
+
+    used = [{"tool": "coding", "args": {"action": "schedule", "query": "cf:2283"}, "status": "success"}]
+    for reply in ("Added Educational Codeforces Round 196 (https://codeforces.com/contests/2283) to your calendar with a reminder.",
+                  "Done! Added the round on codeforces.com to your calendar and set a reminder for 14:20."):
+        assert unbacked_claims(reply, used) == []
+    assert unbacked_claims("I saved notes.md for you.", used) == ["the file"]              # a real file claim is still caught

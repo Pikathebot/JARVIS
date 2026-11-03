@@ -44,6 +44,18 @@ _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 
+# What the readers print around a document's text. doc_writers.prepare_text strips exactly these when a read_file result is
+# written back (read -> change -> write, or converted: .ods -> .xlsx, .odt/.rtf/.epub -> .docx/.pdf), so the two stay in sync here.
+HEADER_RE = re.compile(
+    r"^\[(?:Word document|PDF, \d+ pages?|Excel workbook, .*|PowerPoint, .*|OpenDocument (?:text|spreadsheet, .*|presentation, .*)"
+    r"|EPUB(?::.*)?, \d+ sections?|RTF document)\]\s*$")
+SCAFFOLD_RE = re.compile(
+    r"^(?:--- (?:page|section|slide) \d+ ---|\(empty\)|\(no text (?:on this page|on this slide|in it)\)|\(too large to read\)"
+    r"|\(row number first, then the columns .*|\(sheet data is missing\)|\(slide data is missing\))\s*$")
+CUT_RE = re.compile(r"more (?:rows|pages|sections) not read|\bcut at [\d,]+ characters|characters omitted from the middle"
+                    r"|more chars not kept in history")
+
+
 class DocumentError(Exception):
     """A readable reason, shown to the model as is."""
 
@@ -602,7 +614,8 @@ def _o_cell(tc: ET.Element) -> str:
 def _o_formula(f: str) -> str:
     """'of:=SUM([.B2:.B4])' -> '=SUM(B2:B4)'; '[$Sheet1.B6]' -> 'Sheet1!B6'."""
     f = re.sub(r"^(?:of|oooc):", "", f)
-    f = re.sub(r"\[\$?'?([^.\]:'\[]+)'?\.(\$?[A-Za-z]+\$?\d+)", r"[\1!\2", f)  # sheet-qualified references
+    f = re.sub(r"\[\$?(?:('[^']+')|([A-Za-z_][\w]*))\.(\$?[A-Za-z]+\$?\d+)",
+               lambda m: f"[{m.group(1) or m.group(2)}!{m.group(3)}", f)  # sheet-qualified; a quoted name ('By category') keeps its quotes
     f = f.replace("[.", "[").replace(":.", ":")
     return f.replace("[", "").replace("]", "").replace(";", ",")  # OpenFormula separates arguments with ';', Excel with ','
 

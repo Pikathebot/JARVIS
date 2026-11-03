@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from app.agent.tools.doc_readers import kind_of
 from app.agent.tools.doc_writers import BUILDABLE_EXTENSIONS, BuildError, build_document, write_bytes_atomic
 from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
@@ -39,6 +40,12 @@ def write_file(
 
     if path.exists() and path.is_dir():
         return f"Error: Cannot write to '{file_path}' because it is a directory."
+
+    # A document format Jarvis can read but not build (.pptx, .odt, .rtf, .epub, .xlsm, legacy .doc/.xls/.ppt): writing text
+    # there would save plain text under a document name -- a corrupt file reported as a success.
+    if kind_of(path) is not None and path.suffix.lower() not in BUILDABLE_EXTENSIONS:
+        return (f"Error: Jarvis can't write {path.suffix.lower()} files (the text would be saved as plain text and the file "
+                "would no longer open). Write a .docx, .xlsx or .pdf instead, or a .md / .txt / .csv file.")
 
     if path.exists() and not overwrite:
         return f"Error: File '{file_path}' already exists and overwrite is set to False."

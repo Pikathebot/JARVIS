@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import html
 import json
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import math
 import random
@@ -40,7 +41,7 @@ logger = logging.getLogger("jarvis.agent.tools.coding")
 SITES = ("leetcode", "codeforces", "atcoder")
 _SITE_NAMES = {"leetcode": "LeetCode", "codeforces": "Codeforces", "atcoder": "AtCoder"}
 _UA = "Mozilla/5.0 (compatible; Jarvis personal assistant)"
-_TIMEOUT = 20.0
+_TIMEOUT = 12.0   # three sites are read at once, so a site that is down costs one timeout, not three
 _HANDLE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}$")
 _rng = random.Random()
 
@@ -238,14 +239,21 @@ def upcoming_contests(site: str = "", days: int = 7, now: Optional[datetime] = N
     now = now or datetime.now()
     sites = [site] if site else list(SITES)
     found, failed = [], []
-    for s in sites:
+
+    def one(s: str):
         try:
-            found.extend(c for c in _CONTEST_SOURCES[s]() if now <= c.start <= now + timedelta(days=days))
+            return s, [c for c in _CONTEST_SOURCES[s]() if now <= c.start <= now + timedelta(days=days)], ""
         except SiteError as e:
-            failed.append(f"{_SITE_NAMES[s]}: {e}")
+            return s, [], f"{_SITE_NAMES[s]}: {e}"
         except Exception as e:  # a page that changed shape must not take the answer down
             logger.warning("contest source %s failed: %s", s, e)
-            failed.append(f"{_SITE_NAMES[s]}: its contest list could not be read")
+            return s, [], f"{_SITE_NAMES[s]}: its contest list could not be read"
+
+    with ThreadPoolExecutor(max_workers=len(sites)) as pool:
+        for _, rows, problem in pool.map(one, sites):  # in site order, so the failure sentences keep a stable order
+            found.extend(rows)
+            if problem:
+                failed.append(problem)
     return sorted(found, key=lambda c: c.start), failed
 
 
@@ -380,6 +388,8 @@ _PROFILES = {"leetcode": _lc_profile, "codeforces": _cf_profile, "atcoder": _ac_
 
 
 def _profile(site: str, user: str) -> str:
+    if user.strip() and not site:   # the same handle can belong to someone else on another site: ask, don't guess
+        return f"Error: which site is '{user.strip()}' on? Say leetcode, codeforces or atcoder."
     targets = [site] if site else [s for s in SITES if _handle(s, "")]
     if not targets:
         return ("Error: no handles are saved. Ask the user for their handle on LeetCode, Codeforces or AtCoder "
@@ -603,8 +613,9 @@ def _schedule(site: str, contest: str, session_id: Optional[str]) -> str:
 
 # ---------------------------------------------------------------- entry point
 def _days(query: str) -> int:
-    m = re.search(r"\d+", str(query or ""))
-    return int(m.group(0)) if m else 7
+    """'14' or '14 days' -> 14; anything else ('Div 2', 'ABC 483') is not a day count: 7."""
+    m = re.fullmatch(r"\s*(\d{1,3})\s*(?:days?|d)?\s*", str(query or ""), re.IGNORECASE)
+    return int(m.group(1)) if m else 7
 
 
 _LEVEL_WORDS = {"easy": "easy", "medium": "medium", "med": "medium", "hard": "hard"}
@@ -620,8 +631,8 @@ def _split_query(query: str) -> tuple:
     else:
         words = text.split()
         for i, w in enumerate(words):
-            if w.lower() in _LEVEL_WORDS:
-                level = _LEVEL_WORDS[w.lower()]
+            if w.lower() in _LEVEL_WORDS or re.fullmatch(r"\d{3,4}", w):   # 'easy', or a lone rating: 'dp 1400'
+                level = _LEVEL_WORDS.get(w.lower(), w)
                 text = " ".join(words[:i] + words[i + 1:])
                 break
     return " ".join(text.replace(",", " ").split()), level

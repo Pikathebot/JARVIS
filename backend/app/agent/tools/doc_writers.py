@@ -116,13 +116,10 @@ def _runs(text: str) -> list:
 
 
 # ---------------------------------------------------------------- taking read_file's output back
-_HEADER = re.compile(r"^\[(?:Word document|PDF, \d+ pages?|Excel workbook, .*|PowerPoint, .*)\]\s*$")
+from app.agent.tools.doc_readers import CUT_RE as _CUT, HEADER_RE as _HEADER, SCAFFOLD_RE as _READBACK_LINE  # noqa: E402
+
 _READFILE_NOTE = re.compile(r"^\[Nothing at '.*'; this is '.*'\]\s*$")
 _LINES_NOTE = re.compile(r"^\[Lines (\d+)-(\d+) of (\d+) in '.*'\]\s*$")
-_READBACK_LINE = re.compile(r"^(?:--- page \d+ ---|\(empty\)|\(no text on this page\)|\(no text in it\)"
-                            r"|\(row number first, then the columns .*|\(sheet data is missing\))\s*$")
-_CUT = re.compile(r"more (?:rows|pages) not read|\bcut at [\d,]+ characters|characters omitted from the middle"
-                  r"|more chars not kept in history")
 
 
 def prepare_text(text: str) -> tuple:
