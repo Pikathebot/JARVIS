@@ -60,6 +60,8 @@ def test_vote_records_are_dpo_shaped(tmp_path):
     assert rec["prompt"] == "what was it?" and rec["earlier_turns"] == ["keep it 200"]
     assert rec["rejected"] == left_text and rec["chosen"] != left_text
     assert rec["chosen_model"] == p.right and not rec["tie"]
+    assert rec["chosen_passed"] == bool(p.answers[p.right].get("success"))         # the export's drop rule reads these
+    assert rec["rejected_passed"] == bool(p.answers[p.left].get("success"))
     assert ra.vote_record(p, "tie")["tie"] and ra.vote_record(p, "skip") is None
 
 

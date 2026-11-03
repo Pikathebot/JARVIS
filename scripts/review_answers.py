@@ -135,6 +135,9 @@ def vote_record(pair: Pair, choice: str) -> Optional[dict[str, Any]]:
         "chosen_model": winner,
         "rejected_model": loser,
         "tie": choice == "tie",  # DPO skips these; kept so the tally is complete
+        # the export drops a vote whose chosen answer failed the eval's check while the rejected one passed (PLAN 4.13 #10)
+        "chosen_passed": bool(pair.answers[winner].get("success")),
+        "rejected_passed": bool(pair.answers[loser].get("success")),
     }
 
 

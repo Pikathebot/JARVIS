@@ -1350,6 +1350,17 @@ carry planted facts, so only a real search + read passes the current-events task
      smoke test: Qwen3.5 (hybrid DeltaNet + vision) support, 20 steps on 100 rows, merge, export, re-quantise
      to IQ3_XXS with the imatrix, load in llama-server.
    - Gate: replaces the main model only if it beats the live 9B on the sealed set (#2) and wins the blind votes (#8).
+   **Data export BUILT 2026-11-03 (cloud session), tests pass on Linux, not yet run on the real data.**
+   `scripts/export_finetune_data.py` reads `data/preference_votes.jsonl` and `data/training_log.jsonl` and writes `data/finetune/`:
+   `dpo.jsonl` (conversational `{prompt, chosen, rejected}` pairs; ties, empty/identical sides and votes whose chosen answer failed
+   the eval's check while the rejected passed are dropped, a re-vote replaces the earlier one), `review.jsonl` (each net-fired turn
+   with its sent-back draft, note, tools and kept reply, and each "got it wrong" flag with what the user meant, unflagged ones
+   removed) and `manifest.json` (counts, drops by reason, redactions). Net turns are *not* auto-paired: the kept reply was written
+   after tools ran, so pairing it with the draft against the bare user message would teach answering without tool results -- they
+   need a corrected reply written first (by the user or a teacher). **Multi-turn votes are dropped**: the review page stores the
+   earlier user turns but not the answers between them. Redaction on the way out: e-mails, phone numbers (10+ digits, dates kept),
+   `C:\Users\<name>`, and `--names "A,B"`. `review_answers.py` votes now record `chosen_passed` / `rejected_passed` for the drop rule
+   (older votes lack them and are kept). Open: Soup's exact DPO field names (TRL's conversational form assumed; check in the smoke test).
 11. Compact per-family tool sets (theirs) vs Jarvis's fixed set (KV-cache stable): measure before changing.
    **Decided 2026-10-16: option A, keep the fixed set.** The eval shows few wrong-tool failures (system 26/27,
    chain 15/15); the misses are grounding and knowledge. Revisit only if wrong-tool failures grow as tools are
@@ -2719,6 +2730,20 @@ and contest were folded into `query` to fit the budget.
   past the 60 s limit; live contests 2.3 s -> 0.8 s); and the **claim check no longer reads a link as a file**: "Added the round on
   codeforces.com to your calendar" after a successful `schedule` was flagged as an unbacked file claim (it would have forced a retry), so
   `claimed_actions` strips URLs and bare domains first (`orchestrator._LINK_RE`; a real `notes.md` claim is still caught).
+- **Second slice BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device, never used through the model.**
+  Four skills in `skills/` (loaded only when their trigger words appear, so no prompt-head cost; `match_skills` is a plain
+  substring match, so triggers were chosen to miss everyday words -- "revised", "the paper on my desk", "contested" are pinned):
+  `practice_help` (smallest hint first, full code only when asked; solution review = idea, complexity, edge cases; picks one level
+  below the rating; **contest mode**: no solving or hinting a running contest's problems), `paper_search` (arXiv's public API through
+  `fetch_url`; checked live: the Atom feed reads as flat text -- title, date, abstract, authors -- and the cloud IP got 429s, so the
+  skill retries once), `flashcards` (`flashcards/<subject>.csv` in the workspace, Leitner boxes 1-5 due 1/3/7/14/30 days, saved once per
+  session through read_file/write_file), `focus_timer` (Pomodoro 25/5, 15 after four; one `remind_me` at a time, never a chain).
+  **Day briefing:** `coding.briefing_lines` adds "Contest today: Codeforces Round ... at 20:05" (before the next 4 AM) and "LeetCode daily
+  not done yet: #42 ... (Hard)" -- only when at least one judge handle is set, and any failure leaves the lines out (the briefing never
+  breaks over a judge's site; worst case it waits one 12 s timeout). The briefing tests blank the handles so a real `.env` can't reach
+  the network.
+  **Not built:** LMS (Classroom/Moodle/Canvas -- depends on the user's college), timetable with weekly repeat, GitHub beyond local git,
+  CodeChef / clist.by. The flashcard and timer skills lean on the model following a recipe; check them in the real-chat eval.
 - **Needs the user:** their three handles (say them in chat, or set the `.env` keys); a device check; then the real-chat eval cases
   ("any contests this weekend?", "what's today's LeetCode daily?", "put the Codeforces round on my calendar").
 - **Not built (still queued):** practice-help skill (explain an approach, review a solution without handing over the answer) and
