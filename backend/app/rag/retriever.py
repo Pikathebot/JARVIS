@@ -99,6 +99,11 @@ def reciprocal_rank_fusion(
     return fused_results
 
 
+# Projects whose index is being rebuilt right now, shared by every HybridRetriever in the process.
+_REINDEXING: set[str] = set()
+_REINDEX_LOCK = threading.Lock()
+
+
 class HybridRetriever:
     """
     Hybrid Retrieval Engine complying with Build Plan Section 9.
@@ -117,13 +122,19 @@ class HybridRetriever:
         self.vector_store = vector_store or VectorStoreService(embedding_service=self.embedding_service)
         self.keyword_store = keyword_store or KeywordSearchService()
         self.reranker = reranker or RerankerService()
-        self._reindexing: set[str] = set()
 
     def _reindex_in_background(self, project_id: str) -> None:
-        """One rebuild per project per process; the indexer wipes the stale space first."""
-        if project_id in self._reindexing:
-            return
-        self._reindexing.add(project_id)
+        """One rebuild per project per process; the indexer wipes the stale space first.
+
+        The in-flight set is module-level, not per retriever: every chat request builds its own
+        orchestrator and so its own retriever, and per-instance sets let simultaneous requests
+        that all saw the stale index each start a rebuild that wiped and re-filled the same
+        project.
+        """
+        with _REINDEX_LOCK:
+            if project_id in _REINDEXING:
+                return
+            _REINDEXING.add(project_id)
         logger.info("Project %s index is from another embedding space; rebuilding in the background.", project_id)
 
         def _run() -> None:
@@ -136,9 +147,15 @@ class HybridRetriever:
             except Exception as e:
                 logger.warning("Background re-index of project %s failed: %s", project_id, e)
             finally:
-                self._reindexing.discard(project_id)
+                with _REINDEX_LOCK:
+                    _REINDEXING.discard(project_id)
 
-        threading.Thread(target=_run, name=f"reindex-{project_id[:8]}", daemon=True).start()
+        try:
+            threading.Thread(target=_run, name=f"reindex-{project_id[:8]}", daemon=True).start()
+        except Exception:  # a thread that never started would leave the project marked in flight forever
+            with _REINDEX_LOCK:
+                _REINDEXING.discard(project_id)
+            raise
 
     def retrieve(
         self,
