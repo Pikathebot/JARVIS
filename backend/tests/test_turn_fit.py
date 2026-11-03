@@ -1,6 +1,7 @@
 """One request inside the model's window: tools priced in, a turn's results fitted (PLAN 4.23c)."""
 from tests.test_context_manager import memory_test_env  # noqa: F401  (fixture)
 from app.agent.tools.registry import tools_for_space
+from app.config import settings
 from app.memory.context_manager import ContextManager
 from app.memory.turn_fit import MIN_RESULT_CHARS, fit_messages, tools_tokens
 from app.memory.token_counter import TokenCounter
@@ -51,7 +52,11 @@ def test_old_exchanges_go_only_after_results_and_never_the_last_two():
     assert counter.count_messages(fitted) <= 8192 - 1024 - 2000
 
 
-def test_the_budget_reserves_the_tools(memory_test_env):
+def test_the_budget_reserves_the_tools(memory_test_env, monkeypatch):
+    # The history is also capped by message count (default 20 ~ 7k tokens here, below the budget),
+    # so pin the cap above the 120 messages written: the test is about the token budget, not the
+    # developer's .env (backend/.env.example sets 60).
+    monkeypatch.setattr(settings, "context_tier4_max_messages", 200)
     store, _ = memory_test_env
     for i in range(60):
         store.append_message("fit", role="user", content=f"question {i} " * 120)

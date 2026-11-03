@@ -298,7 +298,7 @@ class _Task:
     def render(self) -> str:
         due = f" (due {self.due_label()})" if self.due else ""
         if self.done and not self.done_on:
-            self.done_on = f"{datetime.now():%Y-%m-%d}"
+            self.done_on = f"{_now():%Y-%m-%d}"
         elif not self.done:
             self.done_on = ""
         done = f" (done {self.done_on})" if self.done else ""

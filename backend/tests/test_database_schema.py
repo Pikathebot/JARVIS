@@ -101,6 +101,9 @@ def test_alembic_migration_on_fresh_db(tmp_path):
     alembic_cfg = Config(alembic_ini_path)
     alembic_cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+    # As the app does (main.py): without this env.py runs fileConfig(), which disables every
+    # jarvis.* logger for the rest of the pytest process and breaks caplog-based tests after it.
+    alembic_cfg.attributes["configure_logging_skipped"] = True
 
     # Run upgrade
     command.upgrade(alembic_cfg, "head")
