@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from app.agent.tools.doc_writers import BUILDABLE_EXTENSIONS, BuildError, build_document, write_bytes_atomic
 from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
 from app.agent.tools.paths import is_inside, resolve_tool_path
@@ -18,6 +19,7 @@ def write_file(
 ) -> str:
     """
     Create a file, or replace an existing one, with the given text (in the workspace; replacing a file or writing outside the workspace asks the user first, and the old version is backed up). Fill `reason` with why, in a few words.
+    A .docx, .xlsx or .pdf path is built from Markdown text (xlsx: CSV rows, '--- sheet: Name ---' starts a sheet).
     Automatically creates any missing parent directories.
 
     Args:
@@ -41,9 +43,31 @@ def write_file(
     if path.exists() and not overwrite:
         return f"Error: File '{file_path}' already exists and overwrite is set to False."
 
+    # Word / Excel / PDF: built from the text first, so a failed build leaves any existing file untouched.
+    document = None
+    if path.suffix.lower() in BUILDABLE_EXTENSIONS:
+        try:
+            document = build_document(path.suffix, content)
+        except BuildError as e:
+            return f"Error: could not build '{file_path}': {e}."
+        except Exception as e:
+            logger.error("Failed to build '%s': %s", file_path, e)
+            return f"Error: could not build '{file_path}': {type(e).__name__}: {e}."
+
     try:
         backup = backup_file(path, ws_root) if path.exists() else None
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        if document is not None:
+            data, summary, note = document
+            write_bytes_atomic(path, data)
+            logger.info("Successfully wrote %s (%d bytes) to '%s'", summary, len(data), path)
+            result = f"Successfully wrote {summary} to '{file_path}'."
+            if note:
+                result += f" {note}"
+            if backup:
+                result += f" The previous version is saved as '{shown(backup, ws_root)}'."
+            return result
 
         content_str = str(content or "")
         path.write_text(content_str, encoding="utf-8")

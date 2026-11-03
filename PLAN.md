@@ -2770,7 +2770,30 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
 - **Uploads:** `.docx`, `.xlsx`, `.pptx` added to `routers/artifacts.py` `ALLOWED_EXTENSIONS` (`.pdf` was there); an uploaded
   file's note tells the model to `read_file` it, and `test_office_documents_upload_and_read_file_returns_their_text` covers
   the round trip. The WinUI picker already allows `*`. Uploads still bypass RAG -- see (b).
-- **Still open:** (a) writing DOCX/XLSX/PDF (item 2) and the other formats (item 3) -- not started; (b) whether an
+- **Writing: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device.** No new tool and no new risk tier:
+  `write_file` builds the file when the path ends in `.docx`, `.xlsx` or `.pdf` (`app/agent/tools/doc_writers.py`), so replacing
+  a file still asks first and keeps a `.jarvis/backups` copy; the build runs *before* the backup and the write, so a failed
+  build (empty content, over 2M characters) leaves the old file alone; the swap is atomic (temp file + `os.replace`). CSV needs
+  nothing (text). Input is what `read_file` prints, so read -> edit -> write works: **Word/PDF** take Markdown (`#` headings,
+  `-` bullets, `1.` lists that each restart at 1, `| a | b |` tables with a header row, `**bold**`, `*italic*`); **Excel** takes CSV
+  rows or tab-separated lines, `--- sheet: Name ---` starts a sheet, `=SUM(..)` is a formula (the workbook is flagged to
+  recalculate on open, so there is no cached value until Excel opens it), `2026-10-03` / `2026-10-03 09:30` become real dates,
+  `TRUE`/`FALSE` booleans, a code with a leading zero (`007`) stays text.
+  - **Dependencies:** none for DOCX and XLSX (raw OOXML via `zipfile`); `reportlab>=4.0.0` for PDF (9 MB, ~200 ms, imported on
+    the first PDF; Pillow was already required). The user chose reportlab + a system font (11-03) over a hand-written Latin-only writer.
+  - **PDF font:** first found of Segoe UI, Arial, Calibri (Windows `%WINDIR%\Fonts`), DejaVu Sans, Liberation Sans, else built-in
+    Helvetica; `JARVIS_PDF_FONT_DIR` adds a folder. A character the font has no glyph for becomes `?` and the tool result says
+    which (a Word file is the answer). **Hindi/Arabic and other scripts that need shaping are NOT supported** even when the font has the
+    glyphs: reportlab draws them unshaped. Bold/italic fall back to the regular face when the font family lacks them.
+  - **Prompt head:** one sentence added to `write_file`'s description; the head budget cap was raised +150 chars (FREEFORM 27250,
+    WORKSPACE 37750) with the user's OK -- comment in `test_context_manager.py`.
+  - **Checked beyond the tests** (hand, outside the repo): files read back by python-docx and openpyxl (styles, lists, table, date,
+    formula, bool, `007`), and opened by LibreOffice 24.2 headless -- docx -> PDF showed bullets, restarting numbered lists and the
+    table; xlsx -> CSV showed the formula calculated, the date and both sheets; the PDF was rendered to an image and looked right.
+    Not Word or Excel themselves. 20 tests in `test_doc_writers.py`.
+  - **Not done:** PPTX writing; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
+    document in place (the model rewrites the whole file: read -> change -> write).
+- **Still open:** (a) the other formats (item 3: RTF, EPUB, ODT/ODS, OCR) -- not started; (b) whether an
   uploaded file goes through `read_file` (what happens now: the attachment note tells the model to `read_file` it) or the
   RAG indexer -- the user's call; (c) real files from the user, then a device check.
 
