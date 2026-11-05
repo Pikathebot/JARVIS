@@ -3148,6 +3148,11 @@ treating tool output as untrusted is the right approach), an AppContainer/WSL sh
    6.5 of 8 GB. So: no leak in 3 h, but the whole stack leaves little RAM headroom on 16 GB (Windows still showed 85%
    used right after the run). Not covered: voice mode and governor eviction (do by hand), runs longer than 3 h.
    Follow-ups: a short run with voice mode on; work out what else holds the RAM when Jarvis is idle.
+   **Used again 2026-11-05 to gate PR #1** (`rust-profiling`: faster `TokenCounter` / `is_binary`, `retriever.retrieve`
+   via `asyncio.to_thread`, single-flight background re-index across retrievers): 20 min from a worktree with master
+   merged in, 75 turns, 0 errors, 18 retrievals on the worker thread and one background re-index, no thread / SQLite /
+   Qdrant errors in `backend.log`; llama :8001 7.5 -> 8.5 GB (same band as above). Merged as 711d04a.
+   Results `scripts/soak_results/20261105-080858-pr1/`.
 
 **C. Proposed after (4) student integrations -- the user hasn't placed these**
 9. **Read the focused window through Windows UI Automation** ("summarize this error" without a screenshot): a
