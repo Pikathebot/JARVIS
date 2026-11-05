@@ -105,6 +105,10 @@ def test_requests_to_act_never_run_on_the_toolless_fast_model(monkeypatch):
 @pytest.mark.parametrize("text, acting", [
     ("open discord", True), ("mute", True), ("delete probe.txt", True), ("what did I change in git", True),
     ("hi", False), ("what's a haiku?", False), ("thanks, that helps", False),
+    # named no verb, still need a tool (scripts/check_turn_routing.py, 2026-11-05)
+    ("what's on my calendar tomorrow?", True), ("any new emails?", True), ("summarize notes.txt", True),
+    ("note that the wifi password is on the router", True), ("I bought the milk", True),
+    ("tell me about turing machines", False), ("what colour is the sky?", False),
 ])
 def test_looks_like_action(text, acting):
     assert looks_like_action(text) is acting

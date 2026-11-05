@@ -2,11 +2,12 @@
 name: flashcards
 description: Make flashcards from notes or a topic and quiz the user with spaced repetition.
 triggers:
-  - flashcards
-  - flash cards
+  - flashcard
+  - flash card
   - quiz me
   - spaced repetition
-  - revision cards
+  - revision card
+  - anki
 tools:
   - read_file
   - write_file

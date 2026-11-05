@@ -13,6 +13,16 @@ except ImportError:
 logger = logging.getLogger("jarvis.skills.loader")
 
 
+def trigger_in(trigger: str, text_lower: str) -> bool:
+    """A trigger phrase in lower-cased text as whole words: "uat" is not in "evaluating", "flashcard"
+    is in "flashcards". Spaces in the trigger match any run of whitespace."""
+    words = (trigger or "").lower().split()
+    if not words:
+        return False
+    body = r"\s+".join(map(re.escape, words))
+    return re.search(r"(?<![\w])" + body + r"(?:s|es)?(?![\w])", text_lower) is not None
+
+
 @dataclass
 class SkillMetadata:
     """
@@ -187,7 +197,7 @@ class SkillsLoader:
             matched = False
             for trig in s.triggers:
                 trig_clean = trig.lower().strip()
-                if trig_clean and (trig_clean in query_lower or re.search(r"\b" + re.escape(trig_clean) + r"\b", query_lower)):
+                if trig_clean and trigger_in(trig_clean, query_lower):
                     matched = True
                     break
 
@@ -301,16 +311,19 @@ class SkillsLoader:
         ]
 
     def match_skills(self, user_message: str) -> list[Skill]:
-        """Legacy trigger matching returning full Skill objects."""
+        """The skills whose trigger phrase is in the message, as whole words (a plural 's' is allowed).
+
+        The orchestrator calls this every turn. It was a plain substring test, so the Unreal skill's
+        "uat" fired on "evaluating" and "ubt" on "doubt" (scripts/check_turn_routing.py, 2026-11-05)."""
         if not self._skills_cache:
             self.load_skills()
 
         matched: list[Skill] = []
-        msg_lower = user_message.lower()
+        msg_lower = (user_message or "").lower()
 
         for skill in self._skills_cache.values():
             for trigger in skill.triggers:
-                if trigger.lower() in msg_lower:
+                if trigger_in(trigger, msg_lower):
                     matched.append(skill)
                     break
 

@@ -254,9 +254,21 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
   (`BackendHost` keeps restarting uvicorn). To find the cause, next time it happens run, as
   admin, `auditpol /set /subcategory:"Filtering Platform Connection" /failure:enable` and read
   Security events 5157/5159, plus `netsh int ipv4 show excludedportrange protocol=tcp` at once.
-- **Tool selection is keyword matching** (`get_relevant_tools`). Phrasings without a trigger word
-  get no tools, and "do/check/show..." offers all of them. Worth revisiting once there are real
-  misses to measure against.
+- **Keyword gates, measured 2026-11-05 (cloud session) -- BUILT.** Tools are not keyword-picked any more
+  (`tools_for_space`, one fixed set per space since 2026-09-30; this note said `get_relevant_tools` until then).
+  Two per-message keyword decisions remain, and `scripts/check_turn_routing.py` now runs them over every eval
+  prompt (`eval_real_chat`, `eval_jarvis_tasks`) plus paraphrases, each labelled with the skill it should fire and
+  whether it needs a tool; `test_turn_routing.py` pins the labels.
+  (1) **Skill triggers** (`SkillsLoader.match_skills`) were a substring test: the Unreal skill's `uat` fired on
+  "evaluating" (the arXiv case got Unreal instructions) and `ubt` on "doubt"; "any coding contests this weekend?"
+  fired nothing. Now whole words with a plural "s" (`trigger_in`), and the study skills got the missing phrasings.
+  (2) **The toolless fast model:** a short message with no tool-ish word gets a fast verdict, and when the fast
+  model is the loaded one (after voice mode) it runs with no tools unless `looks_like_action` matches. 22 of the 61
+  tool-needing eval prompts missed ("what's on my calendar tomorrow?", "any new emails?", "summarize notes.txt",
+  "note that ...", "I bought the milk"). `looks_like_action` now also takes tool-domain words and file names
+  (`_NEEDS_LIVE_DATA_RE`) and the notes cues (`notes.asks_for_a_tool`): 4 misses left on purpose
+  (`KNOWN_NO_TOOL_MISSES`: web or project questions with no telling word), and one chat prompt more goes to main
+  ("latest features in python 3.13"). Not run through the model; the measurement is of the gates only.
 - **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
   goes through `AwarenessMonitor` actions.
 

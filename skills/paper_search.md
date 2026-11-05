@@ -4,6 +4,10 @@ description: Find and summarize research papers on arXiv.
 triggers:
   - arxiv
   - find papers
+  - find me papers
+  - find some papers
+  - search for papers
+  - look for papers
   - research paper
   - papers about
 tools:

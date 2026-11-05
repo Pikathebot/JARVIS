@@ -11,6 +11,9 @@ triggers:
   - review my solution
   - in a contest
   - during the contest
+  - coding contest
+  - programming contest
+  - coding problem
 tools:
   - coding
   - read_file

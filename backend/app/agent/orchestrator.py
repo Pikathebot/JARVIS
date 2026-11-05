@@ -41,7 +41,7 @@ from app.agent.project_capture import capture_project_state, project_cue
 from app.agent import compare, paused_turns, recent_objects, taint, training_log
 from app.agent.research import wants_answer, wants_research
 from app.agent.tools.memory import asks_to_forget
-from app.agent.tools.notes import turn_directive as notes_turn_directive
+from app.agent.tools.notes import asks_for_a_tool as notes_asks_for_a_tool, turn_directive as notes_turn_directive
 from app.agent.tools.calendar_events import resolve_action as resolve_calendar_action
 from app.agent.provider_factory import get_model_provider
 from app.agent.openrouter_client import OpenRouterClient
@@ -801,8 +801,24 @@ def _status_sentence(user_message: str) -> str:
         return ""
 
 
+# Questions only a tool can answer that name no verb above: the user's calendar, mail, notes and files,
+# the machine, the coding judges, the web's latest. Measured on the eval prompts with
+# scripts/check_turn_routing.py (2026-11-05): "what's on my calendar tomorrow?", "any new emails?",
+# "summarize notes.txt" and "what's today's leetcode daily?" went to the toolless fast model whenever it
+# was the one loaded (after voice mode). Same rule as above: a false positive costs a model swap.
+_NEEDS_LIVE_DATA_RE = re.compile(
+    r"\b(?:calendar|agenda|appointments?|e-?mails?|inbox|gmail|drafts?|notes?|to-?dos?|tasks?|reminders?|timers?|"
+    r"alarms?|pomodoros?|flash ?cards?|quiz|leetcode|codeforces|atcoder|contests?|arxiv|papers?|news|headlines?|"
+    r"latest|current(?:ly)?|today'?s|tonight|weather|forecast|vram|cpu|gpu|ram|disk|battery|usage|downloads|"
+    r"desktop|workspace|repo|drive)\b"
+    r"|\b[\w-]+\.(?:txt|md|pdf|docx?|xlsx?|pptx?|csv|json|py|js|ts|html?|log|ini|ya?ml|toml|cs|cpp|java)\b",
+    re.IGNORECASE,
+)
+
+
 def looks_like_action(user_message: str) -> bool:
-    return bool(_ACTION_REQUEST_RE.search(user_message or ""))
+    text = user_message or ""
+    return bool(_ACTION_REQUEST_RE.search(text) or _NEEDS_LIVE_DATA_RE.search(text) or notes_asks_for_a_tool(text))
 
 
 def _with_system_prompt(system_prompt: str, conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:

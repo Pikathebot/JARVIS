@@ -7,6 +7,7 @@ triggers:
   - focus session
   - start a timer
   - study session
+  - focus block
 tools:
   - remind_me
   - reminders

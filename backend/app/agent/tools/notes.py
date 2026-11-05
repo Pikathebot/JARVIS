@@ -243,6 +243,13 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in _STOP}
 
 
+def asks_for_a_tool(user_message: str) -> bool:
+    """turn_directive's cues without reading the task list: a note, a draft, an event, a to-do, or a
+    "done" -- the router keeps such a turn off the toolless fast model."""
+    text = user_message or ""
+    return any(r.search(text) for r in (_ASKS_NOTE, _ASKS_EMAIL_DRAFT, _ASKS_EVENT, _ASKS_TASK, _SAYS_DONE))
+
+
 def turn_directive(user_message: str) -> str:
     """A one-line pointer for this turn when the message plainly asks for a note, or says that an
     open task (sharing a word with the message) is done; "" otherwise. Rides on the user turn."""
