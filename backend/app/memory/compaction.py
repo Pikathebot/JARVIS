@@ -78,7 +78,9 @@ def preamble(summary: str, at: Optional[float] = None) -> str:
 
 
 def window_for(model: str) -> int:
-    return settings.llama_ctx_size_fast if model == "fast" else settings.llama_ctx_size_main
+    from app.agent.runtime_process_manager import context_window_for
+
+    return context_window_for(model)
 
 
 def should_compact(peak_tokens: Optional[int], window: int) -> bool:

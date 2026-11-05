@@ -86,6 +86,9 @@ async def list_models():
         "served_model": manager.served_model.name if manager.served_model else None,
         "served_ctx_size": manager.served_ctx_size,
         "launch_adjustment": manager.launch_adjustment,
+        # Which launch profile the last launch started from, and why (PLAN 4.28): "as configured" until a
+        # data/launch_profiles.json says otherwise; "error" is why a bad file was ignored.
+        "launch_profile": manager.launch_profile,
         "externally_managed": manager.is_externally_managed,
         "captioner": _captioner_status(),
         "embedder": _embedder_status(),

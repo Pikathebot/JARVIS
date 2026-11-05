@@ -336,7 +336,11 @@ class ContextManager:
         template renders them into the head, so they come out of the budget before the history.
         """
         # 1. Budget Resolution (Amendment 2: Model context window resolution)
-        total_window = max_context_tokens or settings.llama_ctx_size_main
+        if not max_context_tokens:
+            from app.agent.runtime_process_manager import context_window_for
+
+            max_context_tokens = context_window_for("main")
+        total_window = max_context_tokens
         reserved_output = self.reserved_output_tokens
         input_budget = max(0, total_window - reserved_output)
         remaining_budget = input_budget

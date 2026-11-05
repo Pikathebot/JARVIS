@@ -212,6 +212,8 @@ governor = ResourceGovernor(
 get_runtime_process_manager().vram_headroom_provider = (
     lambda: governor.vram_headroom_mb(reserve_mb=settings.llama_launch_vram_reserve_mb)
 )
+# ...and how much is free at all, which picks the launch profile (PLAN 4.28, data/launch_profiles.json).
+get_runtime_process_manager().vram_free_provider = lambda: governor.vram_headroom_mb(reserve_mb=0.0)
 # The model picker's fit labels: the card minus what the rest of the machine held lately.
 from app.agent import model_hub as _model_hub
 _model_hub.budget_provider = governor.fit_budget_mb

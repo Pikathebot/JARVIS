@@ -1072,7 +1072,9 @@ class AgentOrchestrator:
                        metrics: "TurnMetrics") -> list[dict[str, Any]]:
         """The request cut to fit the model's window, tools priced in (``turn_fit``): a turn's tool
         results grow it after the context was budgeted (2026-10-24: 6.5k budgeted, 16.5k sent)."""
-        window = settings.llama_ctx_size_fast if model == "fast" else settings.llama_ctx_size_main
+        from app.agent.runtime_process_manager import context_window_for
+
+        window = context_window_for(model)
         fitted, done = fit_messages(messages, window, tools_tokens(tools), settings.context_reserved_output_tokens)
         if done:
             metrics.nets.append("fit-window")
@@ -1644,7 +1646,9 @@ class AgentOrchestrator:
             # "note that ..." / "I bought the milk" got "Noted, sir." and no call (PLAN 4.16 eval):
             # point at notes/tasks for this turn only. Ephemeral chats can't write them, so no pointer.
             turn_directive = "\n\n".join(d for d in (turn_directive, notes_turn_directive(user_message)) if d)
-        resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
+        from app.agent.runtime_process_manager import context_window_for
+
+        resolved_ctx_tokens = context_window_for("fast" if is_fast else "main")
 
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
@@ -2397,7 +2401,9 @@ class AgentOrchestrator:
             # "note that ..." / "I bought the milk" got "Noted, sir." and no call (PLAN 4.16 eval):
             # point at notes/tasks for this turn only. Ephemeral chats can't write them, so no pointer.
             turn_directive = "\n\n".join(d for d in (turn_directive, notes_turn_directive(user_message)) if d)
-        resolved_ctx_tokens = settings.llama_ctx_size_fast if is_fast else settings.llama_ctx_size_main
+        from app.agent.runtime_process_manager import context_window_for
+
+        resolved_ctx_tokens = context_window_for("fast" if is_fast else "main")
         logger.info("Routing decision: mode='%s', provider='%s', model='%s', reason='%s'",
                     decision.mode, decision.provider, decision.model, decision.reason)
 

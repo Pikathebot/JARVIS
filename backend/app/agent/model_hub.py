@@ -228,9 +228,16 @@ def fit_label(cost_mb: Optional[float], budget_mb: Optional[float]) -> str:
 
 
 def slot_ctx_sizes() -> dict[str, int]:
+    """The context each slot's next launch asks for (.env, or the launch profile's, PLAN 4.28)."""
     from app.config import settings
 
-    return {"main": int(settings.llama_ctx_size_main), "fast": int(settings.llama_ctx_size_fast)}
+    try:
+        from app.agent.runtime_process_manager import get_runtime_process_manager
+
+        manager = get_runtime_process_manager()
+        return {"main": int(manager.configured_ctx_size("main")), "fast": int(manager.configured_ctx_size("fast"))}
+    except Exception:
+        return {"main": int(settings.llama_ctx_size_main), "fast": int(settings.llama_ctx_size_fast)}
 
 
 def slot_fits(

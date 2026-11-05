@@ -9,6 +9,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Optional
 import httpx
+from app.agent.launch_profiles import AS_CONFIGURED, Profile, load_table as load_launch_profiles
 from app.config import settings
 from app.logs import POLL_REQUEST, stamp
 
@@ -157,6 +158,14 @@ class RuntimeProcessManager:
         # Wired by the app: told once whenever the ladder lands somewhere new, so the user hears
         # "running without vision" from the awareness channel rather than discovering it.
         self.on_launch_adjusted: Optional[Callable[[dict[str, Any]], None]] = None
+        # Wired by the app: MiB physically free on the card (NVML), or None. Read once per launch to
+        # choose the launch profile (PLAN 4.28, app/agent/launch_profiles.py).
+        self.vram_free_provider: Optional[Callable[[], Optional[float]]] = None
+        self.profile_table_path: Optional[Path] = None  # None = data/launch_profiles.json
+        self._profile: Profile = AS_CONFIGURED
+        self._profile_info: dict[str, Any] = {"name": AS_CONFIGURED.name, "fields": {}, "free_mb": None,
+                                              "source": "built-in", "error": None, "picked": False}
+        self._served_alias: Optional[str] = None
 
 
         self._process: Optional[subprocess.Popen] = None
@@ -194,10 +203,10 @@ class RuntimeProcessManager:
         catalog = get_model_catalog()
         kind_norm = (model_kind or "main").strip().lower()
         if kind_norm in ("main", "9b", "qwen3.5-9b", "default"):
-            target_path_str = catalog.selected("main") or self.main_model_path
+            target_path_str = catalog.selected("main") or self._profile_model("main") or self.main_model_path
             alias = "main"
         elif kind_norm in ("fast", "4b", "qwen3.5-4b"):
-            target_path_str = catalog.selected("fast") or self.fast_model_path
+            target_path_str = catalog.selected("fast") or self._profile_model("fast") or self.fast_model_path
             alias = "fast"
         else:
             target_path_str = model_kind
@@ -239,7 +248,7 @@ class RuntimeProcessManager:
         Pairing is by directory (see ``ModelCatalog.projector_for``); ``LLAMA_MMPROJ_ENABLED=false``
         turns it off globally for anyone who would rather keep the projector's VRAM.
         """
-        if not settings.llama_mmproj_enabled:
+        if not settings.llama_mmproj_enabled or self._profile.projector is False:
             return None
         from app.agent.model_catalog import get_model_catalog
 
@@ -430,7 +439,10 @@ class RuntimeProcessManager:
                 await self._stop_internal()
 
 
-            # 2. Server not running or needs restart with new model
+            # 2. Server not running or needs restart with new model. The profile is chosen now, from the
+            # card as it is at this launch, and can change which file the slot resolves to.
+            self._pick_profile()
+            resolved_model, alias = self.resolve_model_path(model_kind)
             return await self._launch_with_budget(resolved_exe, resolved_model, model_kind, alias)
 
     # --- launch budget ladder ------------------------------------------------------------
@@ -438,7 +450,60 @@ class RuntimeProcessManager:
     def _ctx_size_for(self, alias: str) -> int:
         if self.ctx_size is not None:
             return int(self.ctx_size)
+        from_profile = self._profile.ctx_for(alias)
+        if from_profile:
+            return int(from_profile)
         return int(settings.llama_ctx_size_fast if alias == "fast" else settings.llama_ctx_size_main)
+
+    def configured_ctx_size(self, slot: str) -> int:
+        """What the slot's next launch asks for, before the ladder: code > launch profile > .env."""
+        return self._ctx_size_for("fast" if slot == "fast" else "main")
+
+    def context_window(self, slot: str) -> int:
+        """The tokens a turn on ``slot`` can use: what the running server was launched with when it serves that
+        slot (the ladder may have halved it), else what the slot's next launch asks for."""
+        slot = "fast" if slot == "fast" else "main"
+        if self._served_ctx_size and self._served_alias == slot and self.is_running():
+            return int(self._served_ctx_size)
+        return self._ctx_size_for(slot)
+
+    # --- launch profiles (PLAN 4.28) -------------------------------------------------------
+
+    def _profile_model(self, slot: str) -> Optional[str]:
+        path = self._profile.model_for(slot)
+        if path and not resolve_repo_path(path).exists():
+            logger.warning("Launch profile '%s' names %s for %s, which does not exist; using the configured model.",
+                           self._profile.name, path, slot)
+            return None
+        return path
+
+    def _pick_profile(self) -> Profile:
+        """Choose the bucket for the coming launch from the card's free VRAM. Never raises: a broken table or a
+        failing reading means the built-in "as configured" profile, as before profiles existed."""
+        table = load_launch_profiles(self.profile_table_path)
+        free: Optional[float] = None
+        if self.vram_free_provider is not None:
+            try:
+                value = self.vram_free_provider()
+                free = None if value is None else float(value)
+            except Exception as exc:
+                logger.debug("VRAM free provider failed: %s", exc)
+        profile = table.pick(free)
+        if profile != self._profile:
+            logger.info("Launch profile: '%s' (%s MiB free, table %s).", profile.name,
+                        "unknown" if free is None else round(free), table.source)
+        self._profile = profile
+        self._profile_info = {"name": profile.name, "fields": {k: v for k, v in profile.to_dict().items()
+                                                               if k not in ("name", "min_free_mb")},
+                              "min_free_mb": profile.min_free_mb, "free_mb": None if free is None else round(free),
+                              "source": table.source, "error": table.error, "picked": True,
+                              "profiles": [p.name for p in table.profiles]}
+        return profile
+
+    @property
+    def launch_profile(self) -> dict[str, Any]:
+        """The profile the last launch started from (``picked`` False before the first launch)."""
+        return dict(self._profile_info)
 
     def _build_cmd(
         self,
@@ -627,6 +692,7 @@ class RuntimeProcessManager:
             if ok:
                 self._served_model = rung["model"]
                 self._served_ctx_size = rung["ctx"]
+                self._served_alias = alias
                 self._remember_launch(rung, requested, alias, headroom, estimate)
             return ok
         # Unreachable: the last rung either returned or raised.
@@ -788,6 +854,7 @@ class RuntimeProcessManager:
         self._external_vram_baseline_mb = None
         self._served_model = None
         self._served_ctx_size = None
+        self._served_alias = None
 
         # 1. Terminate tracked subprocess if present
         if self._process is not None:
@@ -886,6 +953,17 @@ def get_runtime_process_manager() -> RuntimeProcessManager:
     if _process_manager_instance is None:
         _process_manager_instance = RuntimeProcessManager()
     return _process_manager_instance
+
+
+def context_window_for(slot: str) -> int:
+    """The context window a turn on ``slot`` ("main" / "fast") can use -- the served one when that slot is running
+    (``RuntimeProcessManager.context_window``), else the configured one. Turn fitting, compaction and the context
+    budget read this, so a launch that got half the context, or a profile with its own, is budgeted for."""
+    slot = "fast" if slot == "fast" else "main"
+    try:
+        return int(get_runtime_process_manager().context_window(slot))
+    except Exception:  # a stand-in manager in tests, or anything else odd: the .env value, as before
+        return int(settings.llama_ctx_size_fast if slot == "fast" else settings.llama_ctx_size_main)
 
 
 def reset_runtime_process_manager() -> None:

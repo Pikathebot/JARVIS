@@ -73,6 +73,14 @@ def no_judge_handles(monkeypatch):
         monkeypatch.setattr(settings, name, "")
 
 
+@pytest.fixture(autouse=True)
+def no_launch_profile_file(monkeypatch, tmp_path):
+    """A data/launch_profiles.json on the user's PC must not change what the launcher tests launch (PLAN 4.28)."""
+    import app.agent.launch_profiles as lp
+
+    monkeypatch.setattr(lp, "TABLE_PATH", tmp_path / "no-launch-profiles.json")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def database_schema():
     """The app migrates its database when it starts; tests that post to it through httpx's ASGITransport skip that startup,

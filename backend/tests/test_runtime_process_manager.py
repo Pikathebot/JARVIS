@@ -610,3 +610,98 @@ def test_no_mmap_uses_load_mode_on_builds_that_replaced_the_flag(tmp_path, monke
         assert rpm.no_mmap_flags(exe) == expected
     rpm._help_cache.clear()
     assert rpm.no_mmap_flags(tmp_path / "missing.exe") == ["--no-mmap"]
+
+
+# ---------------- launch profiles (PLAN 4.28) ----------------
+def _profiles(tmp_path, data):
+    path = tmp_path / "launch_profiles.json"
+    import json
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_without_a_profile_file_the_launch_is_exactly_as_before(budget_catalog):
+    """The golden check: no data/launch_profiles.json -> the same rungs and the same argv as a manager that never
+    picked a profile (what every launch was before the table existed)."""
+    before = _budget_pm(budget_catalog, {"mb": None})
+    main, _ = before.resolve_model_path("main")
+    rungs_before = before._launch_rungs(main, "main")
+    cmd_before = before._build_cmd(Path("llama-server.exe"), main, "main", rungs_before[0]["ctx"], rungs_before[0]["projector"])
+
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    pm.vram_free_provider = lambda: 7000.0
+    cmds = await _launch_and_capture_cmds(pm, "main")
+    assert pm._launch_rungs(main, "main") == rungs_before
+    assert cmds[0][1:] == cmd_before[1:]
+    info = pm.launch_profile
+    assert info["name"] == "as configured" and info["fields"] == {} and info["free_mb"] == 7000 and info["picked"]
+    assert info["source"] == "built-in" and info["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_profile_sets_what_nothing_else_does(budget_catalog, tmp_path):
+    fast = str(budget_catalog / "qwen3.5-2b" / "Qwen3.5-2B-UD-Q4_K_XL.gguf")
+    path = _profiles(tmp_path, {"default": "laptop", "profiles": [
+        {"name": "small card", "min_free_mb": 0, "main_model": fast, "main_ctx": 8192, "projector": False},
+        {"name": "laptop", "min_free_mb": 6000}]})
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    pm.profile_table_path, pm.vram_free_provider = path, (lambda: 3000.0)
+
+    cmds = await _launch_and_capture_cmds(pm, "main")
+    argv = cmds[0]
+    assert Path(argv[argv.index("--model") + 1]).name == "Qwen3.5-2B-UD-Q4_K_XL.gguf"
+    assert argv[argv.index("--ctx-size") + 1] == "8192" and "--mmproj" not in argv
+    assert argv[argv.index("--alias") + 1] == "main"
+    assert pm.launch_profile["name"] == "small card" and pm.launch_profile["fields"]["projector"] is False
+    assert pm.launch_adjustment is None  # the bucket is where the ladder starts, not a step down it
+    assert pm.context_window("main") == 8192
+
+
+def test_precedence_ui_pick_over_profile_over_env_and_code_ctx_over_profile(budget_catalog, tmp_path):
+    import app.agent.model_catalog as mc
+
+    fast = str(budget_catalog / "qwen3.5-2b" / "Qwen3.5-2B-UD-Q4_K_XL.gguf")
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    pm.profile_table_path = _profiles(tmp_path, {"profiles": [{"name": "p", "main_model": fast, "main_ctx": 12288}]})
+    pm._pick_profile()
+    assert pm.resolve_model_path("main")[0].name == "Qwen3.5-2B-UD-Q4_K_XL.gguf"     # profile over .env
+    assert pm.configured_ctx_size("main") == 12288 and pm.configured_ctx_size("fast") == 8192
+    mc._catalog.select("main", str(budget_catalog / "qwen3.5-9b" / "Qwen3.5-9B-UD-IQ3_XXS.gguf"))
+    assert pm.resolve_model_path("main")[0].name == "Qwen3.5-9B-UD-IQ3_XXS.gguf"      # a UI pick over the profile
+    pm.ctx_size = 4096
+    assert pm.configured_ctx_size("main") == 4096                                      # code over the profile
+
+
+def test_a_profile_naming_a_missing_model_keeps_the_configured_one(budget_catalog, tmp_path):
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    pm.profile_table_path = _profiles(tmp_path, {"profiles": [{"name": "p", "main_model": "models/gone.gguf"}]})
+    pm._pick_profile()
+    assert pm.resolve_model_path("main")[0].name == "Qwen3.5-9B-UD-IQ3_XXS.gguf"
+
+
+def test_a_failing_vram_reading_or_a_bad_file_never_stops_the_pick(budget_catalog, tmp_path):
+    pm = _budget_pm(budget_catalog, {"mb": None})
+    pm.vram_free_provider = lambda: (_ for _ in ()).throw(RuntimeError("nvml gone"))
+    path = tmp_path / "launch_profiles.json"
+    path.write_text("[1, 2", encoding="utf-8")
+    pm.profile_table_path = path
+    assert pm._pick_profile().name == "as configured"
+    assert pm.launch_profile["free_mb"] is None and "ignored" in pm.launch_profile["error"]
+
+
+@pytest.mark.asyncio
+async def test_the_context_window_is_the_served_one_when_the_ladder_halved_it(budget_catalog):
+    """Turn fitting and compaction used .env's 32k even when the ladder launched 16k."""
+    from app.agent import runtime_process_manager as rpm
+
+    pm = _budget_pm(budget_catalog, {"mb": 900.0})
+    assert pm.context_window("main") == 32768                    # nothing running: what the launch will ask for
+    await _launch_and_capture_cmds(pm, "main")
+    with patch.object(pm, "is_running", return_value=True):
+        assert pm.context_window("main") == 16384 and pm.context_window("fast") == 8192
+        with patch.object(rpm, "get_runtime_process_manager", return_value=pm):
+            from app.memory.compaction import window_for
+            assert rpm.context_window_for("main") == 16384 and window_for("main") == 16384
+    with patch.object(rpm, "get_runtime_process_manager", return_value=object()):
+        assert rpm.context_window_for("main") == 32768             # a stand-in manager: the .env value
