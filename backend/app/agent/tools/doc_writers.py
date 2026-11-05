@@ -718,7 +718,8 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
 
 
 # ---------------------------------------------------------------- PPTX
-_SLIDE_MARK = re.compile(r"^\s*-{2,}\s*slide\s*\d*\s*-{2,}\s*$", re.I)
+# '--- slide 2 ---' (what read_file prints), also with a caption: '--- SLIDE 2: Wednesday - OS ---' (eval 11-05).
+_SLIDE_MARK = re.compile(r"^\s*-{2,}\s*slide\s*\d*(?:\s*[:.\-–—][^\n]*?)?\s*-{2,}\s*$", re.I)
 _HR = re.compile(r"^\s*-{3,}\s*$")
 _H1 = re.compile(r"^#\s+\S")
 _A_NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
@@ -733,7 +734,9 @@ _BOTTOM = 6553200                          # nothing should run past this
 _FONT_SIZES = (2800, 2400, 2200, 2000, 1800, 1600, 1400, 1200)
 _GRP = ('<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/>'
         '<a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>')
-_NOTES_RE = re.compile(r"^\s*notes\s*:\s*(.*)$", re.I)
+_FRONT_MATTER_RE = re.compile(r"\A\s*---[ \t]*\n(?:[ \t]*[\w-]+[ \t]*:[^\n]*\n)+[ \t]*---[ \t]*(?:\n|\Z)")
+# "Notes:" or "Speaker notes:" (what the model wrote in eval 11-05, case 29), bold or not.
+_NOTES_RE = re.compile(r"^\s*(?:\*\*)?(?:speaker\s+)?notes\s*:\s*(?:\*\*)?\s*(.*)$", re.I)
 
 _THEME = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <a:theme {_A_NS} name="Jarvis"><a:themeElements><a:clrScheme name="Jarvis">
@@ -844,6 +847,8 @@ def _slide_table(sid: int, rows: list, y: int) -> tuple:
 
 def _split_slides(text: str, readback: bool) -> list:
     """[[line]] per slide: a '--- slide N ---' marker or (written fresh) a lone '---' or a '# ' heading starts the next slide."""
+    if not readback:
+        text = _FRONT_MATTER_RE.sub("", text, count=1)  # '---/title: x/---' up front is metadata, not a slide
     slides: list = [[]]
     for line in text.split("\n"):
         if _SLIDE_MARK.match(line) or (not readback and (_HR.match(line) or (_H1.match(line) and any(l.strip() for l in slides[-1])))):
@@ -870,8 +875,9 @@ def _build_pptx(text: str, readback: bool = False) -> tuple:
         elif readback and blocks and blocks[0][0] in ("para", "number"):
             title, blocks = blocks[0][1], blocks[1:]       # read_file prints the title first, as a plain line ('- ' is body text)
         for i, b in enumerate(blocks):
-            if b[0] in ("para", "bullet") and _NOTES_RE.match(b[1]):
-                notes = [_NOTES_RE.match(b[1]).group(1)] + [x[-1] for x in blocks[i + 1:] if isinstance(x[-1], str)]
+            line = b[2] if b[0] == "heading" else b[1] if b[0] in ("para", "bullet") else None  # '## Speaker notes:' too
+            if isinstance(line, str) and _NOTES_RE.match(line):
+                notes = [_NOTES_RE.match(line).group(1)] + [x[-1] for x in blocks[i + 1:] if isinstance(x[-1], str)]
                 blocks = blocks[:i]
                 break
         slides.append({"title": title, "blocks": blocks, "notes": [t for t in notes if t.strip()]})

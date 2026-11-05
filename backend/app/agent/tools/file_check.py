@@ -12,12 +12,14 @@ import csv
 import io
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("jarvis.agent.tools.file_check")
 
 MAX_CHECK_BYTES = 2_000_000  # bigger files are written but not parsed
+_DOC_LIB_RE = re.compile(r"^\s*(?:from|import)\s+(?:pptx|docx|openpyxl|reportlab)\b", re.M)
 
 
 def _json(text: str) -> str:
@@ -43,6 +45,10 @@ def _python(text: str, name: str) -> str:
         compile(text, name, "exec")
     except SyntaxError as e:
         return f"Warning: Python syntax error at line {e.lineno}: {e.msg}; fix it."
+    if _DOC_LIB_RE.search(text):  # eval 11-05 case 29: scripts written to make a deck, never run
+        return ("Checked: the Python compiles. Note: write_file itself builds .pptx/.docx/.xlsx/.pdf from Markdown -- "
+                "write to the document's path ('---' between slides, a 'Notes:' line for speaker notes); "
+                "a script is only needed if the user asked for one.")
     return "Checked: the Python compiles."
 
 

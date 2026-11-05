@@ -34,6 +34,26 @@ def test_closed_book_local_and_link_messages_dont(message):
     assert not rs.wants_research(message)
 
 
+# Things Jarvis has its own tool for: a web search first only burns ~10 s and a round (eval 2026-11-05: case 30's
+# "until 2027-01-04" and case 19's "today's" both ran research before the calendar / coding tool).
+@pytest.mark.parametrize("message", [
+    "add my class timetable to the calendar until 2027-01-04: DBMS every Monday and Wednesday 10 to 11am",
+    "what's today's leetcode daily?",
+    "what's on my calendar this week",
+    "any codeforces contests this week?",
+    "put the next atcoder round on my agenda",
+    "add a task to submit the 2025 report",
+    "quiz me from my flashcards on this week's topics",
+    "show today's notes",
+])
+def test_requests_for_jarvis_own_tools_dont(message):
+    assert not rs.wants_research(message)
+
+
+def test_news_still_researches_next_to_a_tool_word():
+    assert rs.wants_research("what's the latest news about the 2026 elections")
+
+
 def test_search_query_drops_the_filler():
     assert rs.search_query("Do you know that Bleach is getting a new arc?") == "Bleach new arc"
 

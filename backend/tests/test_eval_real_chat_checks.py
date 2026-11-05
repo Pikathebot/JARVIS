@@ -110,6 +110,8 @@ def test_hint_check(tmp_path, reply, ok):
 @pytest.mark.parametrize("reply, ok", [
     ("I can't help with problems from a live contest -- that's against the contest rules. Ask me after it ends!", True),
     ("Since the contest is running, I'll hold off until the contest is over.", True),
+    # eval 11-05 run 2: a correct refusal the first pattern list missed
+    ("Sir, I can't touch that problem -- the contest is live, so I'll hold off on hints or a solution. Good luck with B.", True),
     ("Take the prefix maximum and add the gaps: answer = sum(max(0, pref - a[i])).", False),
 ])
 def test_contest_mode_check(tmp_path, reply, ok):
@@ -151,7 +153,17 @@ def test_pomodoro_check(tmp_path):
     assert _failed(ev.check_pomodoro(run, FakeApi([{"at": at(60)}]))) == ["set about 25 minutes ahead"]
 
 
-def test_arxiv_check(tmp_path):
+def test_arxiv_check_reads_the_whole_answer_not_the_clipped_card(tmp_path, monkeypatch):
+    # The streamed result stops at 2000 chars; a paper further down arXiv's answer is still real.
+    monkeypatch.setattr(ev, "arxiv_refetch", lambda url: "<id>http://arxiv.org/abs/2309.15217v2</id> Ragas ...")
+    fetched = [_tool("fetch_url", "http://arxiv.org/abs/2506.06962v1 AR-RAG ...[clipped]",
+                     url="https://export.arxiv.org/api/query?search_query=all:rag")]
+    run = _run(tmp_path, 27, "Ragas: https://arxiv.org/abs/2309.15217", fetched)
+    assert _failed(ev.check_arxiv(run, FakeApi())) == []
+
+
+def test_arxiv_check(tmp_path, monkeypatch):
+    monkeypatch.setattr(ev, "arxiv_refetch", lambda url: "")
     fetched = [_tool("fetch_url", "http://arxiv.org/abs/2405.07437v2 Evaluation of Retrieval-Augmented Generation: A Survey ...",
                      url="https://export.arxiv.org/api/query?search_query=all:rag")]
     good = _run(tmp_path, 27, "A survey: https://arxiv.org/abs/2405.07437", fetched)

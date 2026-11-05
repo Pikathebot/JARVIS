@@ -459,6 +459,29 @@ def test_pptx_is_built_with_slides_table_notes_and_reads_back(tmp_path):
     assert "| Quarter | Spend |" in back and "Notes: mention risk" in back
 
 
+def test_pptx_front_matter_is_not_a_slide(tmp_path):
+    # eval 11-05 case 29 run 3: a '---/title: .../---' block up front became an extra first slide.
+    out = _write(tmp_path, "f.pptx", "---\ntitle: Exam Week\n---\nMonday: DBMS\n\n---\nWednesday: OS\n\n---\nFriday: CN\n")
+    assert "(3 slides)" in out
+
+
+def test_pptx_titled_slide_markers_and_a_notes_heading(tmp_path):
+    # eval 11-05 case 29 run 3: '--- SLIDE 1: Monday -- DBMS ---' markers and a '## Speaker notes:' heading.
+    deck = ("--- SLIDE 1: Monday - DBMS ---\n# DBMS\n- Transactions\n\n--- SLIDE 2: Wednesday - OS ---\n# OS\n- Paging\n\n"
+            "--- SLIDE 3: Friday - CN ---\n# CN\n- TCP/IP\n\n## Speaker notes:\nRehearse the layering diagram.")
+    out = _write(tmp_path, "g.pptx", deck)
+    assert "(3 slides, 1 with speaker notes)" in out
+    back = _read(tmp_path, "g.pptx")
+    assert "Notes: Rehearse the layering diagram" in back and "Speaker notes" not in back
+
+
+def test_pptx_speaker_notes_line_also_counts_as_notes(tmp_path):
+    # eval 11-05 case 29: the model wrote "Speaker notes:", which landed on the slide as body text.
+    out = _write(tmp_path, "e.pptx", "# Monday\nDBMS\n---\n# Friday\nNetworks\nSpeaker notes: good luck")
+    assert "speaker notes" in out
+    assert "ppt/notesSlides/notesSlide2.xml" in _parts(tmp_path / "e.pptx")
+
+
 def test_pptx_round_trip_is_stable(tmp_path):
     _write(tmp_path, "d.pptx", _DECK)
     first = _read(tmp_path, "d.pptx")

@@ -19,6 +19,13 @@ def test_python_syntax_error_names_the_line(tmp_path):
     assert "the Python compiles" in write_file("ok.py", "x = 1\n", workspace_path=str(tmp_path))
 
 
+def test_a_script_that_builds_a_document_is_told_write_file_can_build_it(tmp_path):
+    # eval 11-05 case 29: asked for exam_week.pptx, the model wrote python-pptx scripts it couldn't run.
+    out = write_file("deck.py", "from pptx import Presentation\nprs = Presentation()\n", workspace_path=str(tmp_path))
+    assert "the Python compiles" in out and "builds .pptx" in out
+    assert "builds .pptx" not in write_file("plain.py", "import json\n", workspace_path=str(tmp_path))
+
+
 def test_csv_with_a_ragged_row_is_flagged(tmp_path):
     out = write_file("t.csv", "name,size\na,1\nb,2,extra\n", workspace_path=str(tmp_path))
     assert "row 3 has 3 columns but the header has 2" in out

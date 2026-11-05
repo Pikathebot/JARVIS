@@ -271,6 +271,8 @@ def _contests(site: str, days: int) -> str:
         text = f"{len(found)} contest{'s' if len(found) != 1 else ''} in the next {days} day{'s' if days != 1 else ''} (your local time):\n" + "\n".join(lines)
         if len(found) > 25:
             text += f"\n(and {len(found) - 25} more)"
+    if found:  # eval 11-05 case 21: a hand-made calendar entry got 1 h and no reminder
+        text += "\nTo put one on the calendar (its real length + a reminder): coding action=schedule query=<id>."
     if failed:
         text += "\nCouldn't read: " + "; ".join(failed) + "."
     return text

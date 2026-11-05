@@ -128,6 +128,8 @@ def test_contests_merge_the_three_sites_in_start_order_within_the_window(sites):
     assert "tomorrow" in lines[0] and "in 2 days" in lines[1] and "in 3 days" in lines[2]
     assert "id lc:weekly-contest-527" in lines[0] and "id cf:2283" in lines[1] and "id ac:abc483" in lines[2]
     assert "https://codeforces.com/contests/2283" in lines[1] and "https://atcoder.jp/contests/abc483" in lines[2]
+    # eval 11-05 case 21: the model put a round on the calendar by hand (1 h, no reminder); the list points at schedule.
+    assert "action=schedule" in out.splitlines()[-1]
     assert "Educational Codeforces Round 196, 2h." in lines[1] and "AtCoder Beginner Contest 483, 1h40." in lines[2]
     assert "Finished Round" not in out and "Running Round" not in out
 

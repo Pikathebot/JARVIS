@@ -84,11 +84,15 @@ _RECENCY_RE = re.compile(
     re.IGNORECASE,
 )
 _YEAR_RE = re.compile(r"\b(20[2-9]\d)\b")
-# Messages about this machine or the workspace, or that give their own link, don't go to the web.
+# Messages about this machine or the workspace, or that give their own link, don't go to the web. Nor do
+# requests for something Jarvis has its own tool for (calendar, tasks, notes, flashcards, the coding sites):
+# a search first costs a round and ~10 s, and "until 2027-01-04" / "today's daily" read as recent (eval 11-05).
 _LOCAL_RE = re.compile(
     r"https?://|www\.|\b(?:file|files|folder|directory|workspace|project|repo|git|commit|clipboard|"
     r"screen|volume|process|remind|reminder|open|launch|play|pause|close|kill|delete|write|create|save|"
-    r"rename|install|my (?:pc|laptop|computer|system))\b",
+    r"rename|install|my (?:pc|laptop|computer|system)|"
+    r"calendar|agenda|timetable|appointments?|alarms?|timers?|pomodoros?|to-?dos?|tasks?|notes|"
+    r"flash ?cards?|leetcode|codeforces|atcoder|contests?)\b",
     re.IGNORECASE,
 )
 
