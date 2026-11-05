@@ -309,10 +309,7 @@ def research(question: str, search: SearchFn, fetch: FetchFn, query: str = "") -
 # --------------------------------------------------------------------------------------------
 
 def ddg_search(query: str, news: bool) -> list[Hit]:
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        from duckduckgo_search import DDGS
+    from ddgs import DDGS
     with DDGS() as ddgs:
         rows = list(ddgs.news(query, max_results=CANDIDATES + 2) if news else ddgs.text(query, max_results=CANDIDATES + 2))
     if news:

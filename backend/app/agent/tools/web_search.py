@@ -25,10 +25,7 @@ def web_search(query: str, max_results: int = 5, news: bool = False) -> str:
         limit = 5
 
     try:
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         with DDGS() as ddgs:
             if news:
@@ -56,8 +53,8 @@ def web_search(query: str, max_results: int = 5, news: bool = False) -> str:
         return f"## {heading} for: \"{clean_query}\"\n\n" + "\n\n".join(formatted_cards)
 
     except ImportError:
-        logger.error("duckduckgo_search library is not installed.")
-        return "Error: 'duckduckgo_search' package is missing. Please install it with 'pip install duckduckgo_search'."
+        logger.error("ddgs library is not installed.")
+        return "Error: the 'ddgs' package is missing from Jarvis's Python (backend/requirements.txt)."
     except Exception as e:
         logger.warning("Web search failed for '%s': %s", clean_query, e)
         return f"Error during web search for '{clean_query}': {str(e)}"

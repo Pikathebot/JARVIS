@@ -3227,3 +3227,28 @@ ride on `done`, which a confirmation never sends).
 **Open (not done):** a flag on a turn that ended in a denied card. **Verified:** tests (Freeform delete approved and
 refused at the root, kill_process with nothing to close, index scoping, head budget); WinUI compiles (built to a
 scratch folder, the app was running). **Device-verified 11-01 (user):** Freeform delete; barge-in now ends the old bubble ("works perfect").
+
+### 4.33 Cloud session work merged, and a ponytail audit pass (2026-11-05) -- device check: "works good" (user, 11-05)
+- **Cloud branch** `claude/admiring-cori-iossml` (4.27 documents, 4.23b coding tool + study skills, fine-tune export,
+  weekly calendar repeats, 4.28 launch profiles) reviewed here, eval fixes 349cd0f, merged into master. Real-chat eval
+  cases 19-30: 18/36 -> 28/36 (thinking on); case 29 (3-slide deck) stays 1/3 -- the model writes 4-5 slides and
+  replies "3 slides" (follow-through, a fine-tune target). User tried the app after the merge: "works good" (which
+  features they tried isn't recorded). `pypdf` and `reportlab` installed in `.venv`.
+- **Audit (read-only, separate session) and what was done:**
+  (1) **`launch_app` ran any slash-free URI with no card, even on a tainted turn** (`search-ms:`, `ms-officecmd:` --
+  the Follina class). Now only schemes `URI_APPS` maps to, plus `shell:` (Store apps), skip the card
+  (`evaluate_launch_app_risk`); test `test_launch_app_only_known_uri_schemes_skip_the_card`. WhatsApp, Apple Music,
+  Xbox and Settings checked live: still no card.
+  (4) `duckduckgo_search` and `pynvml` dropped from requirements (duplicates of `ddgs` / `nvidia-ml-py`) with the
+  import fallbacks. (5) Deleted the historical docs (ARCHITECTURE, AI_AGENT_CONTEXT, API_REFERENCE, Build plan,
+  GOVERNOR/STAGE specs; README updated), the empty `Jarvis.Core/Class1.cs` and a stray empty `GlassToggle.xaml.cs`.
+  (3) GlassLab shader drift -- left: the lab's shaders differ on purpose; only the user can say if any lab change
+  should ship.
+- **QUEUED (2): one chat loop.** `AgentOrchestrator.run()` (POST /chat, the HUD's non-thread turns) still uses a
+  second, older loop (`_run_internal` + `_run_provider_loop`, ~700 lines). Folding it into `_run_via_stream` was
+  tried 11-05 and reverted: 15 tests fail -- most mock the provider's non-streaming `chat()`, but three rules exist
+  only in the old loop: the 15-calls-per-turn cap (`MAX_TOOL_CALLS_PER_TURN`, plus `RATE_LIMITS`), the "same action
+  twice" loop breaker, and malformed-argument escalation. Decide per rule whether the streaming loop gains it, port the
+  tests, then delete the old loop; HUD turns need a device check after.
+- Small, not done: the stale comment at `confirmations.py:62-63`; a `logger.warning` where `memory/store.py:43-46`
+  drops corrupt `tool_calls` JSON.

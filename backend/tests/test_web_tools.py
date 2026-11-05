@@ -28,13 +28,7 @@ def test_web_search_mocked():
     mock_instance.__enter__.return_value = mock_instance
     mock_instance.text.return_value = sample_results
 
-    try:
-        patch_target = "ddgs.DDGS"
-        import ddgs  # noqa: F401
-    except ImportError:
-        patch_target = "duckduckgo_search.DDGS"
-
-    with patch(patch_target, return_value=mock_instance):
+    with patch("ddgs.DDGS", return_value=mock_instance):
         res = web_search("python features", max_results=2)
         assert "Search Results for: \"python features\"" in res
         assert "Python 3.13 Overview" in res
