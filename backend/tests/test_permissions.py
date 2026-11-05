@@ -583,3 +583,22 @@ def test_launch_app_by_name_is_low_risk_but_paths_and_scripts_still_ask(monkeypa
     assert decision.allowed and decision.risk_tier == perm.RiskTier.LOW_RISK
     decision = perm.evaluate_tool_permission("launch_app", {"name_or_path": r"C:\tmp\thing.exe"})
     assert not decision.allowed
+
+
+def test_launch_app_only_known_uri_schemes_skip_the_card(monkeypatch):
+    # Audit 2026-11-05: any slash-free URI (search-ms:, ms-officecmd: -- the Follina class) ran with no card,
+    # even on a turn tainted by a web page. Known schemes (URI_APPS, packaged apps via shell:) still don't ask.
+    from app.agent import permissions as perm
+
+    for uri in ("search-ms:query=secret", "ms-officecmd:x", "ms-msdt:id"):
+        assert perm.evaluate_launch_app_risk(uri)[0] == perm.RiskTier.CONFIRMATION_REQUIRED, uri
+        decision = perm.evaluate_tool_permission("launch_app", {"name_or_path": uri}, [], tainted_by="a web page")
+        assert not decision.allowed, uri
+    for uri in ("ms-settings:display", "ms-windows-store:"):
+        assert perm.evaluate_launch_app_risk(uri)[0] == perm.RiskTier.LOW_RISK, uri
+    # A Store app arrives by name and resolves to shell:AppsFolder\<AppID>.
+    from app.agent.tools import app_control
+    monkeypatch.setattr(app_control, "_packaged_apps",
+                        lambda: {"calculator": r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"})
+    monkeypatch.setattr(app_control, "find_start_menu_shortcut", lambda name: None)
+    assert perm.evaluate_launch_app_risk("calculator")[0] == perm.RiskTier.LOW_RISK

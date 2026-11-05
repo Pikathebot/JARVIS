@@ -478,6 +478,11 @@ def evaluate_launch_app_risk(name_or_path: str) -> tuple[RiskTier, Optional[str]
         return RiskTier.LOW_RISK, "Application not found; launch will report that."
     target_l = target.lower()
     if is_uri_or_shortcut(target):
+        # Only schemes Jarvis itself maps to apps (and shell: for Store apps) skip the card; any other handler
+        # (search-ms:, ms-officecmd:, ms-msdt: -- the Follina class) could be steered by an injected page.
+        scheme = target_l.split(":", 1)[0] if ":" in target_l and not target_l.endswith((".lnk", ".url", ".appref-ms")) else ""
+        if scheme and scheme not in {"shell"} | {v.split(":", 1)[0].lower() for v in URI_APPS.values()}:
+            return RiskTier.CONFIRMATION_REQUIRED, f"Opens the '{scheme}:' link handler on your PC."
         return RiskTier.LOW_RISK, "Installed application opened via the Start Menu or a system URI."
     # Raw strings: as plain literals "\temp\\" held a tab and "\appdata" a bell, so this never matched.
     if any(marker in target_l for marker in (r"\downloads" "\\", r"\temp" "\\", r"\tmp" "\\")):
