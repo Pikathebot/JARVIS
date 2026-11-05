@@ -1667,10 +1667,12 @@ class AgentOrchestrator:
         active_rag_project_id = resolved_project_id or project_id
         if effective_mode_str == "WORKSPACE" and active_rag_project_id:
             try:
-                retrieved_chunks = self.retriever.retrieve(
+                # Off the event loop (see run_stream): a blocking embed/rerank froze the server.
+                retrieved_chunks = await asyncio.to_thread(
+                    self.retriever.retrieve,
                     project_id=active_rag_project_id,
                     query=user_message,
-                    top_k=settings.context_tier3_max_chunks
+                    top_k=settings.context_tier3_max_chunks,
                 )
             except Exception as rag_err:
                 logger.warning("RAG retrieval failed during execution: %s", rag_err)
@@ -2428,7 +2430,10 @@ class AgentOrchestrator:
             if not self.is_ephemeral:
                 rag_trace_record = {"session_id": active_session_id}
             try:
-                retrieved_chunks = self.retriever.retrieve(
+                # Off the event loop: retrieval embeds over HTTP, can cold-start the embedding
+                # sidecar (up to 45 s) and reranks, and it froze streaming and every other request.
+                retrieved_chunks = await asyncio.to_thread(
+                    self.retriever.retrieve,
                     project_id=active_rag_project_id,
                     query=user_message,
                     top_k=settings.context_tier3_max_chunks,

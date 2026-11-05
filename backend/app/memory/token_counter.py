@@ -37,7 +37,8 @@ class TokenCounter:
         # CJK, emoji, and above all the U+FFFD soup of a binary file read as text -- tokenizes
         # at roughly one token per character, and pricing it at 3.8 let an 11k-token prompt
         # through an 8k budget.
-        non_ascii = sum(1 for ch in text if ord(ch) > 127)
+        # isascii() and encode() run in C; a per-character Python loop here was ~1000x slower.
+        non_ascii = 0 if text.isascii() else len(text) - len(text.encode("ascii", "ignore"))
         ascii_chars = len(text) - non_ascii
         return max(1, math.ceil(ascii_chars / self.chars_per_token) + non_ascii)
 
