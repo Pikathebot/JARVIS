@@ -186,6 +186,16 @@ mmap frees only 0.4 GB of commit and costs 3 s and 2.7 GB resident: the 6.6 GB i
 VRAM allocated (likely WDDM backing video memory with commit; unconfirmed). Seen on device 11-01: the model loads,
 no more RAM spiking (user).
 
+**Cloud sessions' Python, 2026-11-05:** `scripts/cloud/setup.sh` builds `/opt/jarvis-venv` from a pinned list (this session's
+`pip freeze`, the environment the Linux suite passed with) using `uv` (109 s, under the ~5 minute limit for the environment cache),
+and puts its `bin/` first on PATH via `~/.bashrc`. It reads nothing from the repo and always exits 0. **Needs the user:** paste the file
+into the cloud environment's Setup script (claude.ai/code -> environment -> Edit); until then a session runs it by hand
+(`bash scripts/cloud/setup.sh`). Checked: a fresh venv from the list ran the full suite (1593 passed, 9 skipped); a second run is a
+no-op. Not checked: that the PATH line reaches a new session's shell (if `python` is not the venv's, call
+`/opt/jarvis-venv/bin/python`). A SessionStart hook in `.claude/settings.json` that would run it automatically was refused by the
+session's permission check (it modifies Claude Code's own configuration), so there is none. `test_cloud_setup.py` fails when
+`backend/requirements.txt` gains a package the list doesn't pin. SQLAlchemy needs no pin of its own: sqlmodel 0.0.38 requires `<2.1`.
+
 ### 4.0 Startup: done for now
 
 §4.0 (spaces, spring transitions, the materialising startup, startup CPU and time) is done --
