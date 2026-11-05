@@ -7,7 +7,7 @@
 # root: bash scripts/cloud/setup.sh (about two minutes).
 #
 # Builds /opt/jarvis-venv from the pinned list below: the environment the Linux test baseline passed
-# with (1593 passed, 9 skipped on 2026-11-05), and puts its bin/ first on PATH for later shells, so
+# with (the full suite passed on it, 9 Windows-only tests skipped, 2026-11-05), and puts its bin/ first on PATH for later shells, so
 # `python -m pytest -q` from the repo root runs the suite. Nothing is read from the repo, because the
 # setup script can run before the repo is cloned. Windows-only packages (pywin32, winotify, winrt-*) are
 # left out; the tests that need them skip on Linux. Runs again only when the list changes. Always exits
@@ -143,8 +143,10 @@ printf '%s\n' "$PINS" > "$LIST"
 START=$(date +%s)
 
 rm -rf /opt/jarvis-venv
-if command -v uv >/dev/null 2>&1 && uv venv -q --seed --python "$PY" "$VENV" \
-    && uv pip install -q --python "$VENV/bin/python" -r "$LIST"; then
+# uv sits in ~/.local/bin, which may not be on PATH yet when this runs before Claude Code starts.
+UV=$(command -v uv 2>/dev/null || { [ -x "$HOME/.local/bin/uv" ] && echo "$HOME/.local/bin/uv"; } || { [ -x /root/.local/bin/uv ] && echo /root/.local/bin/uv; })
+if [ -n "$UV" ] && "$UV" venv -q --seed --python "$PY" "$VENV" \
+    && "$UV" pip install -q --python "$VENV/bin/python" -r "$LIST"; then
   how=uv
 else
   rm -rf /opt/jarvis-venv

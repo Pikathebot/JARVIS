@@ -2,8 +2,8 @@ import logging
 from typing import Optional
 
 from app.agent.tools.doc_readers import kind_of
-from app.agent.tools.doc_writers import (BUILDABLE_EXTENSIONS, BuildError, build_document, workspace_image_loader,
-                                        write_bytes_atomic)
+from app.agent.tools.doc_writers import (BUILDABLE_EXTENSIONS, BuildError, build_document, picture_count, pictures_named,
+                                        workspace_image_loader, write_bytes_atomic)
 from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
 from app.agent.tools.paths import is_inside, resolve_tool_path
@@ -62,6 +62,14 @@ def write_file(
             logger.error("Failed to build '%s': %s", file_path, e)
             return f"Error: could not build '{file_path}': {type(e).__name__}: {e}."
 
+    # A Word file or PDF with pictures, read and rewritten: read_file never showed the pictures, so the new text can't
+    # place them. The write goes ahead (the old version is backed up) but the result says how many were dropped.
+    lost_pictures = 0
+    if document is not None and path.exists() and path.suffix.lower() in (".docx", ".pdf"):
+        before = picture_count(path)
+        if before:
+            lost_pictures = max(0, before - pictures_named(content))
+
     try:
         backup = backup_file(path, ws_root) if path.exists() else None
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +81,10 @@ def write_file(
             result = f"Successfully wrote {summary} to '{file_path}'."
             if note:
                 result += f" {note}"
+            if lost_pictures:
+                result += (f" Warning: the file it replaced had {lost_pictures} more picture{'s' if lost_pictures != 1 else ''} "
+                           "than this text places (read_file doesn't show pictures), so "
+                           f"{'they are' if lost_pictures != 1 else 'it is'} not in the new version. Tell the user.")
             if backup:
                 result += f" The previous version is saved as '{shown(backup, ws_root)}'."
             return result

@@ -1166,6 +1166,35 @@ def build_document(extension: str, content: str, image_loader=None) -> tuple:
     raise BuildError(f"{extension} files are not supported")
 
 
+def picture_count(path: Path) -> Optional[int]:
+    """Pictures in an existing .docx (drawings and old VML pictures in the body) or .pdf (image XObjects the pages use);
+    None when it can't tell. ``write_file`` compares it with the ``![...]`` lines of a replacement: read_file doesn't
+    show pictures, so a read -> change -> write drops them, and the result has to say so."""
+    try:
+        ext = path.suffix.lower()
+        if ext == ".docx":
+            with zipfile.ZipFile(path) as zf:
+                if zf.getinfo("word/document.xml").file_size > 64 * 1024 * 1024:
+                    return None
+                xml = zf.read("word/document.xml")
+            return xml.count(b"<w:drawing") + xml.count(b"<w:pict")
+        if ext == ".pdf":
+            from pypdf import PdfReader
+
+            n = 0
+            for page in PdfReader(str(path)).pages[:1000]:
+                xobjects = (page.get("/Resources") or {}).get("/XObject") or {}
+                n += sum(1 for ref in xobjects.values() if ref.get_object().get("/Subtype") == "/Image")
+            return n
+    except Exception:
+        return None
+    return None
+
+
+def pictures_named(content: str) -> int:
+    return sum(1 for line in str(content or "").split("\n") if _IMAGE.match(line))
+
+
 def write_bytes_atomic(path: Path, data: bytes) -> None:
     """Temp file beside the target, flushed, then swapped in -- a crash leaves the old file (see app.atomic_write)."""
     path.parent.mkdir(parents=True, exist_ok=True)

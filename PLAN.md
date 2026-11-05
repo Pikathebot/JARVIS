@@ -2935,6 +2935,10 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     where read_file reads without asking. Anything outside, a web address, a missing file, or a file that isn't really an
     image is refused with a sentence, not asked about: a picture is read silently into a file that may leave the PC, so
     injected text must not be able to pull a private file in. A deck refuses picture lines (not supported there yet).
+    **Pictures are lost on a rewrite:** read_file doesn't show them, so read -> change -> write of a `.docx`/`.pdf` places
+    none. The write still happens (the old version is backed up), but the result now ends "Warning: the file it replaced
+    had N more pictures than this text places ... Tell the user." (`picture_count` vs the `![...]` lines). The real fix is
+    the in-place editing below.
     Prompt head: the `write_file` docstring gained "docx/pdf: ![](x.png) = picture" and "Automatically creates any missing
     parent directories" became "Makes missing folders." (WORKSPACE 38649 of 38650, no raise).
   - **Not done:** pictures in decks, themes/layout choice, animations; links, headers/footers and cell styling beyond the header

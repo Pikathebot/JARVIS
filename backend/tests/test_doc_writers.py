@@ -631,3 +631,18 @@ def test_a_picture_line_needs_a_loader_and_slides_refuse_it(tmp_path):
     out = _write(tmp_path, "d.pptx", "# Slide\n\n![x](a.png)\n")
     assert "pictures in slides are not supported" in out
     assert doc_writers.parse_blocks("![x](a.png)") == [("para", "![x](a.png)")]   # without images=True: plain text
+
+
+@pytest.mark.parametrize("name", ["p.docx", "p.pdf"])
+def test_rewriting_a_document_says_when_its_pictures_are_dropped(tmp_path, name):
+    _png(tmp_path / "chart.png")
+    _png(tmp_path / "photo.png", size=(300, 200))  # two different files: a PDF stores one used twice only once
+    _write(tmp_path, name, "# Report\n\n![chart](chart.png)\n\nOld title text.\n\n![photo](photo.png)\n")
+    assert doc_writers.picture_count(tmp_path / name) == 2
+    kept = _write(tmp_path, name, "# Report\n\n![chart](chart.png)\n\nNew text.\n\n![photo](photo.png)\n")
+    assert "Warning" not in kept
+    text = _read(tmp_path, name)                 # read_file shows no pictures, so a rewrite from it places none
+    out = _write(tmp_path, name, text.replace("New text.", "Newer text."))
+    assert "Warning: the file it replaced had 2 more pictures" in out and "previous version is saved" in out
+    assert doc_writers.picture_count(tmp_path / name) == 0
+    assert "Warning" not in _write(tmp_path, name, "Plain again.")  # nothing left to lose
