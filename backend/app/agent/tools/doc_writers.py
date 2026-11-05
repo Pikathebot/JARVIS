@@ -1,7 +1,7 @@
 """
-Build Word, Excel and PDF files from text the model writes (PLAN 4.27, writing).
+Build Word, Excel, PowerPoint and PDF files from text the model writes (PLAN 4.27, writing).
 
-``write_file`` calls ``build_document`` for a ``.docx`` / ``.xlsx`` / ``.pdf`` path, so no new tool or approval tier
+``write_file`` calls ``build_document`` for a ``.docx`` / ``.xlsx`` / ``.pptx`` / ``.pdf`` path, so no new tool or approval tier
 exists: replacing a file still asks and backs up first. CSV needs nothing here (it is text).
 
 The text conventions are the ones ``doc_readers`` prints, and ``prepare_text`` takes ``read_file``'s own output back (its
@@ -12,10 +12,12 @@ values (Excel recalculates), anything the reader doesn't show (images, headers/f
 
 * Word and PDF: Markdown, one paragraph per line. ``#``..``######`` headings, ``-``/``*`` bullets, ``1.`` numbered items,
   ``| a | b |`` table rows (first row is the header), ``**bold**`` and ``*italic*``.
+* PowerPoint: the same Markdown; a ``---`` line or a new ``# `` heading starts a slide, ``# `` is its title, a ``| `` table
+  becomes a table, and a ``Notes:`` line (and what follows it on that slide) becomes the speaker notes.
 * Excel: CSV rows (a tab-separated line works too); ``--- sheet: Name ---`` starts a sheet. ``=SUM(A1:A3)`` is a formula
   (Excel recalculates on open), numbers are numbers, ``2026-10-03`` is a date, ``TRUE``/``FALSE`` are booleans.
 
-Word and Excel are written straight to OOXML with ``zipfile`` (no dependency). PDF uses ``reportlab``, imported on first use,
+Word, Excel and PowerPoint are written straight to OOXML with ``zipfile`` (no dependency). PDF uses ``reportlab``, imported on first use,
 with a system TrueType font (Segoe UI / Arial on Windows, DejaVu / Liberation elsewhere) and the built-in Helvetica when none
 is found. A character the font cannot draw is replaced by ``?`` and the result says so. Text that needs shaping (Devanagari,
 Arabic) has glyphs in some fonts but is not laid out correctly: use Word for it.
@@ -127,6 +129,10 @@ def prepare_text(text: str, keep_slides: bool = False) -> tuple:
     read_file (it starts with the reader's header), which switches on row numbers and ``=F -> value`` handling for Excel.
     Raises BuildError for text that read_file cut short."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if "cells past column" in text and _CUT.search(text):
+        raise BuildError("the sheet is wider than read_file shows (it stops at 100 columns), so writing this text back would "
+                         "delete the columns it never saw. Jarvis can't rewrite this workbook: write the result to a new file, "
+                         "or tell the user")
     if _CUT.search(text):
         raise BuildError("the text has a cut marker ('more rows not read', 'characters omitted ...'): it is only part of the "
                          "document, and writing it back would drop the part that was never read. Read the whole file "
@@ -354,8 +360,10 @@ def _cell_xml(ref: str, raw: str) -> str:
     low = v.lower()
     if low in ("true", "false"):
         return f'<c r="{ref}" t="b"><v>{1 if low == "true" else 0}</v></c>'
-    if _NUMBER.match(v) and not (len(v) > 1 and v.lstrip("+-").startswith("0") and v.lstrip("+-")[1:2].isdigit()):
-        return f'<c r="{ref}"><v>{v}</v></c>'  # a leading-zero code like 007 stays text
+    if (_NUMBER.match(v) and not (len(v) > 1 and v.lstrip("+-").startswith("0") and v.lstrip("+-")[1:2].isdigit())
+            and len(re.sub(r"[eE].*$", "", v).replace(".", "").lstrip("+-0")) <= 15):
+        # a leading-zero code like 007 stays text, and so does a long ID: Excel keeps 15 significant digits and would round it
+        return f'<c r="{ref}"><v>{v}</v></c>'
     m = _ISO_DATE.match(v)
     if m:
         try:
@@ -396,6 +404,10 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
                 break
             if not any(c.strip() for c in cells):
                 continue
+            if len(cells) > MAX_XLSX_COLS and any(c.strip() for c in cells[MAX_XLSX_COLS:]):
+                note = f"sheet '{sheet_name}': columns past {MAX_XLSX_COLS} were left out"
+                if note not in notes:
+                    notes.append(note)
             xml_cells = []
             for c, raw in enumerate(cells[:MAX_XLSX_COLS]):
                 cx = _cell_xml(f"{_col_name(c)}{r}", raw)
@@ -598,8 +610,8 @@ def _build_pptx(text: str, readback: bool = False) -> tuple:
         title, notes = "", []
         if blocks and blocks[0][0] == "heading" and (blocks[0][1] <= 2 or not readback):
             title, blocks = blocks[0][2], blocks[1:]
-        elif readback and blocks and blocks[0][0] in ("para", "bullet", "number"):
-            title, blocks = blocks[0][1], blocks[1:]       # read_file prints the title first, as a plain line
+        elif readback and blocks and blocks[0][0] in ("para", "number"):
+            title, blocks = blocks[0][1], blocks[1:]       # read_file prints the title first, as a plain line ('- ' is body text)
         for i, b in enumerate(blocks):
             if b[0] in ("para", "bullet") and _NOTES_RE.match(b[1]):
                 notes = [_NOTES_RE.match(b[1]).group(1)] + [x[-1] for x in blocks[i + 1:] if isinstance(x[-1], str)]
@@ -873,9 +885,15 @@ def _build_pdf(text: str) -> tuple:
             n_tables += 1
         if kind != "table":
             n_paras += 1
+    from reportlab.platypus.doctemplate import LayoutError
+
     buf = io.BytesIO()
-    SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=20 * mm, bottomMargin=20 * mm,
-                      title="", author="").build(story)
+    try:
+        SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=20 * mm, bottomMargin=20 * mm,
+                          title="", author="").build(story)
+    except LayoutError:
+        raise BuildError("a table cell holds more text than fits on one page; put the long text in a paragraph below the "
+                         "table and keep the cell short")
     data = buf.getvalue()
     pages = len(re.findall(rb"/Type\s*/Page[^s]", data))
     summary = f"a PDF ({pages} page{'s' if pages != 1 else ''}, {n_paras} paragraph{'s' if n_paras != 1 else ''}"
@@ -890,7 +908,7 @@ def _build_pdf(text: str) -> tuple:
 
 # ---------------------------------------------------------------- entry point
 def build_document(extension: str, content: str) -> tuple:
-    """(file bytes, 'a Word document (...)', note) for '.docx' / '.xlsx' / '.pdf'. Raises BuildError."""
+    """(file bytes, 'a Word document (...)', note) for '.docx' / '.xlsx' / '.pptx' / '.pdf'. Raises BuildError."""
     text = str(content or "")
     if not text.strip():
         raise BuildError("the content is empty")

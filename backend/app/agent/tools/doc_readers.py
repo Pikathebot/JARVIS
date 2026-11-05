@@ -53,7 +53,7 @@ SCAFFOLD_RE = re.compile(
     r"^(?:--- (?:page|section|slide) \d+ ---|\(empty\)|\(no text (?:on this page|on this slide|in it)\)|\(too large to read\)"
     r"|\(row number first, then the columns .*|\(sheet data is missing\)|\(slide data is missing\))\s*$")
 CUT_RE = re.compile(r"more (?:rows|pages|sections) not read|\bcut at [\d,]+ characters|characters omitted from the middle"
-                    r"|more chars not kept in history")
+                    r"|more chars not kept in history|cells past column [A-Z]+ not read")
 
 
 class DocumentError(Exception):
@@ -438,7 +438,7 @@ def _read_xlsx(path: Path) -> str:
             if not rows:
                 out.append("(empty)")
                 continue
-            shown = 0
+            shown, wide = 0, False
             for row in rows:
                 if shown >= MAX_SHEET_ROWS:
                     out.append(f"[... {len(rows) - shown} more rows not read (limit {MAX_SHEET_ROWS} per sheet) ...]")
@@ -450,14 +450,18 @@ def _read_xlsx(path: Path) -> str:
                         text = _cell_text(c, shared, dates, date1904)
                         if text != "":
                             cells[idx] = text
+                    elif idx >= MAX_SHEET_COLS and not wide:
+                        wide = _cell_text(c, shared, dates, date1904) != ""
                 if not cells:
                     continue
                 last = max(cells)
                 line = "\t".join(cells.get(i, "") for i in range(last + 1))
                 out.append(f"{row.get('r', '?')}: {line}")
                 shown += 1
-            if shown == 0:
+            if shown == 0 and not wide:
                 out.append("(empty)")
+            if wide:  # a marker CUT_RE knows: writing this text back would silently drop those columns
+                out.append(f"[... cells past column {_col_name(MAX_SHEET_COLS - 1)} not read (limit {MAX_SHEET_COLS} columns) ...]")
         out.append("(row number first, then the columns A, B, C... separated by tabs; "
                    "a formula reads =FORMULA -> last saved value)")
         return "\n".join(out)
@@ -634,7 +638,7 @@ def _read_ods_body(spreadsheet: ET.Element) -> list:
         out.append(f"--- sheet: {tbl.get(f'{_OTB}name', 'Sheet')} ---")
         r = 0
         shown = 0
-        any_row = False
+        any_row = wide = False
         for tr in tbl.iter(f"{_OTB}table-row"):
             repeat = max(1, int(tr.get(f"{_OTB}number-rows-repeated", "1") or 1))
             cells, col = {}, 0
@@ -651,6 +655,8 @@ def _read_ods_body(spreadsheet: ET.Element) -> list:
                     for k in range(min(crep, 20)):
                         if col + k < MAX_SHEET_COLS:
                             cells[col + k] = value
+                        else:
+                            wide = True
                 col += crep
             if not cells:
                 r += repeat
@@ -666,8 +672,10 @@ def _read_ods_body(spreadsheet: ET.Element) -> list:
             if shown >= MAX_SHEET_ROWS:
                 out.append(f"[... more rows not read (limit {MAX_SHEET_ROWS} per sheet) ...]")
                 break
-        if not any_row:
+        if not any_row and not wide:
             out.append("(empty)")
+        if wide:
+            out.append(f"[... cells past column {_col_name(MAX_SHEET_COLS - 1)} not read (limit {MAX_SHEET_COLS} columns) ...]")
     out.append("(row number first, then the columns A, B, C... separated by tabs; "
                "a formula reads =FORMULA -> last saved value)")
     return out
@@ -791,12 +799,36 @@ _OPF = "{http://www.idpf.org/2007/opf}"
 _CONTAINER = "{urn:oasis:names:tc:opendocument:xmlns:container}"
 
 
+_ENC = "{http://www.w3.org/2001/04/xmlenc#}"
+_FONT_OBFUSCATION = ("http://www.idpf.org/2008/embedding", "http://ns.adobe.com/pdf/enc#RC")
+
+
+def _drm_protected(zf: zipfile.ZipFile) -> bool:
+    """True when META-INF/encryption.xml encrypts a chapter. Font obfuscation (IDPF / Adobe) is listed there too and is
+    harmless: only an encrypted (x)html part makes the text unreadable."""
+    root = _xml(zf, "META-INF/encryption.xml", optional=True)
+    if root is None:
+        return False
+    for data in root.iter(f"{_ENC}EncryptedData"):
+        method = data.find(f"{_ENC}EncryptionMethod")
+        if method is not None and method.get("Algorithm") in _FONT_OBFUSCATION:
+            continue
+        ref = data.find(f".//{_ENC}CipherReference")
+        uri = (ref.get("URI") if ref is not None else "") or ""
+        if uri.lower().split("#")[0].endswith((".xhtml", ".html", ".htm", ".xml")):
+            return True
+    return False
+
+
 def _read_epub(path: Path) -> str:
     with _open_zip(path) as zf:
         container = _xml(zf, "META-INF/container.xml")
         rf = container.find(f".//{_CONTAINER}rootfile")
         if rf is None or not rf.get("full-path"):
             raise DocumentError("it has no package file (not a valid EPUB)")
+        if _drm_protected(zf):
+            raise DocumentError("the book is DRM-protected (its chapters are encrypted), so its text can't be read; "
+                                "a DRM-free copy, or the publisher's PDF, would work")
         opf_path = rf.get("full-path")
         opf = _xml(zf, opf_path)
         base = opf_path.rpartition("/")[0]
@@ -842,6 +874,17 @@ _RTF_SYMBOLS = {"bullet": "\u2022", "emdash": "\u2014", "endash": "\u2013", "lqu
                 "ldblquote": "\u201c", "rdblquote": "\u201d", "emspace": " ", "enspace": " ", "tab": "\t", "cell": "\t",
                 "nestcell": "\t", "row": "\n", "nestrow": "\n", "par": "\n", "line": "\n", "page": "\n", "sect": "\n"}
 _RTF_WORD = re.compile(r"\\([a-zA-Z]+)(-?\d+)? ?")
+
+
+def _rtf_codepage(param: str) -> str:
+    """\ansicpgN -> a codec Python has: 10000 is Mac Roman (macOS TextEdit); an unknown page falls back to cp1252."""
+    name = {"10000": "mac_roman", "65001": "utf-8"}.get(param, f"cp{param}")
+    try:
+        import codecs
+        codecs.lookup(name)
+        return name
+    except LookupError:
+        return "cp1252"
 
 
 def _read_rtf(path: Path) -> str:
@@ -901,7 +944,7 @@ def _read_rtf(path: Path) -> str:
                 elif word == "uc" and param is not None:
                     uc = max(0, int(param))
                 elif word == "ansicpg" and param is not None:
-                    codepage = f"cp{param}"
+                    codepage = _rtf_codepage(param)
                 elif word == "u" and param is not None and not skipping:
                     code = int(param)
                     out.append(chr(code + 65536 if code < 0 else code))
@@ -914,7 +957,8 @@ def _read_rtf(path: Path) -> str:
             elif not skipping and c not in "\r\n":
                 out.append(c)
             i += 1
-    text = "".join(out)
+    # Characters outside the BMP come as two \uN surrogates: pair them up, and replace a lone one (it can't be encoded later).
+    text = "".join(out).encode("utf-16", "surrogatepass").decode("utf-16", errors="replace")
     lines = [re.sub(r"[ \t]+$", "", l) for l in text.split("\n")]
     lines = [re.sub(r"^[ \t]+|\t+$", "", l) for l in lines]
     body = "\n".join(l for l in lines if l.strip())

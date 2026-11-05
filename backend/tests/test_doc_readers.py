@@ -458,3 +458,41 @@ def test_misnamed_open_formats_get_a_clear_message(ws, name, payload, fragment):
 def test_an_odf_drawing_is_declined_politely(ws):
     _odf(ws / "d.odt", "<office:drawing/>")
     assert "a kind Jarvis does not read" in _read(ws, "d.odt")
+
+
+# ---------------- review fixes (2026-11-05) ----------------
+def test_a_drm_protected_epub_is_refused_but_font_obfuscation_is_fine(ws):
+    enc = lambda algo, uri: ('<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" '
+                             'xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData>'
+                             f'<enc:EncryptionMethod Algorithm="{algo}"/><enc:CipherData><enc:CipherReference URI="{uri}"/>'
+                             '</enc:CipherData></enc:EncryptedData></encryption>')
+    book = _epub(ws / "locked.epub", {"c1": "<html><body><p>Readable words.</p></body></html>"}, ["c1"])
+    with zipfile.ZipFile(book, "a") as zf:
+        zf.writestr("META-INF/encryption.xml", enc("http://www.w3.org/2001/04/xmlenc#aes128-cbc", "OEBPS/c1.xhtml"))
+    out = _read(ws, "locked.epub")
+    assert out.startswith("Error:") and "DRM-protected" in out
+    fonts = _epub(ws / "fonts.epub", {"c1": "<html><body><p>Readable words.</p></body></html>"}, ["c1"])
+    with zipfile.ZipFile(fonts, "a") as zf:
+        zf.writestr("META-INF/encryption.xml", enc("http://www.idpf.org/2008/embedding", "OEBPS/fonts/a.otf"))
+    assert "Readable words." in _read(ws, "fonts.epub")
+
+
+def test_rtf_emoji_and_mac_codepage(ws):
+    (ws / "e.rtf").write_text(r"{\rtf1\ansi\ansicpg10000 caf\'8e \uc1\u-10179?\u-8704? \u-10179?only\par}", encoding="latin-1")
+    out = _read(ws, "e.rtf")
+    assert "café 😀" in out and "�only" in out      # Mac Roman 0x8E is é; a lone surrogate becomes U+FFFD
+    out.encode("utf-8")                                   # nothing left that can't be encoded
+    (ws / "u.rtf").write_text(r"{\rtf1\ansi\ansicpg99999 plain\par}", encoding="latin-1")
+    assert "plain" in _read(ws, "u.rtf")                 # an unknown code page falls back instead of failing
+
+
+def test_columns_past_the_limit_are_announced_so_a_write_back_is_refused(ws):
+    from app.agent.tools import doc_readers
+    from app.agent.tools.doc_writers import BuildError, build_document
+
+    data, _, _ = build_document(".xlsx", ",".join(f"c{i}" for i in range(doc_readers.MAX_SHEET_COLS + 5)))
+    (ws / "wide.xlsx").write_bytes(data)
+    text = _read(ws, "wide.xlsx")
+    assert "cells past column CV not read" in text and doc_readers.CUT_RE.search(text)
+    with pytest.raises(BuildError, match="wider than read_file shows"):
+        build_document(".xlsx", text)

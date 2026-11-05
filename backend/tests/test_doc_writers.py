@@ -469,3 +469,32 @@ def test_pptx_markup_is_escaped_and_the_package_is_well_formed(tmp_path):
         if name.endswith((".xml", ".rels")):
             ET.fromstring(data)
     assert "A & B <c>" in _read(tmp_path, "x.pptx")
+
+
+# ---------------- review fixes (2026-11-05) ----------------
+def test_long_ids_stay_text_so_excel_does_not_round_them(tmp_path):
+    _write(tmp_path, "ids.xlsx", "id,ok,small\n12345678901234567890,123456789012345,0.5\n0.1234567890123456789,1e5,-42\n")
+    sheet = _parts(tmp_path / "ids.xlsx")["xl/worksheets/sheet1.xml"]
+    assert 't="inlineStr"><is><t xml:space="preserve">12345678901234567890<' in sheet
+    assert 't="inlineStr"><is><t xml:space="preserve">0.1234567890123456789<' in sheet
+    for number in ("123456789012345", "0.5", "1e5", "-42"):
+        assert f"<v>{number}</v>" in sheet, number
+
+
+def test_columns_past_the_writer_limit_are_reported(tmp_path):
+    out = _write(tmp_path, "w.xlsx", ",".join(["x"] * (doc_writers.MAX_XLSX_COLS + 1)))
+    assert out.startswith("Successfully wrote") and f"columns past {doc_writers.MAX_XLSX_COLS} were left out" in out
+
+
+def test_a_pdf_table_cell_taller_than_a_page_gives_a_readable_error(tmp_path):
+    out = _write(tmp_path, "t.pdf", "| a | b |\n|---|---|\n| " + "word " * 6000 + " | x |\n")
+    assert out.startswith("Error:") and "more text than fits on one page" in out and "LayoutError" not in out
+    assert not (tmp_path / "t.pdf").exists()
+
+
+def test_a_slide_without_a_title_keeps_its_first_bullet_as_body(tmp_path):
+    _write(tmp_path, "d.pptx", "--- slide 1 ---\n- alpha\n- beta\n--- slide 2 ---\n# Real title\n- gamma\n")
+    first = _read(tmp_path, "d.pptx")
+    assert "--- slide 1 ---\n- alpha\n- beta" in first
+    _write(tmp_path, "e.pptx", first)
+    assert _read(tmp_path, "e.pptx") == first
