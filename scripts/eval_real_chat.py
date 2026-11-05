@@ -1,5 +1,6 @@
-"""The real-chat eval (PLAN §4 step 1a): fourteen of the user's own messages, replayed through the
-whole backend after each change.
+"""The real-chat eval (PLAN §4 step 1a): the user's own messages, replayed through the whole backend after each
+change. Cases 1-18 are from the user's chats; 19-30 (2026-11-05) cover the coding tool, the study skills,
+documents and a weekly timetable (``--only 19,20,21,22,23,24,25,26,27,28,29,30``).
 
 ``eval_jarvis_tasks.py`` scores a model against simulated tools. This scores *Jarvis*: an isolated
 copy of the real backend (its own port, database, workspace, notes, Google folder, reminders and
@@ -14,7 +15,8 @@ Close Jarvis first: the eval backend starts its own llama-server on :8001. Examp
     .venv\\Scripts\\python.exe scripts\\eval_real_chat.py --thinking off   # the backend with thinking off
 
 What reaches the real machine: case 4 lists the drives and case 5 reads D:\\JARVIS\\PLAN.md (read
-only); case 6 searches the web; case 7 really opens Apple Music. Approvals are given only for the
+only); case 6 searches the web; case 7 really opens Apple Music; 19-21 read LeetCode / Codeforces / AtCoder and 27
+reads arXiv (21 adds the round to the eval's own calendar, not the user's). Approvals are given only for the
 tools a case lists; anything else that asks is denied and counts against the case.
 
 A case passes a run when every hard check passes; a safety net firing is a soft fail (``nets``),
@@ -510,6 +512,252 @@ def setup_game_project(run: Run) -> None:
     run.workspace = ws
 
 
+# --------------------------------------------------------------------------------------------
+# Cases 19-29 (added 2026-11-05): the coding tool, the study skills and documents (PLAN 4.23b, 4.27).
+# 19-21 and 27 read the live LeetCode / Codeforces / AtCoder / arXiv sites.
+# --------------------------------------------------------------------------------------------
+
+CODE = re.compile(r"```|^\s*(?:def|class|for|while|return|int|vector<|#include)\b|\bfor\s*\(|=>\s*{", re.I | re.M)
+
+
+def tool_runs(run: Run, name: str, action: Optional[str] = None) -> list[dict[str, Any]]:
+    """Successful calls of ``name`` (with that ``action``) across the run's turns."""
+    out = []
+    for turn in run.turns:
+        for t in turn.tools:
+            args = t.get("args") or {}
+            if (t.get("tool") == name and t.get("status") not in ("error", "timeout")
+                    and not str(t.get("result", "")).startswith("Error")
+                    and (action is None or str(args.get("action", "")).strip().lower() == action)):
+                out.append(t)
+    return out
+
+
+def live_events(run: Run) -> list[dict[str, Any]]:
+    try:
+        events = json.loads((run.home / "google" / "calendar.json").read_text(encoding="utf-8")).get("events", [])
+    except (OSError, ValueError):
+        events = []
+    return [e for e in events if not e.get("deleted")]
+
+
+def zip_text(path: Path, prefix: str) -> list[str]:
+    """The text of every part under ``prefix`` in an Office file, tags stripped; [] when it isn't a readable zip."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return [re.sub(r"<[^>]+>", " ", zf.read(n).decode("utf-8", "replace"))
+                    for n in sorted(zf.namelist()) if n.startswith(prefix) and n.endswith(".xml")]
+    except (OSError, zipfile.BadZipFile):
+        return []
+
+
+def check_daily(run: Run, api: Api) -> list[Check]:
+    runs = tool_runs(run, "coding", "daily")
+    m = re.search(r"#\d+ (.+?) -- ", str(runs[-1].get("result", ""))) if runs else None
+    title = m.group(1) if m else ""
+    return answered(run) + [c("coding daily ran", runs, ""),
+                            c("names the problem the tool returned", title and title.lower() in run.last.reply.lower(), title)]
+
+
+def check_contests(run: Run, api: Api) -> list[Check]:
+    runs = tool_runs(run, "coding", "contests")
+    result = str(runs[-1].get("result", "")) if runs else ""
+    titles = re.findall(r"-- (?:LeetCode|Codeforces|AtCoder): (.+?), \d+(?:h\d*|m)\. id", result)
+    reply = run.last.reply.lower()
+    grounded = (result.startswith("No ") and re.search(r"\bno\b|none|nothing", reply)) or any(t[:14].lower() in reply for t in titles)
+    return answered(run) + [c("coding contests ran", runs, ""),
+                            c("answers from the list it got", grounded, f"{len(titles)} contests in the result")]
+
+
+def check_schedule(run: Run, api: Api) -> list[Check]:
+    runs = tool_runs(run, "coding", "schedule")
+    result = str(runs[-1].get("result", "")) if runs else ""
+    events = [e for e in live_events(run) if "codeforces" in e.get("title", "").lower()]
+    reminders = [r for r in api.get("/api/routines")["routines"] if "starts in 15 minutes" in (r.get("message") or "")]
+    too_soon = "too soon" in result
+    return answered(run) + [
+        c("coding schedule ran", runs, ""),
+        c("one Codeforces event on the calendar", len(events) == 1, f"{len(events)} found"),
+        c("a reminder 15 minutes before", too_soon or len(reminders) == 1, f"{len(reminders)} reminders"),
+    ]
+
+
+def check_hint(run: Run, api: Api) -> list[Check]:
+    reply = run.last.reply
+    return answered(run) + [c("no code", not CODE.search(reply), reply[:120]),
+                            c("a hint toward the idea, or a question back",
+                              re.search(r"hash|map|dictionar|complement|seen|look ?up|tried|\?", reply, re.I), reply[:120])]
+
+
+def check_contest_mode(run: Run, api: Api) -> list[Check]:
+    reply = run.last.reply
+    return answered(run) + [c("no code", not CODE.search(reply), reply[:120]),
+                            c("says it won't help while the contest runs",
+                              re.search(r"(?:during|live|running|ongoing|active) (?:a |the )?contest|contest rules|after (?:the|it|your) "
+                                        r"(?:contest )?(?:ends|is over|finishes)|until the contest", reply, re.I), reply[:160])]
+
+
+FLASHCARDS = [("What does a page table map?", "virtual pages to physical frames", 0),
+              ("What is a race condition?", "a result that depends on the timing of threads", 0),
+              ("Which scheduling algorithm can starve long jobs?", "shortest job first", 10)]   # days until due
+
+
+def setup_flashcards(run: Run) -> None:
+    folder = run.home / "freeform-home" / "flashcards"
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = ["question,answer,box,due"] + [f'"{q}","{a}",1,{(date.today() + timedelta(days=d)).isoformat()}' for q, a, d in FLASHCARDS]
+    (folder / "os.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def check_quiz(run: Run, api: Api) -> list[Check]:
+    reply = run.last.reply.lower()
+    read = [t for t in tool_runs(run, "read_file") if "os.csv" in str((t.get("args") or {}).get("file_path", "")).replace("\\", "/")]
+    asked = [(q, a) for q, a, d in FLASHCARDS if d == 0 and q[:22].lower() in reply]
+    return answered(run) + [
+        c("read flashcards/os.csv", read, ""),
+        c("asks a card that is due", asked, run.last.reply[:160]),
+        c("doesn't ask the card due later", FLASHCARDS[2][0][:22].lower() not in reply, ""),
+        c("doesn't give the answer away", not any(a in reply for _, a in asked), ""),
+    ]
+
+
+OS_NOTES = """# OS notes
+
+- A page table maps virtual pages to physical frames.
+- A race condition is when the result depends on the timing of threads.
+- Shortest job first can starve long jobs.
+- A semaphore is a counter used to control access to a shared resource.
+"""
+
+
+def setup_os_notes(run: Run) -> None:
+    root = run.home / "freeform-home"
+    (root / "os_notes.md").write_text(OS_NOTES, encoding="utf-8")
+    shutil.rmtree(root / "flashcards", ignore_errors=True)
+
+
+def check_made_cards(run: Run, api: Api) -> list[Check]:
+    import csv
+    folder = run.home / "freeform-home" / "flashcards"
+    files = sorted(folder.glob("*.csv")) if folder.is_dir() else []
+    rows: list[dict[str, str]] = []
+    if files:
+        with files[0].open(encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+    today = date.today().isoformat()
+    return answered(run) + [
+        c("a flashcards/*.csv written", files, str([f.name for f in files])),
+        c("question,answer,box,due columns", rows and set(rows[0]) >= {"question", "answer", "box", "due"}, str(rows[:1])),
+        c("at least 3 cards", len(rows) >= 3, f"{len(rows)} cards"),
+        c("new cards: box 1, due today", rows and all(r.get("box", "").strip() == "1" and r.get("due", "").strip() == today for r in rows), ""),
+    ]
+
+
+def check_pomodoro(run: Run, api: Api) -> list[Check]:
+    routines = [r for r in api.get("/api/routines")["routines"] if r.get("at")]
+    now = datetime.now()
+    minutes = [(datetime.fromisoformat(r["at"][:16]) - now).total_seconds() / 60 for r in routines]
+    return answered(run) + [c("remind_me ran", tool_runs(run, "remind_me"), ""),
+                            c("one reminder, not a chain", len(routines) == 1, f"{len(routines)} reminders"),
+                            c("set about 25 minutes ahead", any(20 <= m <= 30 for m in minutes), str([round(m) for m in minutes]))]
+
+
+ARXIV_ID = re.compile(r"\b(\d{4}\.\d{4,5})(?:v\d+)?\b")
+
+
+def check_arxiv(run: Run, api: Api) -> list[Check]:
+    fetched = [t for t in tool_runs(run, "fetch_url") if "arxiv.org" in str((t.get("args") or {}).get("url", ""))]
+    seen = {m for t in fetched for m in ARXIV_ID.findall(str(t.get("result", "")))}
+    named = set(ARXIV_ID.findall(run.last.reply))
+    return answered(run) + [c("fetched arXiv", fetched, ""), c("names at least one paper by id", named, ""),
+                            c("every id came from arXiv's answer", named <= seen, str(sorted(named - seen)))]
+
+
+MARKS = [("Asha", 78, 85, 91), ("Rahul", 64, 70, 58), ("Divya", 92, 88, 95), ("Karthik", 55, 61, 73)]
+
+
+def _tiny_xlsx(rows: list[list[Any]]) -> bytes:
+    """A minimal .xlsx (one sheet, inline strings) -- the eval doesn't import the backend to build one."""
+    import io
+    import zipfile
+    from xml.sax.saxutils import escape
+
+    def cell(ref: str, v: Any) -> str:
+        if isinstance(v, (int, float)):
+            return f'<c r="{ref}"><v>{v}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(v))}</t></is></c>'
+    data = "".join(f'<row r="{i}">' + "".join(cell(f"{chr(65 + j)}{i}", v) for j, v in enumerate(r)) + "</row>"
+                   for i, r in enumerate(rows, 1))
+    ns, od = "http://schemas.openxmlformats.org/spreadsheetml/2006/main", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                    '<Default Extension="xml" ContentType="application/xml"/>'
+                    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')
+        zf.writestr("_rels/.rels", f'<?xml version="1.0"?><Relationships xmlns="{rel}"><Relationship Id="rId1" Type="{od}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        zf.writestr("xl/workbook.xml", f'<?xml version="1.0"?><workbook xmlns="{ns}" xmlns:r="{od}"><sheets><sheet name="Marks" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        zf.writestr("xl/_rels/workbook.xml.rels", f'<?xml version="1.0"?><Relationships xmlns="{rel}"><Relationship Id="rId1" Type="{od}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+        zf.writestr("xl/worksheets/sheet1.xml", f'<?xml version="1.0"?><worksheet xmlns="{ns}"><sheetData>{data}</sheetData></worksheet>')
+    return buf.getvalue()
+
+
+def setup_marks(run: Run) -> None:
+    root = run.home / "freeform-home"
+    (root / "marks.xlsx").write_bytes(_tiny_xlsx([["Name", "Maths", "Physics", "Chemistry"]] + [list(r) for r in MARKS]))
+    (root / "marks_summary.docx").unlink(missing_ok=True)
+
+
+def check_marks_docx(run: Run, api: Api) -> list[Check]:
+    path = run.home / "freeform-home" / "marks_summary.docx"
+    text = " ".join(zip_text(path, "word/document"))
+    totals = {name: a + b + c_ for name, a, b, c_ in MARKS}
+    return answered(run) + [
+        c("read marks.xlsx", [t for t in tool_runs(run, "read_file") if "marks.xlsx" in str(t.get("args"))], ""),
+        c("marks_summary.docx is a real Word file", text, ""),
+        c("every student with the right total", all(n in text and re.search(rf"\b{t}\b", text) for n, t in totals.items()),
+          str({n: (n in text, bool(re.search(rf"\b{t}\b", text))) for n, t in totals.items()})),
+    ]
+
+
+def setup_no_deck(run: Run) -> None:
+    (run.home / "freeform-home" / "exam_week.pptx").unlink(missing_ok=True)
+
+
+def check_deck(run: Run, api: Api) -> list[Check]:
+    path = run.home / "freeform-home" / "exam_week.pptx"
+    slides = zip_text(path, "ppt/slides/slide")
+    notes = zip_text(path, "ppt/notesSlides/")
+    joined = " ".join(slides).lower()
+    return answered(run) + [
+        c("exam_week.pptx is a real deck", slides, ""),
+        c("three slides", len(slides) == 3, f"{len(slides)} slides"),
+        c("names the three exams", all(w in joined for w in ("dbms", "operating", "network")), ""),
+        c("speaker notes on a slide", any(n.strip() for n in notes), f"{len(notes)} notes parts"),
+    ]
+
+
+TERM_END = (date.today() + timedelta(days=60)).isoformat()   # relative, so the case never asks for a past end date
+
+
+def check_timetable(run: Run, api: Api) -> list[Check]:
+    events = live_events(run)
+    by = {name: [e for e in events if name in e.get("title", "").lower()] for name in ("dbms", "operating")}
+    dbms, os_ = (by["dbms"] or [{}])[0], (by["operating"] or [{}])[0]
+    return answered(run) + [
+        c("one series per subject", len(by["dbms"]) == 1 and len(by["operating"]) == 1, {k: len(v) for k, v in by.items()}.__repr__()),
+        c("both repeat weekly", dbms.get("repeat") == "weekly" and os_.get("repeat") == "weekly", ""),
+        c("DBMS on Mon and Wed at 10:00", sorted(dbms.get("days") or []) == [0, 2] and str(dbms.get("start", ""))[11:16] == "10:00",
+          f"{dbms.get('days')} {dbms.get('start')}"),
+        c("OS on Tue and Thu at 14:00 for 1h30", sorted(os_.get("days") or []) == [1, 3] and str(os_.get("start", ""))[11:16] == "14:00"
+          and str(os_.get("end", ""))[11:16] == "15:30", f"{os_.get('days')} {os_.get('start')} {os_.get('end')}"),
+        c(f"both end on {TERM_END}", dbms.get("until") == os_.get("until") == TERM_END, f"{dbms.get('until')} {os_.get('until')}"),
+    ]
+
+
 READS = frozenset({"read_file", "list_directory", "find_files", "grep_in_files"})
 CASES: list[Case] = [
     Case(1, "reminder for Sunday", ["have a reminder to remind on this coming sunday to apply for genshin impact beta"],
@@ -553,6 +801,30 @@ CASES: list[Case] = [
     Case(18, "hang up mid-turn, then ask again", [
         "give me a detailed, section by section review of the plan for a hackathon game, with risks for each",
         "what did I just ask you?"], check_after_cancel, cancel_first=True),
+    Case(19, "today's LeetCode daily", ["what's today's leetcode daily?"], check_daily),
+    Case(20, "contests this weekend", ["any coding contests this weekend?"], check_contests),
+    Case(21, "a Codeforces round onto the calendar", ["put the next codeforces round on my calendar"], check_schedule,
+         approve=frozenset({"coding", "calendar", "remind_me"})),
+    Case(22, "a hint, not the answer", ["I'm stuck on leetcode Two Sum. give me a hint, not the solution"], check_hint),
+    Case(23, "no help during a live contest", [
+        "I'm in a live Codeforces contest right now. Problem B: find the minimum number of operations to make the array "
+        "non-decreasing, where one operation adds 1 to any element. how do I solve it?"], check_contest_mode),
+    Case(24, "quiz from flashcards", ["quiz me on my os flashcards"], check_quiz, approve=READS, setup=setup_flashcards),
+    Case(25, "flashcards from notes", ["make flashcards from os_notes.md"], check_made_cards,
+         approve=READS | frozenset({"write_file"}), setup=setup_os_notes),
+    Case(26, "a pomodoro", ["start a pomodoro for my DBMS revision"], check_pomodoro),
+    Case(27, "papers on arXiv", ["find papers on arxiv about evaluating retrieval augmented generation"], check_arxiv,
+         approve=frozenset({"fetch_url"})),
+    Case(28, "a spreadsheet into a Word summary", [
+        "read marks.xlsx and write a short summary as marks_summary.docx with a table of each student's total marks"],
+         check_marks_docx, approve=READS | frozenset({"write_file"}), setup=setup_marks),
+    Case(29, "a three-slide deck", [
+        "make a 3 slide deck called exam_week.pptx for my exam week: Monday DBMS, Wednesday Operating Systems, Friday "
+        "Computer Networks. put speaker notes on the last slide"], check_deck, approve=frozenset({"write_file"}),
+         setup=setup_no_deck),
+    Case(30, "a weekly timetable", [
+        f"add my class timetable to the calendar until {TERM_END}: DBMS every Monday and Wednesday 10 to 11am, Operating "
+        "Systems every Tuesday and Thursday 2 to 3:30pm"], check_timetable, approve=frozenset({"calendar"})),
 ]
 
 

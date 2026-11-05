@@ -159,6 +159,22 @@ reply's metadata line (`label-tertiary`, `accent` when set), tap again to take i
 mean? (optional)" row (Send / Skip, Enter / Esc). Design system v33 (MessageBubble). Not covered: the non-streaming
 loop (`run`) logs no nets; reloaded history has no flag. Next in (1): 1a real-chat eval (case list to the user
 first), then 1c mmap.
+**1a cases 19-30 added 2026-11-05 (cloud session), NOT RUN against the model yet.** For the features built since: 19 LeetCode
+daily (names the problem the tool returned), 20 contests this weekend (answers only from the tool's list), 21 a Codeforces round onto
+the calendar (one event + the 15-minute reminder), 22 a hint not the answer (no code), 23 no help during a live contest, 24 quiz from
+flashcards (asks a due card, not the later one, doesn't give the answer away), 25 flashcards from notes (CSV with box 1 / due today),
+26 a pomodoro (one reminder ~25 min ahead, not a chain), 27 arXiv (every paper id came from arXiv's answer), 28 marks.xlsx -> a Word
+summary with the right totals, 29 a three-slide deck with notes, 30 a weekly timetable (two series, right days/times, end date
+relative to today). 19-21 and 27 read the live sites. The checks are pinned by `backend/tests/test_eval_real_chat_checks.py` against the
+real tools' output (the coding tool's contest/daily lines, documents from write_file's builder), passing and failing variants each.
+Run: `.venv\Scripts\python.exe scripts\eval_real_chat.py --only 19,20,21,22,23,24,25,26,27,28,29,30`.
+**Test suite on Linux, 2026-11-05:** clean (0 failed). Windows-only tests are skipped there by `skipif(os.name != "nt")` (drive list,
+window focus, toasts, COM); three were fixed to test the same rule on both: the `write_file` outside-path check uses a path absolute on
+both systems, the safe-command check tests `../` everywhere and `..\` on Windows, and the command timeout uses each platform's shell.
+Two real test bugs found: the remote kill_process test needed Notepad to be *running* (since the 11-01 "nothing to close" rule it
+failed on any machine without it) -- it now fakes the process list; and two permission integration tests only passed when an earlier
+file had started the app (no tables otherwise) -- `conftest.py` now runs the app's migration once per session. Every test file passes
+on its own (104 files checked one by one).
 **1c mmap -- measured 2026-11-01, kept off.** First found: since the user's llama.cpp update (10-26 18:13, build
 11899) every main launch died on "invalid argument: --no-mmap" -- the flag became `--load-mode` (auto|none|mmap|mlock|
 mmap+mlock|dio) and the old one is refused, so every ladder rung failed; the user worked around it with
@@ -2692,6 +2708,18 @@ other useful integrations that might help me."
 - The college's LMS -- Google Classroom (API, fits the Google sign-in already there), Moodle or Canvas (both have REST
   APIs; depends on the college): assignments and due dates into tasks/calendar, announcements in the briefing.
 - Timetable: classes as a repeating calendar (needs weekly repeat; 4.22's calendar has yearly only).
+  **Weekly repeat BUILT 2026-11-05 (cloud session), tests pass on Linux, NOT seen on device or against the real Google Calendar.**
+  `calendar(add, repeat=...)` takes 'weekly', days ('mon wed fri', 'every Tuesday and Thursday', 'weekdays', 'daily') and an end
+  ('until 2026-12-20' / 'until dec 20'); stored once as `repeat: weekly`, `days` (0 = Monday), `until` (inclusive). A class given a
+  start on another day begins on its first listed day; moving a class to another weekday moves that day. Agenda, find, delete and
+  the "in 10 minutes" nudge see each week's copy. To Google: `RRULE:FREQ=WEEKLY;BYDAY=..;UNTIL=..` (UTC end of the last day for a timed
+  class, a date for an all-day one), and Google's copies of Jarvis's own series aren't imported back. **Found on the way:** (1) Google
+  requires `timeZone` on a repeating timed event, which Jarvis never sent, so a timed yearly event (the eval's 09:00 birthdays) would
+  have been refused at Google -- the calendar's zone now comes from the events list and goes on every repeating timed event; (2) the
+  day briefing and the nudge read each event at its stored first date, so a yearly birthday stored in an earlier year never appeared
+  in that day's briefing -- both now ask for the day's copy. Prompt head: the `repeat` description grew and the calendar tool's own
+  description was shortened to pay for it (WORKSPACE 38648 of 38650, no cap raise). Not done: monthly repeats, skipping a single
+  week (a holiday), editing one copy of a series.
 - GitHub: profile/repos/issues beyond the local git tools (public API, optional token).
 - Papers/notes: arXiv / Semantic Scholar search through `research`; flashcards/spaced repetition from notes.
 - Focus timer (Pomodoro) tied to Game-mode-style "don't disturb".
