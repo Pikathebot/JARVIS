@@ -7,15 +7,19 @@ exists: replacing a file still asks and backs up first. CSV needs nothing here (
 The text conventions are the ones ``doc_readers`` prints, and ``prepare_text`` takes ``read_file``'s own output back (its
 header line, page and sheet markers, row numbers, ``=F -> cached value``), so read -> change -> write works. What does not survive a
 round trip: numbered lists come back as bullets, page breaks, hidden-sheet state, fonts/colours/column widths, cached formula
-values (Excel recalculates), anything the reader doesn't show (images, headers/footers, comments). Text that ``read_file`` cut
+values (Excel recalculates), anything the reader doesn't show (pictures, headers/footers, comments) -- so rewriting a Word
+file that has pictures drops them (PLAN 4.27: in-place editing is for a local session). Text that ``read_file`` cut
 (``more rows not read``, a line range, ``characters omitted``) is refused, because writing it back would drop the unread part.
 
 * Word and PDF: Markdown, one paragraph per line. ``#``..``######`` headings, ``-``/``*`` bullets, ``1.`` numbered items,
-  ``| a | b |`` table rows (first row is the header), ``**bold**`` and ``*italic*``.
+  ``| a | b |`` table rows (first row is the header), ``**bold**`` and ``*italic*``, and ``![alt](path)`` alone on a line
+  for a PNG/JPEG/GIF inside the workspace (``workspace_image_loader``), scaled to the page width. A PDF's pages end in
+  "Page N of M", which ``prepare_text`` drops again when the PDF is read back.
 * PowerPoint: the same Markdown; a ``---`` line or a new ``# `` heading starts a slide, ``# `` is its title, a ``| `` table
   becomes a table, and a ``Notes:`` line (and what follows it on that slide) becomes the speaker notes.
 * Excel: CSV rows (a tab-separated line works too); ``--- sheet: Name ---`` starts a sheet. ``=SUM(A1:A3)`` is a formula
-  (Excel recalculates on open), numbers are numbers, ``2026-10-03`` is a date, ``TRUE``/``FALSE`` are booleans.
+  (Excel recalculates on open), numbers are numbers, ``2026-10-03`` is a date, ``TRUE``/``FALSE`` are booleans. Each
+  column is as wide as its longest value (8-60 characters), and a first row of text over data is a bold header.
 
 Word, Excel and PowerPoint are written straight to OOXML with ``zipfile`` (no dependency). PDF uses ``reportlab``, imported on first use,
 with a system TrueType font (Segoe UI / Arial on Windows, DejaVu / Liberation elsewhere) and the built-in Helvetica when none
@@ -62,11 +66,13 @@ _NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_RULE = re.compile(r"^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*$")
 _INLINE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|\*(?=\S)(.+?)(?<=\S)\*")
+_IMAGE = re.compile(r"^\s*!\[([^\]]*)\]\(\s*<?([^)<>]+?)>?\s*\)\s*$")  # ![alt](path) alone on its line
 
 
-def parse_blocks(text: str) -> list:
-    """[('heading', level, text) | ('para', text) | ('bullet', text) | ('number', text) | ('table', [[cell]])].
-    Every non-blank line is its own paragraph (what read_file prints, and what a model writing a document means)."""
+def parse_blocks(text: str, images: bool = False) -> list:
+    """[('heading', level, text) | ('para', text) | ('bullet', text) | ('number', text) | ('table', [[cell]])
+    | ('image', alt, path) when ``images``]. Every non-blank line is its own paragraph (what read_file prints, and what
+    a model writing a document means)."""
     blocks: list = []
     table: list = []
 
@@ -83,6 +89,10 @@ def parse_blocks(text: str) -> list:
             continue
         flush_table()
         if not line.strip():
+            continue
+        m = _IMAGE.match(line) if images else None
+        if m:
+            blocks.append(("image", m.group(1).strip(), m.group(2).strip()))
             continue
         m = _HEADING.match(line)
         if m:
@@ -121,6 +131,24 @@ def _runs(text: str) -> list:
 from app.agent.tools.doc_readers import CUT_RE as _CUT, HEADER_RE as _HEADER, SCAFFOLD_RE as _READBACK_LINE  # noqa: E402
 
 _READFILE_NOTE = re.compile(r"^\[Nothing at '.*'; this is '.*'\]\s*$")
+PAGE_FOOTER = "Page {n} of {total}"  # what _build_pdf writes at the foot of each page
+_PDF_HEADER = re.compile(r"^\[PDF, (\d+) pages?\]\s*$")
+_PDF_PAGE = re.compile(r"^--- page (\d+) ---\s*$")
+
+
+def _drop_page_footers(lines: list, total: int) -> list:
+    """A PDF read back: the last line of page k, when it is exactly "Page k of <total>", is the footer _build_pdf wrote,
+    not body text -- writing it back would add a second one each time. Anything else is left alone."""
+    last_line_of: dict = {}
+    page = None
+    for i, line in enumerate(lines):
+        m = _PDF_PAGE.match(line)
+        if m:
+            page = int(m.group(1))
+        elif page is not None and line.strip():
+            last_line_of[page] = i
+    drop = {i for k, i in last_line_of.items() if k <= total and lines[i].strip() == PAGE_FOOTER.format(n=k, total=total)}
+    return [line for i, line in enumerate(lines) if i not in drop]
 _LINES_NOTE = re.compile(r"^\[Lines (\d+)-(\d+) of (\d+) in '.*'\]\s*$")
 
 
@@ -137,7 +165,7 @@ def prepare_text(text: str, keep_slides: bool = False) -> tuple:
         raise BuildError("the text has a cut marker ('more rows not read', 'characters omitted ...'): it is only part of the "
                          "document, and writing it back would drop the part that was never read. Read the whole file "
                          "(in line ranges if it is long) and send everything")
-    out, readback = [], False
+    out, readback, pdf_pages = [], False, 0
     for line in lines:
         m = _LINES_NOTE.match(line)
         if m:
@@ -150,17 +178,99 @@ def prepare_text(text: str, keep_slides: bool = False) -> tuple:
             continue
         if _HEADER.match(line):
             readback = True
+            m = _PDF_HEADER.match(line)
+            pdf_pages = int(m.group(1)) if m else 0
             continue
         out.append(line)
     def scaffold(line: str) -> bool:
         return bool(_READBACK_LINE.match(line)) and not (keep_slides and _SLIDE_MARK.match(line))  # a deck needs its slide markers
 
     if readback:
+        if pdf_pages:
+            out = _drop_page_footers(out, pdf_pages)
         out = [l for l in out if not scaffold(l)]
     elif any(_READBACK_LINE.match(l) and l.startswith("(row number first") for l in out):
         readback = True
         out = [l for l in out if not scaffold(l)]
     return "\n".join(out), readback
+
+
+# ---------------------------------------------------------------- pictures
+IMAGE_TYPES = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGES = 50
+_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://|data:|www\.)", re.I)
+
+
+def workspace_image_loader(doc_path: Path, ws_root: Path):
+    """The loader ``write_file`` hands ``build_document``: ``![alt](path)`` may name a PNG, JPEG or GIF inside the
+    workspace (or the Freeform folder), relative to its root or to the document's folder -- the places ``read_file``
+    reads without asking. Anything outside is refused rather than asked about: a picture is read silently into a file
+    that may leave the PC, so text from a web page or an e-mail must not be able to pull a private file in."""
+    from app.agent.tools.paths import is_inside
+
+    root = ws_root.resolve()
+
+    def load(ref: str) -> tuple:
+        if _URL.match(ref):
+            raise BuildError(f"the picture '{ref}' is a web address; a picture must be an image file in the workspace "
+                             "(save it there first)")
+        p = Path(ref)
+        candidates = [p.resolve()] if p.is_absolute() else [(root / p).resolve(), (doc_path.parent / p).resolve()]
+        inside = [c for c in candidates if is_inside(c, root)]
+        if not inside:
+            raise BuildError(f"the picture '{ref}' is outside the workspace; only pictures inside it can be added")
+        found = next((c for c in inside if c.is_file()), None)
+        if found is None:
+            raise BuildError(f"there is no picture at '{ref}' (paths are from the workspace folder)")
+        kind = IMAGE_TYPES.get(found.suffix.lower())
+        if kind is None:
+            raise BuildError(f"'{ref}' is not a PNG, JPEG or GIF picture")
+        size = found.stat().st_size
+        if size > MAX_IMAGE_BYTES:
+            raise BuildError(f"the picture '{ref}' is {size // (1024 * 1024)} MB, over the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit")
+        return found.read_bytes(), kind
+
+    return load
+
+
+def _picture(data: bytes, ref: str) -> tuple:
+    """(width px, height px, dpi) of an image, checked by actually opening it."""
+    try:
+        from PIL import Image
+    except ImportError:
+        raise BuildError("pictures need the 'pillow' package, which is not installed in Jarvis's Python")
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.verify()
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+            dpi = im.info.get("dpi") or (96, 96)
+    except Exception:
+        raise BuildError(f"'{ref}' is not a picture Jarvis can read (damaged, or not really an image)")
+    dpi_x = float(dpi[0]) if dpi and float(dpi[0] or 0) >= 30 else 96.0
+    return w, h, dpi_x
+
+
+def _fit(w_in: float, h_in: float, max_w: float, max_h: float) -> tuple:
+    scale = min(1.0, max_w / w_in, max_h / h_in) if w_in > 0 and h_in > 0 else 1.0
+    return w_in * scale, h_in * scale
+
+
+def _load_images(blocks: list, image_loader) -> dict:
+    """{path: (bytes, kind, width px, height px, dpi)} for every picture the blocks name, loaded once each."""
+    refs = list(dict.fromkeys(b[2] for b in blocks if b[0] == "image"))
+    if not refs:
+        return {}
+    if image_loader is None:
+        raise BuildError("pictures can only be added from files, through write_file")
+    if len(refs) > MAX_IMAGES:
+        raise BuildError(f"the document names {len(refs)} pictures, over the {MAX_IMAGES} limit")
+    out = {}
+    for ref in refs:
+        data, kind = image_loader(ref)
+        out[ref] = (data, kind) + _picture(data, ref)
+    return out
 
 
 # ---------------------------------------------------------------- DOCX
@@ -230,10 +340,35 @@ def _w_table(rows: list) -> str:
     return "".join(out)
 
 
-def _build_docx(text: str) -> tuple:
-    blocks = parse_blocks(text)
+_EMU_PER_INCH = 914400
+_DOCX_TEXT_WIDTH_IN = (11906 - 2 * 1440) / 1440  # A4 less the two 1-inch margins
+_DOCX_MAX_PICTURE_HEIGHT_IN = 8.0
+
+
+def _w_picture(n: int, rid: str, alt: str, ref: str, w_px: int, h_px: int, dpi: float) -> str:
+    """One centred paragraph holding an inline picture, in the shape python-docx writes (which Word opens)."""
+    w_in, h_in = _fit(w_px / dpi, h_px / dpi, _DOCX_TEXT_WIDTH_IN, _DOCX_MAX_PICTURE_HEIGHT_IN)
+    cx, cy = max(1, round(w_in * _EMU_PER_INCH)), max(1, round(h_in * _EMU_PER_INCH))
+    name = _attr(Path(ref).name or f"picture{n}")
+    return ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
+            '<wp:inline xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            f'<wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{n}" name="Picture {n}" descr="{_attr(alt)}"/>'
+            '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+            '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
+            f'<pic:nvPicPr><pic:cNvPr id="0" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr>'
+            f'<pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+            f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr>'
+            '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>')
+
+
+def _build_docx(text: str, image_loader=None) -> tuple:
+    blocks = parse_blocks(text, images=True)
     if not blocks:
         raise BuildError("there is no text to put in the Word document")
+    pictures = _load_images(blocks, image_loader)
+    media: dict = {}  # path -> (rId, part name)
+    n_pictures = 0
     body, nums, prev, n_para, n_table = [], [], None, 0, 0
     next_num = 3  # numId 1 = bullets, 2 reserved; every numbered list gets its own id so it restarts at 1
     current = None
@@ -255,12 +390,19 @@ def _build_docx(text: str) -> tuple:
             body.append(_w_table(b[1]))
             body.append("<w:p/>")  # Word needs a paragraph between two tables and one at the end
             n_table += 1
-        if kind != "table":
+        elif kind == "image":
+            data, ext, w_px, h_px, dpi = pictures[b[2]]
+            if b[2] not in media:
+                media[b[2]] = (f"rIdImg{len(media) + 1}", f"media/image{len(media) + 1}.{ 'jpeg' if ext == 'jpeg' else ext }")
+            n_pictures += 1
+            body.append(_w_picture(n_pictures, media[b[2]][0], b[1], b[2], w_px, h_px, dpi))
+        if kind not in ("table", "image"):
             n_para += 1
         prev = kind
     sect = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
             '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
-    document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {_W_NS}><w:body>'
+    document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {_W_NS} xmlns:r="{_OD}" '
+                'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>'
                 + "".join(body) + sect + "</w:body></w:document>")
     numbering = _DOCX_NUMBERING_HEAD + "".join(
         f'<w:num w:numId="{i}"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>'
@@ -271,7 +413,9 @@ def _build_docx(text: str) -> tuple:
                     f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="{_CT_NS}">'
                     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                     '<Default Extension="xml" ContentType="application/xml"/>'
-                    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                    + "".join(f'<Default Extension="{e}" ContentType="image/{e}"/>'
+                              for e in sorted({part.rsplit(".", 1)[1] for _, part in media.values()}))
+                    + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
                     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
                     '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'
                     "</Types>")
@@ -281,12 +425,18 @@ def _build_docx(text: str) -> tuple:
         zf.writestr("word/_rels/document.xml.rels",
                     f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{_REL_NS}">'
                     f'<Relationship Id="rId1" Type="{_OD}/styles" Target="styles.xml"/>'
-                    f'<Relationship Id="rId2" Type="{_OD}/numbering" Target="numbering.xml"/></Relationships>')
+                    f'<Relationship Id="rId2" Type="{_OD}/numbering" Target="numbering.xml"/>'
+                    + "".join(f'<Relationship Id="{rid}" Type="{_OD}/image" Target="{part}"/>' for rid, part in media.values())
+                    + "</Relationships>")
         zf.writestr("word/document.xml", document)
         zf.writestr("word/styles.xml", _DOCX_STYLES)
         zf.writestr("word/numbering.xml", numbering)
+        for ref, (_, part) in media.items():
+            zf.writestr(f"word/{part}", pictures[ref][0])
     summary = f"a Word document ({n_para} paragraph{'s' if n_para != 1 else ''}"
-    summary += f", {n_table} table{'s' if n_table != 1 else ''})" if n_table else ")"
+    summary += f", {n_table} table{'s' if n_table != 1 else ''}" if n_table else ""
+    summary += f", {n_pictures} picture{'s' if n_pictures != 1 else ''}" if n_pictures else ""
+    summary += ")"
     return buf.getvalue(), summary, ""
 
 
@@ -351,7 +501,11 @@ def _parse_row(line: str) -> list:
     return next(csv.reader([line], skipinitialspace=False))
 
 
-def _cell_xml(ref: str, raw: str) -> str:
+_HEADER_STYLE = 3  # cellXfs index of the bold text style in _build_xlsx's styles.xml
+_MIN_WIDTH, _MAX_WIDTH = 8.0, 60.0
+
+
+def _cell_xml(ref: str, raw: str, bold: bool = False) -> str:
     v = raw.strip() if not raw.startswith('"') else raw
     if v == "":
         return ""
@@ -377,17 +531,38 @@ def _cell_xml(ref: str, raw: str) -> str:
             return f'<c r="{ref}" s="2"><v>{_serial(d):.10g}</v></c>'
         except ValueError:
             pass
-    return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{_x(raw)}</t></is></c>'
+    style = f' s="{_HEADER_STYLE}"' if bold else ""
+    return f'<c r="{ref}"{style} t="inlineStr"><is><t xml:space="preserve">{_x(raw)}</t></is></c>'
+
+
+def _shown_width(raw: str, xml: str) -> float:
+    """About how many characters wide a cell shows in Excel: the text's longest line, a date's format, a number's digits."""
+    if ' s="1"' in xml:
+        return 10
+    if ' s="2"' in xml:
+        return 16
+    if "<f>" in xml:
+        return 10  # the value is unknown until Excel calculates it
+    return max((len(line) for line in raw.strip().split("\n")), default=0)
+
+
+def _is_header(cells: list, later_rows: list) -> bool:
+    """The first row is a header when all of its cells are text, and either it has two or more of them or a later row
+    holds a number, date or formula: a lone column of words could be data, so it stays plain."""
+    xmls = [x for x in cells if x]
+    if not xmls or not later_rows or any('t="inlineStr"' not in x for x in xmls):
+        return False
+    return len(xmls) >= 2 or any(x and 't="inlineStr"' not in x for row in later_rows for x in row)
 
 
 def _build_xlsx(text: str, readback: bool = False) -> tuple:
     sheets = _split_sheets(text, readback)
     used: set = set()
-    parts, n_rows_total, n_formulas = [], 0, 0
+    parts, n_rows_total, n_formulas, n_headers = [], 0, 0, 0
     notes: list = []
     for name, lines in sheets:
         sheet_name = _clean_sheet_name(name, used)
-        rows = []
+        grid = []  # (row number, [(column, raw, cell xml)])
         r = 0
         for line in lines:
             r += 1
@@ -408,17 +583,28 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
                 note = f"sheet '{sheet_name}': columns past {MAX_XLSX_COLS} were left out"
                 if note not in notes:
                     notes.append(note)
-            xml_cells = []
-            for c, raw in enumerate(cells[:MAX_XLSX_COLS]):
-                cx = _cell_xml(f"{_col_name(c)}{r}", raw)
-                if cx:
-                    xml_cells.append(cx)
-                    n_formulas += "<f>" in cx
-            if xml_cells:
-                rows.append(f'<row r="{r}">{"".join(xml_cells)}</row>')
+            row = [(c, raw, _cell_xml(f"{_col_name(c)}{r}", raw)) for c, raw in enumerate(cells[:MAX_XLSX_COLS])]
+            row = [cell for cell in row if cell[2]]
+            if row:
+                grid.append((r, row))
                 n_rows_total += 1
+                n_formulas += sum("<f>" in cell[2] for cell in row)
+        # The first row in bold when it reads as a header; each column as wide as what it shows (capped).
+        header = bool(grid) and _is_header([x for _, _, x in grid[0][1]], [[x for _, _, x in row] for _, row in grid[1:]])
+        rows, widths = [], {}
+        for i, (r, row) in enumerate(grid):
+            bold = header and i == 0
+            xml_cells = [_cell_xml(f"{_col_name(c)}{r}", raw, bold=True) if bold else x for c, raw, x in row]
+            for (c, raw, x) in row:
+                w = _shown_width(raw, x) * (1.1 if bold else 1.0)
+                widths[c] = max(widths.get(c, 0.0), w)
+            rows.append(f'<row r="{r}">{"".join(xml_cells)}</row>')
+        cols = "".join(f'<col min="{c + 1}" max="{c + 1}" width="{min(_MAX_WIDTH, max(_MIN_WIDTH, w + 2)):.1f}" customWidth="1"/>'
+                       for c, w in sorted(widths.items()))
+        n_headers += header
         parts.append((sheet_name, f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{_S_NS}">'
-                                  f'<sheetData>{"".join(rows)}</sheetData></worksheet>'))
+                                  + (f"<cols>{cols}</cols>" if cols else "")
+                                  + f'<sheetData>{"".join(rows)}</sheetData></worksheet>'))
     sheets_xml = "".join(f'<sheet name="{_attr(n)}" sheetId="{i}" r:id="rId{i}"/>' for i, (n, _) in enumerate(parts, 1))
     workbook = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="{_S_NS}" xmlns:r="{_OD}">'
                 f'<sheets>{sheets_xml}</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
@@ -427,13 +613,14 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
     wb_rels += f'<Relationship Id="rId{len(parts) + 1}" Type="{_OD}/styles" Target="styles.xml"/>'
     styles = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="{_S_NS}">'
               '<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm"/></numFmts>'
-              '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+              '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
               '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
               '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
               '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-              '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+              '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
               '<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-              '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
+              '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+              '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>'
               '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
     ct = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="{_CT_NS}">'
           '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -456,6 +643,8 @@ def _build_xlsx(text: str, readback: bool = False) -> tuple:
     summary = (f"an Excel workbook ({len(parts)} sheet{'s' if len(parts) != 1 else ''}, {n_rows_total} row"
                f"{'s' if n_rows_total != 1 else ''}"
                + (f", {n_formulas} formula{'s' if n_formulas != 1 else ''} that Excel calculates when it opens the file" if n_formulas else "")
+               + (", header row in bold" if n_headers == 1 == len(parts) else
+                  f", a bold header row on {n_headers} of {len(parts)} sheets" if n_headers else "")
                + ")")
     return buf.getvalue(), summary, ("; ".join(notes) + "." if notes else "")
 
@@ -816,17 +1005,18 @@ def _pdf_markup(text: str) -> str:
     return "".join(out)
 
 
-def _build_pdf(text: str) -> tuple:
-    blocks = parse_blocks(text)
+def _build_pdf(text: str, image_loader=None) -> tuple:
+    blocks = parse_blocks(text, images=True)
     if not blocks:
         raise BuildError("there is no text to put in the PDF")
+    pictures = _load_images(blocks, image_loader)
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError:
         raise BuildError("PDF writing needs the 'reportlab' package, which is not installed in Jarvis's Python")
     regular, bold, italic, bold_italic, can_draw = _register_fonts()
@@ -854,7 +1044,7 @@ def _build_pdf(text: str) -> tuple:
     cell_head = ParagraphStyle("cellh", parent=cell, fontName=bold)
 
     story, number = [], 0
-    n_paras = n_tables = 0
+    n_paras = n_tables = n_pictures = 0
     for b in blocks:
         kind = b[0]
         if kind != "number":
@@ -883,21 +1073,30 @@ def _build_pdf(text: str) -> tuple:
                                    ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
             story.extend([t, Spacer(1, 8)])
             n_tables += 1
-        if kind != "table":
+        elif kind == "image":
+            data, _, w_px, h_px, dpi = pictures[b[2]]
+            w_pt, h_pt = _fit(w_px / dpi * 72, h_px / dpi * 72, A4[0] - 40 * mm, 200 * mm)
+            img = Image(io.BytesIO(data), width=w_pt, height=h_pt)
+            img.hAlign = "CENTER"
+            story.extend([img, Spacer(1, 8)])
+            n_pictures += 1
+        if kind not in ("table", "image"):
             n_paras += 1
     from reportlab.platypus.doctemplate import LayoutError
 
     buf = io.BytesIO()
     try:
         SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=20 * mm, bottomMargin=20 * mm,
-                          title="", author="").build(story)
+                          title="", author="").build(story, canvasmaker=_numbered_canvas(regular, A4[0] / 2, 10 * mm))
     except LayoutError:
         raise BuildError("a table cell holds more text than fits on one page; put the long text in a paragraph below the "
                          "table and keep the cell short")
     data = buf.getvalue()
     pages = len(re.findall(rb"/Type\s*/Page[^s]", data))
     summary = f"a PDF ({pages} page{'s' if pages != 1 else ''}, {n_paras} paragraph{'s' if n_paras != 1 else ''}"
-    summary += f", {n_tables} table{'s' if n_tables != 1 else ''})" if n_tables else ")"
+    summary += f", {n_tables} table{'s' if n_tables != 1 else ''}" if n_tables else ""
+    summary += f", {n_pictures} picture{'s' if n_pictures != 1 else ''}" if n_pictures else ""
+    summary += ")"
     note = ""
     if lost:
         shown = " ".join(f"{ch!r}" for ch in list(lost)[:8])
@@ -906,9 +1105,42 @@ def _build_pdf(text: str) -> tuple:
     return data, summary, note
 
 
+def _numbered_canvas(font: str, x: float, y: float):
+    """A reportlab canvas class that writes "Page N of M" at the foot of each page. The total is only known once every
+    page is laid out, so each page's drawing is kept until ``save`` (the usual two-pass recipe). ``prepare_text`` strips
+    exactly this line when the PDF is read back and written again (``PAGE_FOOTER``)."""
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas
+
+    class NumberedCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pages: list = []
+
+        def showPage(self):
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._pages)
+            for state in self._pages:
+                self.__dict__.update(state)
+                self.saveState()
+                self.setFont(font, 8.5)
+                self.setFillColor(colors.Color(.45, .45, .45))
+                self.drawCentredString(x, y, PAGE_FOOTER.format(n=self._pageNumber, total=total))
+                self.restoreState()
+                super().showPage()
+            super().save()
+
+    return NumberedCanvas
+
+
 # ---------------------------------------------------------------- entry point
-def build_document(extension: str, content: str) -> tuple:
-    """(file bytes, 'a Word document (...)', note) for '.docx' / '.xlsx' / '.pptx' / '.pdf'. Raises BuildError."""
+def build_document(extension: str, content: str, image_loader=None) -> tuple:
+    """(file bytes, 'a Word document (...)', note) for '.docx' / '.xlsx' / '.pptx' / '.pdf'. Raises BuildError.
+    ``image_loader(path) -> (bytes, 'png' | 'jpeg' | 'gif')`` serves ``![alt](path)`` lines in Word and PDF
+    (``workspace_image_loader``); without one, such a line is refused."""
     text = str(content or "")
     if not text.strip():
         raise BuildError("the content is empty")
@@ -921,12 +1153,15 @@ def build_document(extension: str, content: str) -> tuple:
     if not text.strip():
         raise BuildError("the content is empty")
     if ext == ".docx":
-        return _build_docx(text)
+        return _build_docx(text, image_loader)
     if ext == ".xlsx":
         return _build_xlsx(text, readback)
     if ext == ".pdf":
-        return _build_pdf(text)
+        return _build_pdf(text, image_loader)
     if ext == ".pptx":
+        if any(_IMAGE.match(line) for line in text.split("\n")):
+            raise BuildError("pictures in slides are not supported yet (only in .docx and .pdf); describe the picture "
+                             "in words on the slide, or put it in a Word document")
         return _build_pptx(text, readback)
     raise BuildError(f"{extension} files are not supported")
 

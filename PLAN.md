@@ -2923,8 +2923,40 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     "Replaces the existing 'x.docx' (the old version is backed up first)", so documents need nothing extra.
   - **PPTX writing: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen in PowerPoint.** `write_file` builds a `.pptx` from the same Markdown: a `---` line starts a slide, `#` is the slide title, bullets/numbered lists/plain lines fill the body (font size shrinks to fit), a `|` table becomes a real table, a `Notes:` line becomes speaker notes. Raw OOXML (master, layout, theme, notes master), no python-pptx. Checked by opening with python-pptx and rendering with LibreOffice; read->write->read is stable (numbering reads back as bullets). The reader now marks body-placeholder lines with `- `. Prompt head: docstring clause reworded to fit the existing cap, no raise.
   - **Review 2026-11-05 (cloud session), fixed with tests:** (1) a sheet wider than 100 columns was read without saying so, so read -> change -> write silently deleted columns 101+; the reader now prints `[... cells past column CV not read ...]` (in `CUT_RE`) and write_file refuses with its own message (xlsx and ods); (2) an ID of more than 15 significant digits was written as a number, which Excel rounds -- it stays text now; (3) a PDF table cell taller than a page raised reportlab's `LayoutError` as the error text -- now a sentence saying what to change; (4) an emoji in RTF (two `\uN` surrogates) produced a string that can't be UTF-8 encoded, and `\ansicpg10000` (macOS) named a codec Python lacks -- pairs are joined, lone ones become U+FFFD, Mac Roman is mapped and an unknown page falls back to cp1252; (5) a DRM-protected EPUB (store-bought books) was 'read' as garbage -- refused by name now, while IDPF/Adobe font obfuscation still reads; (6) a deck slide with no title had its first bullet promoted to the title on a round trip. Writer columns past 200 are now reported, and the locked-file message names PowerPoint. Looked at and left: uploaded documents aren't RAG-indexed (the indexer skips them, so no binary chunks); the compare context comes from the assembled history, not in-turn nudges.
-  - **Not done:** images in decks, themes/layout choice, animations; images, links, headers/footers, page numbers, column widths and cell styling in Excel; editing a
-    document in place (the model rewrites the whole file: read -> change -> write).
+  - **Polish: BUILT 2026-11-05 (cloud session), tests pass on Linux, checked with python-docx/openpyxl and LibreOffice renders, NOT seen
+    in Word, Excel or Acrobat.** (1) **Excel:** each column as wide as its longest value (8-60 characters, `<cols>` before
+    `<sheetData>` as Excel requires); the first row is a bold header when it is all text and either has two or more cells or
+    sits over a number, date or formula (a lone column of words stays plain). (2) **PDF page numbers:** "Page N of M" at the
+    foot of each page (a two-pass canvas). pypdf reads it back as the page's last line, so `prepare_text` drops exactly that
+    line, only on a PDF read back, only at the foot of its own page: read -> write three times still gives one footer per page.
+    (3) **Pictures in Word and PDF:** `![alt](path)` alone on a line embeds a PNG/JPEG/GIF, scaled to the page width (aspect
+    kept, DPI respected), alt text as the picture's description; the same file used twice is stored once. Paths are taken from
+    the workspace root, then the document's folder, and must resolve inside the workspace (the Freeform folder in Freeform),
+    where read_file reads without asking. Anything outside, a web address, a missing file, or a file that isn't really an
+    image is refused with a sentence, not asked about: a picture is read silently into a file that may leave the PC, so
+    injected text must not be able to pull a private file in. A deck refuses picture lines (not supported there yet).
+    Prompt head: the `write_file` docstring gained "docx/pdf: ![](x.png) = picture" and "Automatically creates any missing
+    parent directories" became "Makes missing folders." (WORKSPACE 38649 of 38650, no raise).
+  - **Not done:** pictures in decks, themes/layout choice, animations; links, headers/footers and cell styling beyond the header
+    in Excel; a picture that is not on disk (a chart Jarvis draws itself).
+  - **Handoff: editing a Word file in place -- for a local session with Word (the user's call, 2026-11-05).** Today writing to an
+    existing `.docx` rebuilds it from the Markdown: the user's styles, fonts, headers/footers, page setup, comments, tracked
+    changes and **pictures** are lost (the reader does not show pictures, so they can't come back). What was worked out here:
+    (a) when `write_file` targets an existing `.docx`, keep the whole package (styles, numbering, headers/footers, media,
+    settings, `sectPr`) and replace only `word/document.xml`'s body; (b) diff the reader's rendering of each body block
+    (`doc_readers._w_paragraph` / `_w_table`, one line per paragraph, `| |` rows per table row) against the new text, line by
+    line (difflib), and keep the original XML of every unchanged paragraph; (c) blocks the reader skips (empty paragraphs,
+    picture-only paragraphs, section breaks) are anchors that stay where they are, dropped only when both neighbours are deleted;
+    a paragraph holding a `w:sectPr` is emptied, never deleted; (d) a changed paragraph keeps its `pPr`, and its runs are
+    edited by a character diff so unchanged text keeps its run formatting; (e) a new heading uses the document's own style id,
+    looked up in `styles.xml` by `w:name` "heading N" (ids are localized, e.g. German Word); a new bullet copies the `pPr`
+    of the nearest list paragraph, or needs a `numId` added to `numbering.xml` (plus its relationship and content type when
+    the part is missing); (f) ElementTree rewrites namespace prefixes and drops unused declarations, and `mc:Ignorable`
+    lists prefixes by name, so register every prefix from the original (`iterparse` start-ns) and put the original root
+    start tag back -- Word reports "unreadable content" otherwise, and LibreOffice does not, so **check every case in Word**;
+    (g) a table whose rows change shape is rebuilt with the original `tblPr`. Say in the result what still could not be kept
+    (run formatting and hyperlinks inside an edited paragraph). Also worth deciding there: whether the reader should show a
+    picture as a marker the writer keeps, so a rewrite without the in-place path stops dropping pictures silently.
 - **Other formats: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device** (item 3, reading only).
   `read_file` also reads **OpenDocument** (`.odt` headings/lists/tables with footnotes left out; `.ods` rows with their numbers,
   gaps kept, dates/booleans typed, formulas as `=SUM(B2:B4) -> 7` with `[.B2]`/`$Sheet.B2` converted to Excel form and `;` to `,`;

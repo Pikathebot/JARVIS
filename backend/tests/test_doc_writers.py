@@ -498,3 +498,136 @@ def test_a_slide_without_a_title_keeps_its_first_bullet_as_body(tmp_path):
     assert "--- slide 1 ---\n- alpha\n- beta" in first
     _write(tmp_path, "e.pptx", first)
     assert _read(tmp_path, "e.pptx") == first
+
+
+# ---------------- Excel: header row and column widths ----------------
+def _sheet_xml(path: Path, n: int = 1) -> str:
+    return _parts(path)[f"xl/worksheets/sheet{n}.xml"]
+
+
+def test_xlsx_header_row_is_bold_and_columns_fit_their_text(tmp_path):
+    out = _write(tmp_path, "m.xlsx", "Student,Maths,Notes\nAsha,78,Very consistent across all three terms\nRahul,64,"
+                 + "x" * 120 + "\n")
+    assert "header row in bold" in out
+    sheet, styles = _sheet_xml(tmp_path / "m.xlsx"), _parts(tmp_path / "m.xlsx")["xl/styles.xml"]
+    assert sheet.index("<cols>") < sheet.index("<sheetData>")       # Excel refuses the file the other way round
+    assert re.findall(r'<c r="[A-C]1" s="3" t="inlineStr">', sheet) and 's="3"' not in sheet.split('<row r="2">')[1]
+    widths = dict(re.findall(r'<col min="(\d+)" max="\1" width="([\d.]+)"', sheet))
+    assert float(widths["2"]) == 8.0 and float(widths["3"]) == 60.0  # the short column has a floor, the long one a cap
+    assert '<fonts count="2">' in styles and '<cellXfs count="4">' in styles and 'fontId="1"' in styles
+    assert "Very consistent" in _read(tmp_path, "m.xlsx")
+
+
+@pytest.mark.parametrize("content, bold", [
+    ("Name,Score\nAsha,78\n", True),           # two text cells over data
+    ("Name\nAsha\nRahul\n", False),            # a lone column of words could be data
+    ("Total\n=SUM(1,2)\n", True),              # one text cell over a formula
+    ("Asha,78\nRahul,64\n", False),            # the first row holds a number
+    ("Name,Score\n", False),                   # nothing under it
+])
+def test_xlsx_header_rule(tmp_path, content, bold):
+    _write(tmp_path, "h.xlsx", content)
+    assert ('s="3"' in _sheet_xml(tmp_path / "h.xlsx")) is bold
+
+
+def test_xlsx_round_trip_with_a_header_is_still_stable(tmp_path):
+    _write(tmp_path, "r.xlsx", "Item,Price\nTea,40\n--- sheet: Notes ---\nbuy milk\n")
+    first, second = _round_trip(tmp_path, "r.xlsx")
+    assert first == second and 's="3"' in _sheet_xml(tmp_path / "r.xlsx")
+
+
+# ---------------- PDF: page numbers, and reading them back ----------------
+def test_pdf_pages_are_numbered_and_a_read_back_doesnt_keep_the_old_numbers(tmp_path):
+    """Each page ends in its footer, and after read -> write -> read (twice) there is still exactly one per page: the
+    old ones were not carried into the body. (The text itself re-flows: pypdf's lines come back as paragraphs.)"""
+    _write(tmp_path, "n.pdf", "# Notes\n\n" + "\n\n".join(f"Paragraph {i} " + "word " * 60 for i in range(25)))
+    for _ in range(3):
+        text = _read(tmp_path, "n.pdf")
+        total = int(re.match(r"\[PDF, (\d+) pages?\]", text).group(1))
+        pages = re.split(r"(?m)^--- page \d+ ---$", text)[1:]
+        assert total > 1 and len(pages) == total
+        footers = re.findall(r"(?m)^Page \d+ of \d+$", text)
+        assert footers == [f"Page {k} of {total}" for k in range(1, total + 1)]
+        assert all(p.strip().splitlines()[-1] == f"Page {k} of {total}" for k, p in enumerate(pages, 1))
+        assert "Paragraph 24" in text
+        assert _write(tmp_path, "n.pdf", text).startswith("Successfully wrote a PDF")
+
+
+def test_only_the_exact_footer_at_the_foot_of_its_page_is_dropped():
+    lines = ["--- page 1 ---", "Page 1 of 2", "Intro", "Page 1 of 2", "--- page 2 ---", "See Page 2 of 2", "Page 9 of 2",
+             "--- page 3 ---", "Page 3 of 2"]
+    kept = doc_writers._drop_page_footers(lines, 2)
+    assert kept == ["--- page 1 ---", "Page 1 of 2", "Intro", "--- page 2 ---", "See Page 2 of 2", "Page 9 of 2",
+                    "--- page 3 ---", "Page 3 of 2"]
+    text, readback = doc_writers.prepare_text("[Word document]\nPage 1 of 1")
+    assert readback and text == "Page 1 of 1"                # only a PDF read back loses the line
+
+
+# ---------------- pictures in Word and PDF ----------------
+def _png(path: Path, size=(1600, 800), dpi=(144, 144), mode="RGB"):
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new(mode, size, (30, 120, 200)).save(path, dpi=dpi)
+    return path
+
+
+def test_a_picture_goes_into_word_scaled_to_the_page_and_stored_once(tmp_path):
+    _png(tmp_path / "img" / "chart.png")
+    from PIL import Image
+    Image.new("RGB", (200, 300), (200, 60, 40)).save(tmp_path / "img" / "photo.jpg")
+    out = _write(tmp_path, "p.docx", "# Results\n\n![Totals by week](img/chart.png)\n\nText.\n\n![A card](img/photo.jpg)\n\n"
+                                     "![again](img/chart.png)\n")
+    assert out.startswith("Successfully wrote a Word document (2 paragraphs, 3 pictures)"), out
+    with zipfile.ZipFile(tmp_path / "p.docx") as zf:
+        parts = {n: zf.read(n) for n in zf.namelist()}
+    assert sorted(n for n in parts if n.startswith("word/media/")) == ["word/media/image1.png", "word/media/image2.jpeg"]
+    assert parts["word/media/image1.png"][:4] == b"\x89PNG"
+    parts = {n: v.decode("utf-8") for n, v in parts.items() if not n.startswith("word/media/")}
+    assert '<Default Extension="png" ContentType="image/png"/>' in parts["[Content_Types].xml"]
+    assert '<Default Extension="jpeg" ContentType="image/jpeg"/>' in parts["[Content_Types].xml"]
+    assert parts["word/_rels/document.xml.rels"].count("/image\"") == 2
+    doc = parts["word/document.xml"]
+    extents = [(int(a), int(b)) for a, b in re.findall(r'<wp:extent cx="(\d+)" cy="(\d+)"/>', doc)]
+    assert extents[0] == (5731510, 2865755)                           # 11.1 in at 144 dpi -> the 6.27 in text width, 2:1 kept
+    assert extents[1] == (1905000, 2857500)                           # 200 x 300 px at 96 dpi, small enough as it is
+    assert re.findall(r'<wp:docPr id="(\d+)"', doc) == ["1", "2", "3"] and 'descr="Totals by week"' in doc
+    assert "Text." in _read(tmp_path, "p.docx")
+
+
+def test_a_picture_goes_into_a_pdf(tmp_path):
+    _png(tmp_path / "chart.png")
+    out = _write(tmp_path, "p.pdf", "# Results\n\n![chart](chart.png)\n")
+    assert "1 picture" in out and b"/Subtype /Image" in (tmp_path / "p.pdf").read_bytes()
+
+
+@pytest.mark.parametrize("ref, says", [
+    ("../outside.png", "outside the workspace"),
+    ("https://example.com/a.png", "web address"),
+    ("img/none.png", "no picture at"),
+    ("notes.txt", "not a PNG, JPEG or GIF"),
+    ("fake.png", "not a picture Jarvis can read"),
+])
+def test_pictures_only_come_from_real_images_inside_the_workspace(tmp_path, ref, says):
+    ws = tmp_path / "ws"
+    _png(tmp_path / "outside.png")
+    (ws / "notes.txt").parent.mkdir(parents=True, exist_ok=True)
+    (ws / "notes.txt").write_text("hello", encoding="utf-8")
+    (ws / "fake.png").write_text("not an image", encoding="utf-8")
+    out = _write(ws, "p.docx", f"Intro\n\n![x]({ref})\n")
+    assert out.startswith("Error: could not build") and says in out, out
+    assert not (ws / "p.docx").exists()
+
+
+def test_an_absolute_path_outside_the_workspace_is_refused_even_when_the_file_exists(tmp_path):
+    outside = _png(tmp_path / "private" / "scan.png")
+    out = _write(tmp_path / "ws", "p.pdf", f"![x]({outside})\n")
+    assert "outside the workspace" in out
+
+
+def test_a_picture_line_needs_a_loader_and_slides_refuse_it(tmp_path):
+    with pytest.raises(BuildError, match="through write_file"):
+        build_document(".docx", "![x](a.png)")
+    out = _write(tmp_path, "d.pptx", "# Slide\n\n![x](a.png)\n")
+    assert "pictures in slides are not supported" in out
+    assert doc_writers.parse_blocks("![x](a.png)") == [("para", "![x](a.png)")]   # without images=True: plain text

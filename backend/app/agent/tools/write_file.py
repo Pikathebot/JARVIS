@@ -2,7 +2,8 @@ import logging
 from typing import Optional
 
 from app.agent.tools.doc_readers import kind_of
-from app.agent.tools.doc_writers import BUILDABLE_EXTENSIONS, BuildError, build_document, write_bytes_atomic
+from app.agent.tools.doc_writers import (BUILDABLE_EXTENSIONS, BuildError, build_document, workspace_image_loader,
+                                        write_bytes_atomic)
 from app.agent.tools.file_check import check_written
 from app.agent.tools.file_safety import backup_file, shown
 from app.agent.tools.paths import is_inside, resolve_tool_path
@@ -20,8 +21,8 @@ def write_file(
 ) -> str:
     """
     Create a file, or replace an existing one, with the given text (in the workspace; replacing a file or writing outside the workspace asks the user first, and the old version is backed up). Fill `reason` with why, in a few words.
-    A .docx/.xlsx/.pdf/.pptx path is built from Markdown (pptx: '---' = new slide; xlsx: CSV, '--- sheet: Name ---' = sheet).
-    Automatically creates any missing parent directories.
+    A .docx/.xlsx/.pdf/.pptx path is built from Markdown (docx/pdf: ![](x.png) = picture; pptx: '---' = new slide; xlsx: CSV, '--- sheet: Name ---' = sheet).
+    Makes missing folders.
 
     Args:
         file_path: Relative path of the file to create (e.g. 'scripts/run.py', 'docs/notes.md').
@@ -54,7 +55,7 @@ def write_file(
     document = None
     if path.suffix.lower() in BUILDABLE_EXTENSIONS:
         try:
-            document = build_document(path.suffix, content)
+            document = build_document(path.suffix, content, image_loader=workspace_image_loader(path, ws_root))
         except BuildError as e:
             return f"Error: could not build '{file_path}': {e}."
         except Exception as e:
