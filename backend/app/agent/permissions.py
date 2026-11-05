@@ -555,6 +555,23 @@ def evaluate_kill_process_risk(pid_or_name: Any) -> tuple[RiskTier, Optional[str
 
 
 
+def _calendar_series(key: str) -> str:
+    """'every "DBMS lecture" (Mon, Wed until 20 Dec 2026, the whole series)' when ``key`` names one repeating event;
+    '' otherwise (no match, several, a one-off, or the calendar can't be read)."""
+    if not key:
+        return ""
+    try:
+        from app.agent.tools import calendar_events as ce
+
+        with ce.LOCK:
+            ev, _ = ce._match(ce.load()["events"], key, ce._now())
+        if ev is None or not ev.get("repeat"):
+            return ""
+        return f"every \"{ev['title']}\"{ce._again(ev).replace(' (every ', ' (', 1)[:-1]}, the whole series)"
+    except Exception:
+        return ""
+
+
 @dataclass
 class PermissionDecision:
     tool: str
@@ -794,7 +811,8 @@ def evaluate_tool_permission(
     elif tool_name == "calendar" and str(arguments.get("action", "")).strip().lower() in ("move", "delete"):
         effective_tier = RiskTier.CONFIRMATION_REQUIRED
         which = str(arguments.get("event") or "").strip()
-        which = f"\"{which}\"" if which else "an event"
+        series = _calendar_series(which)   # a repeating event: the card must say the whole series goes, not one week's
+        which = series or (f"\"{which}\"" if which else "an event")
         if str(arguments.get("action")).strip().lower() == "delete":
             custom_reason = f"Deletes {which} from your calendar (and Google Calendar)."
         else:

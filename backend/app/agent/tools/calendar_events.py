@@ -195,6 +195,12 @@ def _spell_date(text: str, now: datetime) -> str:
     return _DAY_MONTH_RE.sub(lambda m: iso(m.group(2), m.group(1), m.group(0)), text)
 
 
+def _names_day(when: Any, now: datetime) -> bool:
+    """True when ``when`` names a day ('friday', 'tomorrow', '2026-10-20', 'oct 20'), not only a time ('11am')."""
+    text = " ".join(str(when or "").lower().replace(",", " ").split())
+    return bool(_DAY_RE.search(_spell_date(text, now)))
+
+
 def parse_when(when: str, now: Optional[datetime] = None) -> tuple[Optional[datetime], bool, str]:
     """(start, all_day, error). "tomorrow 3pm", "3pm on friday", "2026-10-20 15:00", "in 2 hours";
     a day alone ("friday", "2026-10-20", "sept 19") is an all-day event."""
@@ -345,6 +351,7 @@ def calendar(action: str = "", title: str = "", when: str = "", duration: str = 
 
 _YEARLY_WORDS = frozenset({"yearly", "every year", "annually", "year"})
 _DAY_WORD = re.compile(r"\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|days|nesday|rsday|sday|urday|rs|r|n)?s?\b")
+_DAY_RANGE = re.compile(_DAY_WORD.pattern + r"\s*(?:to|-|–|through|thru)\s*" + _DAY_WORD.pattern)
 _REPEAT_FILLER = re.compile(r"\b(?:weekly|every|each|week|on|and|at|the|class(?:es)?)\b|&")
 _REPEAT_HELP = ("repeat must be 'yearly', 'weekly' (optionally with days and an end, e.g. 'weekly mon wed fri until "
                 "2026-12-20'), or empty")
@@ -360,8 +367,12 @@ def parse_repeat(text: Any, now: datetime) -> tuple[str, list[int], str, str]:
         return "yearly", [], "", ""
     if re.search(r"\bmonth", t):
         return "", [], "", f"Error: monthly repeats aren't supported; {_REPEAT_HELP}."
+    def span(m: re.Match) -> str:   # 'mon to fri' / 'mon-fri' -> 'mon tue wed thu fri' (wrapping: 'fri to mon')
+        a, b = (next(i for i, w in enumerate(_WEEKDAYS) if w.startswith(g)) for g in m.groups())
+        return " ".join(_WEEKDAYS[(a + k) % 7][:3] for k in range((b - a) % 7 + 1))
+    t = _DAY_RANGE.sub(span, t)
     until = ""
-    m = re.search(r"\b(?:until|till|through|thru|to)\s+(.+)$", t)
+    m = re.search(r"\b(?:until|till|through|thru)\s+(.+)$", t)
     if m:
         raw = _spell_date(m.group(1).strip(), now)
         try:
@@ -480,13 +491,21 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat
             at, all_day, err = parse_when(when, now)
             if err:
                 return err
+            if ev.get("repeat") == "weekly":
+                days = weekdays_of(ev)
+                if not _names_day(when, now) or at.weekday() in days:
+                    # 'move DBMS to 11am' (or to 11 on one of its days): a new time for every class, same days and first date
+                    at = datetime.combine(old_start.date(), at.time())
+                elif len(days) > 1:
+                    names = ", ".join(_WEEKDAYS[d][:3].title() for d in days)
+                    return (f"Error: '{ev['title']}' repeats on {names}, so it isn't clear which day moves. Delete it and add "
+                            "it again with the new days (repeat='weekly ...').")
         if all_day:
             length = old_len if was_all_day else timedelta(days=1)
         else:
             length = span or (old_len if not was_all_day else timedelta(hours=1))
-        if ev.get("repeat") == "weekly" and at.weekday() != old_start.weekday():
-            days = [d for d in weekdays_of(ev) if d != old_start.weekday()] + [at.weekday()]
-            ev["days"] = sorted(set(days))  # the moved day replaces the one it was on
+        if ev.get("repeat") == "weekly" and at.weekday() not in weekdays_of(ev):
+            ev["days"] = [at.weekday()]  # a one-day class moved to another weekday (several days were refused above)
         ev.update(start=_stamp(at, all_day), end=_stamp(at + length, all_day), dirty=True, updated=time.time())
         if str(title or "").strip():
             ev["title"] = " ".join(str(title).split())

@@ -393,6 +393,8 @@ def test_yearly_series_is_pushed_as_a_recurrence_and_its_copies_are_not_imported
     ("weekdays", "weekly", [0, 1, 2, 3, 4], ""),
     ("daily until dec 20", "weekly", [0, 1, 2, 3, 4, 5, 6], "2026-12-20"),
     ("weekly mon wed until 2026-12-20", "weekly", [0, 2], "2026-12-20"),
+    ("weekly mon to fri until 2026-12-20", "weekly", [0, 1, 2, 3, 4], "2026-12-20"),
+    ("every fri-mon", "weekly", [0, 4, 5, 6], ""),
     ("yearly", "yearly", [], ""),
     ("", "", [], ""),
 ])
@@ -424,10 +426,22 @@ def test_find_and_match_use_the_next_class_not_the_first(cal):
     assert ce.calendar("delete", event="networks").startswith("Deleted:")
 
 
-def test_moving_a_weekly_class_to_another_day_moves_that_day(cal):
-    ce.calendar("add", title="Maths", when="2026-10-19 09:00", repeat="weekly mon wed")
+def test_moving_a_one_day_class_to_another_day_moves_that_day(cal):
+    ce.calendar("add", title="Maths", when="2026-10-19 09:00", repeat="weekly mon")
     out = ce.calendar("move", event="maths", when="2026-10-20 09:00")    # Monday's class to Tuesday
-    assert "(every Tue, Wed)" in out
+    assert "(every Tue)" in out
+
+
+def test_a_new_time_for_a_weekly_class_keeps_its_days(cal, monkeypatch):
+    ce.calendar("add", title="DBMS lecture", when="2026-10-19 10:00", repeat="weekly mon wed until 2026-12-20")
+    monkeypatch.setattr(ce, "_now", lambda: datetime(2026, 10, 22, 12, 0))      # a Thursday: '11am' alone lands on Friday
+    out = ce.calendar("move", event="dbms", when="11am")
+    assert "Mon 19 Oct 11:00-12:00 DBMS lecture (every Mon, Wed until 20 Dec 2026)" in out
+    out = ce.calendar("move", event="dbms", when="wednesday 9am")              # a class day named: still a time change
+    assert "Mon 19 Oct 09:00-10:00 DBMS lecture (every Mon, Wed until 20 Dec 2026)" in out
+    out = ce.calendar("move", event="dbms", when="friday 9am")                 # which of Mon/Wed moves? ask
+    assert out.startswith("Error: 'DBMS lecture' repeats on Mon, Wed")
+    assert ce.load()["events"][0]["days"] == [0, 2]
 
 
 def test_the_nudge_announces_each_weeks_class(cal, monkeypatch):
@@ -465,3 +479,15 @@ def test_a_timed_yearly_series_also_carries_the_time_zone(google):
     assert calendar_sync.sync()["failed"] == 0
     g = next(g for g in google.events.values() if g["summary"] == "Team anniversary")
     assert g["start"]["timeZone"] == "Asia/Kolkata"
+
+
+
+def test_the_approval_card_says_a_whole_series_goes(cal):
+    ce.calendar("add", title="DBMS lecture", when="2026-10-19 10:00", repeat="weekly mon wed until 2026-12-20")
+    ce.calendar("add", title="Dentist", when="tomorrow 3pm")
+    d = evaluate_tool_permission("calendar", {"action": "delete", "event": "dbms"})
+    assert not d.allowed and d.reason == ('Deletes every "DBMS lecture" (Mon, Wed until 20 Dec 2026, the whole series) '
+                                          "from your calendar (and Google Calendar).")
+    assert "the whole series" in evaluate_tool_permission("calendar", {"action": "move", "event": "dbms", "when": "11am"}).reason
+    assert evaluate_tool_permission("calendar", {"action": "delete", "event": "dentist"}).reason == (
+        'Deletes "dentist" from your calendar (and Google Calendar).')

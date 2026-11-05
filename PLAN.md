@@ -2718,8 +2718,14 @@ other useful integrations that might help me."
   have been refused at Google -- the calendar's zone now comes from the events list and goes on every repeating timed event; (2) the
   day briefing and the nudge read each event at its stored first date, so a yearly birthday stored in an earlier year never appeared
   in that day's briefing -- both now ask for the day's copy. Prompt head: the `repeat` description grew and the calendar tool's own
-  description was shortened to pay for it (WORKSPACE 38648 of 38650, no cap raise). Not done: monthly repeats, skipping a single
-  week (a holiday), editing one copy of a series.
+  description was shortened to pay for it (WORKSPACE 38648 of 38650, no cap raise). **Review fixes (same day):** a new time with no
+  day ('move DBMS to 11am') keeps the class's days and first date -- it used to take the weekday the time landed on and swap out a class
+  day; naming a day that isn't a class day moves a one-day class, and for a several-day class says which days it has and asks for
+  delete + add (it can't know which day moved); the approval card for moving or deleting a series says 'every "DBMS lecture" (Mon,
+  Wed until 20 Dec 2026, the whole series)' -- "cancel tomorrow's class" would otherwise delete the semester behind a one-event card;
+  'mon to fri' / 'fri-mon' are day ranges. **Before trusting it with a whole timetable:** add one class, check it in Google Calendar on
+  the web (days, time, end date), then the rest. A timed yearly event already in calendar.json with no Google id (refused before)
+  goes up on the next sync. Not done: monthly repeats, skipping a single week (a holiday), editing or cancelling one copy of a series.
 - GitHub: profile/repos/issues beyond the local git tools (public API, optional token).
 - Papers/notes: arXiv / Semantic Scholar search through `research`; flashcards/spaced repetition from notes.
 - Focus timer (Pomodoro) tied to Game-mode-style "don't disturb".
