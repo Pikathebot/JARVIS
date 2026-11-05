@@ -176,3 +176,18 @@ def test_a_slow_judge_site_does_not_hold_up_the_briefing(day, monkeypatch):
     t = time.monotonic()
     obs = db.build(Persona(), NOW)
     assert time.monotonic() - t < 1.0 and "Lunch with Sam" in obs.detail and "Contest" not in obs.detail
+
+
+
+def test_a_yearly_birthday_from_an_earlier_year_and_a_weekly_class_are_in_todays_briefing(day):
+    """A series is stored once, at its first date: the briefing has to ask for this day's copy (fixed 2026-11-05)."""
+    events = ce.load()
+    events["events"] += [
+        {"id": "e0101", "title": "Ravi's birthday", "start": "2024-10-20", "end": "2024-10-21", "location": "", "gid": "",
+         "dirty": False, "updated": 0, "repeat": "yearly"},
+        {"id": "e0102", "title": "DBMS lecture", "start": "2026-09-01T10:00", "end": "2026-09-01T11:00", "location": "",
+         "gid": "", "dirty": False, "updated": 0, "repeat": "weekly", "days": [1, 3]},   # Tue/Thu; NOW is a Tuesday
+    ]
+    ce.save(events)
+    obs = db.build(Persona(), NOW)
+    assert "All day: Ravi's birthday" in obs.detail and "10:00 DBMS lecture" in obs.detail

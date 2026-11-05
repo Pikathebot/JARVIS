@@ -84,9 +84,11 @@ def gather(now: datetime) -> dict[str, Any]:
     start = datetime.combine(day, datetime.min.time())
     end = start + timedelta(days=1)
     with ce.LOCK:
-        events = ce._live(ce.load()["events"])
-    today = sorted((e for e in events if ce.start_dt(e) < end and ce.end_dt(e) > start), key=ce.start_dt)
-    later = sorted((e for e in events if ce.start_dt(e) >= end), key=ce.start_dt)
+        events = ce.load()["events"]
+    # through _in_range, so a yearly birthday or a weekly class shows on its day (a series is stored once, at its first date)
+    today = ce._in_range(events, start, end)
+    later = [o for o in (ce.next_occurrence(e, end) for e in ce._live(events)) if o and ce.start_dt(o) >= end]
+    later.sort(key=ce.start_dt)
     try:
         with nm.TASKS_LOCK:
             _, lines = nm._read_tasks()

@@ -95,13 +95,29 @@ def label(ev: dict[str, Any]) -> str:
     else:
         span = f"{s:%a %d %b %H:%M}-{e:%H:%M}"
     where = f" @ {ev['location']}" if ev.get("location") else ""
-    again = " (every year)" if ev.get("repeat") else ""
-    return f"{ev['id']}: {span} {ev['title']}{where}{again}"
+    return f"{ev['id']}: {span} {ev['title']}{where}{_again(ev)}"
+
+
+def weekdays_of(ev: dict[str, Any]) -> list[int]:
+    """A weekly series' days (0 = Monday); its start's weekday when none were given."""
+    return sorted(set(ev.get("days") or [start_dt(ev).weekday()]))
+
+
+def _again(ev: dict[str, Any]) -> str:
+    if ev.get("repeat") == "yearly":
+        return " (every year)"
+    if ev.get("repeat") == "weekly":
+        days = ", ".join(_WEEKDAYS[d][:3].title() for d in weekdays_of(ev))
+        until = f" until {date.fromisoformat(ev['until']):%d %b %Y}" if ev.get("until") else ""
+        return f" (every {days}{until})"
+    return ""
 
 
 def _occurrences(ev: dict[str, Any], lo: datetime, hi: datetime) -> list[dict[str, Any]]:
     """The event itself, or for a yearly one, each year's copy that overlaps [lo, hi). Copies keep
     the series' id, so an id from the agenda still names the series."""
+    if ev.get("repeat") == "weekly":
+        return _weekly(ev, lo, hi)
     if ev.get("repeat") != "yearly":
         return [ev]
     s, length = start_dt(ev), end_dt(ev) - start_dt(ev)
@@ -114,6 +130,32 @@ def _occurrences(ev: dict[str, Any], lo: datetime, hi: datetime) -> list[dict[st
         if at < hi and at + length > lo:
             out.append({**ev, "start": _stamp(at, is_all_day(ev)), "end": _stamp(at + length, is_all_day(ev))})
     return out
+
+
+def _weekly(ev: dict[str, Any], lo: datetime, hi: datetime) -> list[dict[str, Any]]:
+    """A weekly series' copies that overlap [lo, hi): on its days, from its start, up to its ``until`` day (inclusive)."""
+    s, length, all_day = start_dt(ev), end_dt(ev) - start_dt(ev), is_all_day(ev)
+    days = set(weekdays_of(ev))
+    day = max(s.date(), (lo - length).date())
+    stop = hi.date()
+    if ev.get("until"):
+        stop = min(stop, date.fromisoformat(ev["until"]))
+    out = []
+    while day <= stop:
+        if day.weekday() in days:
+            at = datetime.combine(day, s.time())
+            if at < hi and at + length > lo:
+                out.append({**ev, "start": _stamp(at, all_day), "end": _stamp(at + length, all_day)})
+        day += timedelta(days=1)
+    return out
+
+
+def next_occurrence(ev: dict[str, Any], now: datetime) -> Optional[dict[str, Any]]:
+    """The event, or a series' next copy, that hasn't ended by ``now``; None when it is all in the past."""
+    if not ev.get("repeat"):
+        return ev if end_dt(ev) > now else None
+    hits = _occurrences(ev, now, now + timedelta(days=_LOOKAHEAD_DAYS))
+    return min(hits, key=start_dt) if hits else None
 
 
 def _in_range(events: list[dict[str, Any]], lo: datetime, hi: datetime) -> list[dict[str, Any]]:
@@ -246,7 +288,7 @@ def _match(events: list[dict[str, Any]], key: str, now: datetime) -> tuple[Optio
     by_id = [e for e in live if e["id"].lower() == k]
     if len(by_id) == 1:
         return by_id[0], ""
-    for pool in ([e for e in live if end_dt(e) > now], live):
+    for pool in ([e for e in live if next_occurrence(e, now)], live):
         hits = [e for e in pool if _words_hit(e, k)]
         if len(hits) == 1:
             return hits[0], ""
@@ -278,7 +320,7 @@ _YEARLY_TITLE = re.compile(r"\b(?:birthdays?|b'?day|anniversar(?:y|ies))\b", re.
 def calendar(action: str = "", title: str = "", when: str = "", duration: str = "", event: str = "",
              repeat: str = "", session_id: Optional[str] = None) -> str:
     """
-    The user's calendar (synced with Google Calendar): the agenda for a day or week, or find, add, move or delete an event.
+    The user's calendar (synced with Google): agenda, or find, add, move or delete an event.
 
     Args:
         action: agenda, find, add, move or delete.
@@ -286,7 +328,8 @@ def calendar(action: str = "", title: str = "", when: str = "", duration: str = 
         when: When (add, move): 'tomorrow 3pm', 'friday 10:00', '2026-10-20 15:00'; a day alone = all day, e.g. '2026-09-19' or 'sept 19'. For agenda: 'today', 'tomorrow', 'friday', 'this week', 'this month' or 'this year'.
         duration: How long (add, move): '1h', '30m', '1h30m'. Default 1 hour.
         event: Which event (move, delete): its id from the agenda, or some of its words. For find: the words to look for.
-        repeat: 'yearly' (add) for a birthday or anniversary that comes back every year; empty = once.
+        repeat: 'yearly' (add) for a birthday or anniversary; 'weekly' with days and an end for a class or timetable
+            ('weekly mon wed until 2026-12-20'); empty = once.
     """
     act = resolve_action(action, title, when, event)
     if act not in ("agenda", "find", "add", "move", "delete"):
@@ -300,7 +343,48 @@ def calendar(action: str = "", title: str = "", when: str = "", duration: str = 
     return out
 
 
-_REPEATS = {"": "", "yearly": "yearly", "every year": "yearly", "annually": "yearly", "year": "yearly"}
+_YEARLY_WORDS = frozenset({"yearly", "every year", "annually", "year"})
+_DAY_WORD = re.compile(r"\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|days|nesday|rsday|sday|urday|rs|r|n)?s?\b")
+_REPEAT_FILLER = re.compile(r"\b(?:weekly|every|each|week|on|and|at|the|class(?:es)?)\b|&")
+_REPEAT_HELP = ("repeat must be 'yearly', 'weekly' (optionally with days and an end, e.g. 'weekly mon wed fri until "
+                "2026-12-20'), or empty")
+
+
+def parse_repeat(text: Any, now: datetime) -> tuple[str, list[int], str, str]:
+    """(kind: '' | 'yearly' | 'weekly', weekdays (0 = Monday; [] = the start's), until 'YYYY-MM-DD' or '', error).
+    'weekly', 'every monday and wednesday', 'mon wed fri until 2026-12-20', 'weekdays', 'daily until dec 20'."""
+    t = " ".join(str(text or "").lower().replace(",", " ").split())
+    if t in ("", "none", "once", "no", "never"):
+        return "", [], "", ""
+    if t in _YEARLY_WORDS:
+        return "yearly", [], "", ""
+    if re.search(r"\bmonth", t):
+        return "", [], "", f"Error: monthly repeats aren't supported; {_REPEAT_HELP}."
+    until = ""
+    m = re.search(r"\b(?:until|till|through|thru|to)\s+(.+)$", t)
+    if m:
+        raw = _spell_date(m.group(1).strip(), now)
+        try:
+            until = date.fromisoformat(raw).isoformat()
+        except ValueError:
+            return "", [], "", f"Error: couldn't read the end date '{m.group(1)}'; give it like 'until 2026-12-20'."
+        t = t[:m.start()].strip()
+    days: set[int] = set()
+    if re.search(r"\b(?:daily|every day|everyday)\b", t):
+        days.update(range(7))
+        t = re.sub(r"\b(?:daily|every day|everyday)\b", " ", t)
+    if re.search(r"\bweekdays?\b", t):
+        days.update(range(5))
+        t = re.sub(r"\bweekdays?\b", " ", t)
+    if re.search(r"\bweekends?\b", t):
+        days.update((5, 6))
+        t = re.sub(r"\bweekends?\b", " ", t)
+    days.update(_WEEKDAYS.index(next(w for w in _WEEKDAYS if w.startswith(d))) for d in _DAY_WORD.findall(t))
+    weekly_word = bool(re.search(r"\b(?:weekly|every|each|week)\b", t))
+    rest = _REPEAT_FILLER.sub(" ", _DAY_WORD.sub(" ", t)).strip()
+    if rest or not (days or weekly_word):
+        return "", [], "", f"Error: {_REPEAT_HELP}, not '{text}'."
+    return "weekly", sorted(days), until, ""
 
 
 def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat: str,
@@ -333,8 +417,8 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat
             hits = [e for e in _live(events) if _words_hit(e, key)]
             if not hits:
                 return f"No event matches '{key}'."
-            upcoming = sorted((e for e in hits if end_dt(e) > now), key=start_dt)
-            past = sorted((e for e in hits if end_dt(e) <= now), key=start_dt, reverse=True)
+            upcoming = sorted((o for o in (next_occurrence(e, now) for e in hits) if o), key=start_dt)
+            past = sorted((e for e in hits if next_occurrence(e, now) is None), key=start_dt, reverse=True)
             lines = [f"- {label(e)}" for e in upcoming[:10]] + [f"- {label(e)} (past)" for e in past[:5]]
             return f"{len(hits)} found:\n" + "\n".join(lines)
 
@@ -350,19 +434,28 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat
             span, err = parse_duration(duration)
             if err:
                 return err
-            if str(repeat or "").strip().lower() not in _REPEATS:
-                return f"Error: repeat must be 'yearly' or empty, not '{repeat}'."
+            kind, days, until, err = parse_repeat(repeat, now)
+            if err:
+                return err
+            if kind == "weekly" and days and at.weekday() not in days:  # 'from monday' with days tue/thu: the first class day
+                at += timedelta(days=min((d - at.weekday()) % 7 for d in days))
+            if until and until < f"{at:%Y-%m-%d}":
+                return f"Error: the repeat ends ({until}) before the first time ({at:%Y-%m-%d})."
             end = at + (timedelta(days=1) if all_day else span or timedelta(hours=1))
             ev = {"id": new_id(events), "title": name, "start": _stamp(at, all_day), "end": _stamp(end, all_day),
                   "location": "", "gid": "", "dirty": True, "updated": time.time()}
-            if _REPEATS[str(repeat or "").strip().lower()] or (not str(repeat or "").strip() and _YEARLY_TITLE.search(name)):
+            if kind == "yearly" or (not kind and not str(repeat or "").strip() and _YEARLY_TITLE.search(name)):
                 ev["repeat"] = "yearly"
+            elif kind == "weekly":
+                ev["repeat"], ev["days"] = "weekly", days or [at.weekday()]
+                if until:
+                    ev["until"] = until
             dup = next((e for e in _live(events) if e["title"].lower() == name.lower() and e["start"] == ev["start"]), None)
             if dup is not None:
                 return f"Already on the calendar: {label(dup)}."
             events.append(ev)
             save(state)
-            past = " (That time has already passed.)" if not all_day and at < now else ""
+            past = " (That time has already passed.)" if not all_day and at < now and not ev.get("repeat") else ""
             return f"Added {label(ev)}.{past}"
 
         ev, err = _match(events, event, now)
@@ -391,6 +484,9 @@ def _calendar(act: str, title: str, when: str, duration: str, event: str, repeat
             length = old_len if was_all_day else timedelta(days=1)
         else:
             length = span or (old_len if not was_all_day else timedelta(hours=1))
+        if ev.get("repeat") == "weekly" and at.weekday() != old_start.weekday():
+            days = [d for d in weekdays_of(ev) if d != old_start.weekday()] + [at.weekday()]
+            ev["days"] = sorted(set(days))  # the moved day replaces the one it was on
         ev.update(start=_stamp(at, all_day), end=_stamp(at + length, all_day), dirty=True, updated=time.time())
         if str(title or "").strip():
             ev["title"] = " ".join(str(title).split())
@@ -402,5 +498,7 @@ def upcoming(within: timedelta, now: Optional[datetime] = None) -> list[dict[str
     """Timed events starting from now to now + within (for the "X in 10 minutes" nudge)."""
     now = now or _now()
     with LOCK:
-        events = _live(load()["events"])
-    return sorted((e for e in events if not is_all_day(e) and now <= start_dt(e) <= now + within), key=start_dt)
+        events = load()["events"]
+    hi = now + within
+    return [e for e in _in_range(events, now, hi + timedelta(minutes=1))
+            if not is_all_day(e) and now <= start_dt(e) <= hi]   # a weekly class or a yearly event: this time's copy

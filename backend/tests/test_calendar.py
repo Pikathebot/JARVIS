@@ -1,5 +1,6 @@
 """PLAN 4.16 phase B: the calendar tool (local, offline) and its two-way sync with a fake Google Calendar."""
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -22,6 +23,7 @@ class FakeGoogleCalendar:
     def __init__(self):
         self.events: dict[str, dict] = {}
         self.n = 0
+        self.time_zone = "Asia/Kolkata"
 
     def add(self, summary, start, end, **extra):
         self.n += 1
@@ -45,9 +47,13 @@ class FakeGoogleCalendar:
             lo = datetime.fromisoformat(req.url.params["timeMin"])
             hi = datetime.fromisoformat(req.url.params["timeMax"])
             assert req.url.params["singleEvents"] == "true"
-            return httpx.Response(200, json={"items": [g for g in self.events.values() if lo <= self._start(g) < hi]})
+            return httpx.Response(200, json={"items": [g for g in self.events.values() if lo <= self._start(g) < hi],
+                                              "timeZone": self.time_zone})
         if req.url.path == base and req.method == "POST":
             body = json.loads(req.content)
+            if body.get("recurrence") and "dateTime" in body["start"] and not body["start"].get("timeZone"):
+                # Event.start.timeZone: "For recurring events this field is required"
+                return httpx.Response(400, json={"error": {"message": "Missing time zone definition for start time."}})
             self.n += 1
             gid = f"g{self.n}"
             self.events[gid] = {"id": gid, "status": "confirmed", **body}
@@ -79,6 +85,7 @@ def cal(tmp_path, monkeypatch):
 @pytest.fixture
 def google(cal, monkeypatch):
     monkeypatch.setattr(auth, "access_token", lambda: "tok")
+    monkeypatch.setattr(calendar_sync, "_time_zone", [""])
     fake = FakeGoogleCalendar()
     monkeypatch.setattr(auth, "_http", lambda: httpx.Client(transport=httpx.MockTransport(fake.handler)))
     return fake
@@ -357,8 +364,11 @@ def test_yearly_birthday_is_all_day_and_comes_back_next_year(cal):
     assert "Nothing on the calendar" in ce.calendar("agenda", when="2027-09-20")
 
 
-def test_repeat_must_be_yearly_or_empty(cal):
-    assert ce.calendar("add", title="x", when="tomorrow", repeat="monthly").startswith("Error")
+def test_repeat_must_be_yearly_weekly_or_empty(cal):
+    for bad in ("monthly", "every blue moon", "until 2026-12-20", "weekly until someday"):
+        assert ce.calendar("add", title="x", when="tomorrow 9am", repeat=bad).startswith("Error"), bad
+    assert ce.calendar("add", title="x", when="2026-11-02 9am", repeat="weekly until 2026-10-01").startswith("Error: the repeat ends")
+    assert _events() == []
 
 
 def test_yearly_series_is_pushed_as_a_recurrence_and_its_copies_are_not_imported(google):
@@ -369,3 +379,89 @@ def test_yearly_series_is_pushed_as_a_recurrence_and_its_copies_are_not_imported
     google.add("Ravi's birthday", "2026-10-26", "2026-10-27", recurringEventId=master["id"])
     assert calendar_sync.sync()["created_here"] == 0
     assert len(_events()) == 1
+
+
+
+# --- weekly classes (a timetable, PLAN 4.23b) ---
+
+@pytest.mark.parametrize("text,kind,days,until", [
+    ("weekly", "weekly", [], ""),
+    ("every week", "weekly", [], ""),
+    ("weekly mon wed fri", "weekly", [0, 2, 4], ""),
+    ("every Monday and Wednesday", "weekly", [0, 2], ""),
+    ("tues, thurs", "weekly", [1, 3], ""),
+    ("weekdays", "weekly", [0, 1, 2, 3, 4], ""),
+    ("daily until dec 20", "weekly", [0, 1, 2, 3, 4, 5, 6], "2026-12-20"),
+    ("weekly mon wed until 2026-12-20", "weekly", [0, 2], "2026-12-20"),
+    ("yearly", "yearly", [], ""),
+    ("", "", [], ""),
+])
+def test_parse_repeat(text, kind, days, until):
+    assert ce.parse_repeat(text, NOW) == (kind, days, until, "")
+
+
+def test_a_weekly_class_shows_on_its_days_until_its_end(cal):
+    out = ce.calendar("add", title="DBMS lecture", when="2026-10-19 10:00", duration="1h", repeat="weekly mon wed until 2026-10-28")
+    assert out.startswith("Added e") and "DBMS lecture (every Mon, Wed until 28 Oct 2026)" in out
+    week = ce.calendar("agenda", when="next 14 days")
+    assert [re.search(r"\w{3} \d\d \w{3} [\d:-]+", l).group(0) for l in week.splitlines()[1:]] == [
+        "Mon 19 Oct 10:00-11:00", "Wed 21 Oct 10:00-11:00", "Mon 26 Oct 10:00-11:00", "Wed 28 Oct 10:00-11:00"]
+    assert "Nothing on the calendar" in ce.calendar("agenda", when="2026-11-02")      # past its end
+    assert "Nothing on the calendar" in ce.calendar("agenda", when="2026-10-20")      # a Tuesday
+    assert len(_events()) == 1                                                         # stored once, as a series
+
+
+def test_a_class_starts_on_its_first_listed_day(cal):
+    out = ce.calendar("add", title="OS lab", when="2026-10-19 14:00", repeat="weekly tue thu")  # given a Monday
+    assert "Tue 20 Oct 14:00-15:00 OS lab (every Tue, Thu)" in out
+    assert "(That time has already passed.)" not in ce.calendar("add", title="Old class", when="2026-10-05 9am", repeat="weekly")
+
+
+def test_find_and_match_use_the_next_class_not_the_first(cal):
+    ce.calendar("add", title="Networks", when="2026-09-07 11:00", repeat="weekly mon")
+    found = ce.calendar("find", event="networks")
+    assert "Mon 19 Oct 11:00-12:00 Networks (every Mon)" in found and "(past)" not in found  # 10:00 now: 11:00 today is next
+    assert ce.calendar("delete", event="networks").startswith("Deleted:")
+
+
+def test_moving_a_weekly_class_to_another_day_moves_that_day(cal):
+    ce.calendar("add", title="Maths", when="2026-10-19 09:00", repeat="weekly mon wed")
+    out = ce.calendar("move", event="maths", when="2026-10-20 09:00")    # Monday's class to Tuesday
+    assert "(every Tue, Wed)" in out
+
+
+def test_the_nudge_announces_each_weeks_class(cal, monkeypatch):
+    from app.awareness import calendar_nudge
+    import app.routines.scheduler as sched
+
+    monkeypatch.setattr(calendar_nudge, "_announced", {})
+    monkeypatch.setattr(sched, "_toast_unless_jarvis_in_front", lambda *a: None)
+    monitor = type("M", (), {"emit": lambda self, o: o})()
+    ce.calendar("add", title="DBMS lecture", when="2026-10-19 10:05", repeat="weekly mon")
+    assert [o.detail for o in calendar_nudge.nudge_once(monitor, NOW)] == ["DBMS lecture in 5 minutes."]
+    assert [o.detail for o in calendar_nudge.nudge_once(monitor, NOW + timedelta(days=7))] == ["DBMS lecture in 5 minutes."]
+
+
+def test_weekly_series_goes_to_google_with_byday_until_and_its_time_zone(google):
+    ce.calendar("add", title="DBMS lecture", when="2026-10-19 10:00", repeat="weekly mon wed until 2026-12-20")
+    ce.calendar("add", title="Holiday camp", when="2026-10-24", repeat="weekly sat until 2026-11-14")   # all day
+    n = calendar_sync.sync()
+    assert n["created_there"] == 2 and n["failed"] == 0
+    lecture = next(g for g in google.events.values() if g["summary"] == "DBMS lecture")
+    rule = lecture["recurrence"][0]
+    assert rule.startswith("RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261220T") and rule.endswith("Z")
+    until_local = datetime.strptime(rule.split("UNTIL=")[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc).astimezone()
+    assert until_local.strftime("%Y-%m-%d %H:%M") == "2026-12-20 23:59"
+    assert lecture["start"]["timeZone"] == lecture["end"]["timeZone"] == "Asia/Kolkata"
+    camp = next(g for g in google.events.values() if g["summary"] == "Holiday camp")
+    assert camp["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=SA;UNTIL=20261114"] and "timeZone" not in camp["start"]
+    google.add("DBMS lecture", datetime(2026, 10, 21, 10), datetime(2026, 10, 21, 11), recurringEventId=lecture["id"])
+    assert calendar_sync.sync()["created_here"] == 0          # Google's copies of Jarvis's own series aren't imported
+    assert len(_events()) == 2
+
+
+def test_a_timed_yearly_series_also_carries_the_time_zone(google):
+    ce.calendar("add", title="Team anniversary", when="2026-10-26 09:00", repeat="yearly")
+    assert calendar_sync.sync()["failed"] == 0
+    g = next(g for g in google.events.values() if g["summary"] == "Team anniversary")
+    assert g["start"]["timeZone"] == "Asia/Kolkata"

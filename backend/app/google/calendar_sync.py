@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -28,6 +28,8 @@ BASE = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 PAST_DAYS, AHEAD_DAYS = 7, 92
 _lock = threading.Lock()
 _last_run = [0.0]
+_time_zone = [""]   # the calendar's own IANA zone, from the events list: Google needs it to expand a timed series
+_BYDAY = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
 
 
 def _aware(local: datetime) -> str:
@@ -74,6 +76,18 @@ def _body(ev: dict[str, Any]) -> dict[str, Any]:
         body["start"], body["end"] = {"date": ev["start"]}, {"date": ev["end"]}
     if ev.get("repeat") == "yearly":
         body["recurrence"] = ["RRULE:FREQ=YEARLY"]
+    elif ev.get("repeat") == "weekly":
+        from app.agent.tools.calendar_events import weekdays_of
+
+        rule = "RRULE:FREQ=WEEKLY;BYDAY=" + ",".join(_BYDAY[d] for d in weekdays_of(ev))
+        if ev.get("until"):
+            last = datetime.fromisoformat(ev["until"])
+            rule += (f";UNTIL={last:%Y%m%d}" if "T" not in ev["start"]   # all day: a date; timed: the day's end, in UTC
+                     else f";UNTIL={(last + timedelta(hours=23, minutes=59, seconds=59)).astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
+        body["recurrence"] = [rule]
+    if body.get("recurrence") and "T" in ev["start"] and _time_zone[0]:
+        # "For recurring events this field is required" (Calendar API, Event.start.timeZone): without it the insert fails
+        body["start"]["timeZone"] = body["end"]["timeZone"] = _time_zone[0]
     return body
 
 
@@ -88,6 +102,8 @@ def _fetch(tmin: datetime, tmax: datetime) -> dict[str, dict[str, Any]]:
         if page:
             params["pageToken"] = page
         resp = api.call("GET", BASE, params=params)
+        if resp.get("timeZone"):
+            _time_zone[0] = resp["timeZone"]
         out.update((g["id"], g) for g in resp.get("items", []) if _usable(g))
         page = resp.get("nextPageToken")
         if not page:
