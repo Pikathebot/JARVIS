@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.tools import doc_writers
+from app.agent.tools import doc_readers, doc_writers
 from app.agent.tools.doc_writers import BuildError, build_document
 from app.agent.tools.file_safety import backup_dir
 from app.agent.tools.read_file import read_file
@@ -31,6 +31,11 @@ def _write(ws: Path, name: str, content: str, **kw) -> str:
 
 def _read(ws: Path, name: str, **kw) -> str:
     return read_file(name, workspace_path=str(ws), **kw)
+
+
+def _parts_bytes(path: Path) -> dict:
+    with zipfile.ZipFile(path) as zf:
+        return {n: zf.read(n) for n in zf.namelist()}
 
 
 def _parts(path: Path) -> dict:
@@ -633,16 +638,49 @@ def test_a_picture_line_needs_a_loader_and_slides_refuse_it(tmp_path):
     assert doc_writers.parse_blocks("![x](a.png)") == [("para", "![x](a.png)")]   # without images=True: plain text
 
 
-@pytest.mark.parametrize("name", ["p.docx", "p.pdf"])
-def test_rewriting_a_document_says_when_its_pictures_are_dropped(tmp_path, name):
+def _two_pictures(tmp_path: Path, name: str) -> None:
     _png(tmp_path / "chart.png")
     _png(tmp_path / "photo.png", size=(300, 200))  # two different files: a PDF stores one used twice only once
     _write(tmp_path, name, "# Report\n\n![chart](chart.png)\n\nOld title text.\n\n![photo](photo.png)\n")
     assert doc_writers.picture_count(tmp_path / name) == 2
-    kept = _write(tmp_path, name, "# Report\n\n![chart](chart.png)\n\nNew text.\n\n![photo](photo.png)\n")
+
+
+def test_rewriting_a_pdf_says_when_its_pictures_are_dropped(tmp_path):
+    _two_pictures(tmp_path, "p.pdf")
+    kept = _write(tmp_path, "p.pdf", "# Report\n\n![chart](chart.png)\n\nNew text.\n\n![photo](photo.png)\n")
     assert "Warning" not in kept
-    text = _read(tmp_path, name)                 # read_file shows no pictures, so a rewrite from it places none
-    out = _write(tmp_path, name, text.replace("New text.", "Newer text."))
+    text = _read(tmp_path, "p.pdf")              # a PDF read shows no pictures, so a rewrite from it places none
+    out = _write(tmp_path, "p.pdf", text)
     assert "Warning: the file it replaced had 2 more pictures" in out and "previous version is saved" in out
-    assert doc_writers.picture_count(tmp_path / name) == 0
-    assert "Warning" not in _write(tmp_path, name, "Plain again.")  # nothing left to lose
+    assert doc_writers.picture_count(tmp_path / "p.pdf") == 0
+    assert "Warning" not in _write(tmp_path, "p.pdf", "Plain again.")  # nothing left to lose
+
+
+def test_a_word_rewrite_keeps_its_pictures_through_keep_markers(tmp_path):
+    _two_pictures(tmp_path, "p.docx")
+    before = _parts_bytes(tmp_path / "p.docx")
+    text = _read(tmp_path, "p.docx")
+    assert text.splitlines()[:6] == ["[Word document]", doc_readers.KEEP_NOTE, "# Report", "![chart](keep:image1.png)",
+                                     "Old title text.", "![photo](keep:image2.png)"]
+    out = _write(tmp_path, "p.docx", text.replace("Old title text.", "New title text."))
+    assert "Warning" not in out and "2 pictures" in out
+    after = _parts_bytes(tmp_path / "p.docx")
+    assert after["word/media/image1.png"] == before["word/media/image1.png"]
+    assert re.findall(rb'<wp:extent [^>]*>', after["word/document.xml"]) == \
+        re.findall(rb'<wp:extent [^>]*>', before["word/document.xml"])        # the size they had, not re-fitted
+    second = _read(tmp_path, "p.docx")
+    assert second == text.replace("Old title text.", "New title text.")
+    # Deleting a marker line removes that picture, and the result says one went.
+    out = _write(tmp_path, "p.docx", "\n".join(l for l in second.splitlines() if l != "![photo](keep:image2.png)"))
+    assert "Warning: the file it replaced had 1 more picture" in out
+    assert doc_writers.picture_count(tmp_path / "p.docx") == 1
+
+
+@pytest.mark.parametrize("target, says", [("new.docx", "is a new file"), ("p.pdf", "not a Word file")])
+def test_keep_markers_only_work_on_the_word_file_they_came_from(tmp_path, target, says):
+    _two_pictures(tmp_path, "p.docx")
+    (tmp_path / "p.pdf").write_bytes(b"%PDF-1.4 placeholder")
+    out = _write(tmp_path, target, _read(tmp_path, "p.docx"))
+    assert out.startswith("Error: could not build") and says in out, out
+    out = _write(tmp_path, "p.docx", "Intro\n\n![x](keep:image9.png)\n")
+    assert "has no picture 'keep:image9.png'" in out

@@ -496,3 +496,54 @@ def test_columns_past_the_limit_are_announced_so_a_write_back_is_refused(ws):
     assert "cells past column CV not read" in text and doc_readers.CUT_RE.search(text)
     with pytest.raises(BuildError, match="wider than read_file shows"):
         build_document(".xlsx", text)
+
+
+# ---------------- Word pictures as keep: markers ----------------
+_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+       'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+       'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+       'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+       'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:v="urn:schemas-microsoft-com:vml"')
+
+
+def _drawing(rid: str, descr: str = "", anchor: bool = False, uri: str = "http://schemas.openxmlformats.org/drawingml/2006/picture") -> str:
+    tag = "wp:anchor" if anchor else "wp:inline"
+    blip = f'<a:blip r:embed="{rid}"/>' if rid else ""
+    return (f'<w:drawing><{tag}><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="P" descr="{descr}"/>'
+            f'<a:graphic><a:graphicData uri="{uri}">{blip}</a:graphicData></a:graphic></{tag}></w:drawing>')
+
+
+def test_word_pictures_read_as_keep_markers_in_place(tmp_path):
+    body = (
+        '<w:p><w:r><w:t>Intro text</w:t></w:r></w:p>'
+        f'<w:p><w:r>{_drawing("rId5", "Sales [2026] (draft)")}</w:r></w:p>'                    # a picture alone
+        f'<w:p><w:r>{_drawing("rId6", anchor=True)}</w:r><w:r><w:t>Floating, before text</w:t></w:r></w:p>'
+        '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">' + _drawing("rId5") + '</mc:Choice>'
+        '<mc:Fallback><w:pict><v:shape><v:imagedata r:id="rId5"/></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>'
+        f'<w:p><w:r>{_drawing("", uri="http://schemas.openxmlformats.org/drawingml/2006/chart")}</w:r></w:p>'
+        '<w:p><w:r><w:pict><v:shape><v:imagedata r:id="rId7"/></v:shape></w:pict></w:r></w:p>'   # an older Word file
+        '<w:p><w:r><w:t>Outro</w:t></w:r></w:p>')
+    rels = ('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>'
+            '<Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/photo.jpeg"/>'
+            '<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="/word/media/old.wmf"/>'
+            '<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="http://x/y.png" TargetMode="External"/>'
+            '</Relationships>')
+    path = _zip(tmp_path / "pics.docx", {"word/document.xml": f'<?xml version="1.0"?><w:document {_NS}><w:body>{body}</w:body></w:document>',
+                                          "word/_rels/document.xml.rels": rels})
+    text = doc_readers.read_document(path, "pics.docx")
+    assert text.splitlines() == [
+        "[Word document]", doc_readers.KEEP_NOTE, "Intro text",
+        "![Sales 2026 draft](keep:image1.png)",          # brackets in the alt text would end the marker early
+        "![](keep:photo.jpeg)", "Floating, before text",  # the picture came first in its paragraph
+        "![](keep:image1.png)",                           # Choice and Fallback are one picture
+        "[chart: not kept if this document is rewritten]",
+        "![](keep:old.wmf)", "Outro"]
+    from app.agent.tools.doc_writers import prepare_text
+    back, readback = prepare_text(text)
+    assert readback and doc_readers.KEEP_NOTE not in back and "[chart:" not in back and "![](keep:old.wmf)" in back
+
+
+def test_a_word_file_without_pictures_reads_as_before(tmp_path):
+    text = doc_readers.read_document(_docx(tmp_path / "plain.docx"), "plain.docx")
+    assert "keep:" not in text and doc_readers.KEEP_NOTE not in text

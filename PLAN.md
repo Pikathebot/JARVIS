@@ -2935,10 +2935,20 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     where read_file reads without asking. Anything outside, a web address, a missing file, or a file that isn't really an
     image is refused with a sentence, not asked about: a picture is read silently into a file that may leave the PC, so
     injected text must not be able to pull a private file in. A deck refuses picture lines (not supported there yet).
-    **Pictures are lost on a rewrite:** read_file doesn't show them, so read -> change -> write of a `.docx`/`.pdf` places
-    none. The write still happens (the old version is backed up), but the result now ends "Warning: the file it replaced
-    had N more pictures than this text places ... Tell the user." (`picture_count` vs the `![...]` lines). The real fix is
-    the in-place editing below.
+    **Keeping a Word file's pictures on a rewrite (the user's call, 2026-11-05): BUILT, tests pass on Linux, NOT seen in Word.**
+    `read_file` shows each picture where it sits as `![alt](keep:image1.png)` (the part's name in `word/media/`), with one
+    note line at the top saying what the lines mean; charts and SmartArt show as `[chart: not kept if this document is
+    rewritten]`. `write_file` replacing that same `.docx` copies a `keep:` picture back from the old file at the size it had
+    there (its `wp:extent`), with its own content type, so read -> change -> write keeps pictures, a deleted line removes
+    one, a moved line moves it. A `keep:` line can only take from the file being replaced: a new file or a PDF refuses it
+    (so it reads nothing new), and the notes are stripped on readback. Handled: floating (`wp:anchor`) pictures (they come
+    back inline, centred), `mc:AlternateContent` (Choice and Fallback are one picture), VML pictures in older files, alt
+    text with brackets. Checked with a python-docx file read, edited and rewritten: same picture, same 3 x 1.5 in size,
+    LibreOffice renders it. Still lost on a rewrite: the document's own styles and layout (it is rebuilt, see the handoff),
+    pictures inside table cells, charts. **PDFs:** a PDF read shows no pictures, so a rewrite places none; the write
+    still happens (backed up) and the result ends "Warning: the file it replaced had N more pictures than this text places
+    ... Tell the user." (`picture_count` vs the `![...]` lines). The same warning covers a Word picture whose line was
+    deleted.
     Prompt head: the `write_file` docstring gained "docx/pdf: ![](x.png) = picture" and "Automatically creates any missing
     parent directories" became "Makes missing folders." (WORKSPACE 38649 of 38650, no raise).
   - **Not done:** pictures in decks, themes/layout choice, animations; links, headers/footers and cell styling beyond the header
@@ -2949,9 +2959,10 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     (a) when `write_file` targets an existing `.docx`, keep the whole package (styles, numbering, headers/footers, media,
     settings, `sectPr`) and replace only `word/document.xml`'s body; (b) diff the reader's rendering of each body block
     (`doc_readers._w_paragraph` / `_w_table`, one line per paragraph, `| |` rows per table row) against the new text, line by
-    line (difflib), and keep the original XML of every unchanged paragraph; (c) blocks the reader skips (empty paragraphs,
-    picture-only paragraphs, section breaks) are anchors that stay where they are, dropped only when both neighbours are deleted;
-    a paragraph holding a `w:sectPr` is emptied, never deleted; (d) a changed paragraph keeps its `pPr`, and its runs are
+    line (difflib), and keep the original XML of every unchanged paragraph; (c) pictures come through the diff as their `keep:` lines
+    (above), so they move and go like text, and an unchanged one keeps its original drawing XML (a floating picture stays
+    floating); blocks the reader still skips (empty paragraphs, section breaks, shapes) are anchors that stay where they are,
+    dropped only when both neighbours are deleted; a paragraph holding a `w:sectPr` is emptied, never deleted; (d) a changed paragraph keeps its `pPr`, and its runs are
     edited by a character diff so unchanged text keeps its run formatting; (e) a new heading uses the document's own style id,
     looked up in `styles.xml` by `w:name` "heading N" (ids are localized, e.g. German Word); a new bullet copies the `pPr`
     of the nearest list paragraph, or needs a `numId` added to `numbering.xml` (plus its relationship and content type when
@@ -2959,8 +2970,7 @@ already covers `read_file`). New `app/agent/tools/doc_readers.py`, called before
     lists prefixes by name, so register every prefix from the original (`iterparse` start-ns) and put the original root
     start tag back -- Word reports "unreadable content" otherwise, and LibreOffice does not, so **check every case in Word**;
     (g) a table whose rows change shape is rebuilt with the original `tblPr`. Say in the result what still could not be kept
-    (run formatting and hyperlinks inside an edited paragraph). Also worth deciding there: whether the reader should show a
-    picture as a marker the writer keeps, so a rewrite without the in-place path stops dropping pictures silently.
+    (run formatting and hyperlinks inside an edited paragraph).
 - **Other formats: BUILT 2026-11-03 (cloud session), tests pass on Linux, NOT seen on device** (item 3, reading only).
   `read_file` also reads **OpenDocument** (`.odt` headings/lists/tables with footnotes left out; `.ods` rows with their numbers,
   gaps kept, dates/booleans typed, formulas as `=SUM(B2:B4) -> 7` with `[.B2]`/`$Sheet.B2` converted to Excel form and `;` to `,`;
@@ -3023,7 +3033,7 @@ An optional `data/launch_profiles.json` (git-ignored, hand-edited for now; forma
 `{"default": name, "profiles": [{"name", "min_free_mb", "main_model", "fast_model", "main_ctx", "fast_ctx", "projector"}]}`.
 At each launch (`ensure_running`, step 2) the manager reads free VRAM from NVML (`vram_free_provider`, wired in `main.py`
 to the governor) and takes the profile with the highest `min_free_mb` the card reaches; with no reading, the `default`
-(else the first listed); below every edge, the smallest. **Precedence**, decided here, for the user to confirm: model =
+(else the first listed); below every edge, the smallest. **Precedence** (the user confirmed it, 2026-11-05): model =
 a UI pick (`data/models.json`) > the profile > `.env`; context = a `ctx_size` given in code > the profile > `.env`;
 `projector: false` turns the projector off for that bucket. A profile naming a missing file keeps the configured model.
 A bad file is logged, ignored, and reported in `/api/models` -> `launch_profile.error`; it never stops a launch. The ladder

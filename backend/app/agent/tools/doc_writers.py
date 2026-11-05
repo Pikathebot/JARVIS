@@ -7,8 +7,9 @@ exists: replacing a file still asks and backs up first. CSV needs nothing here (
 The text conventions are the ones ``doc_readers`` prints, and ``prepare_text`` takes ``read_file``'s own output back (its
 header line, page and sheet markers, row numbers, ``=F -> cached value``), so read -> change -> write works. What does not survive a
 round trip: numbered lists come back as bullets, page breaks, hidden-sheet state, fonts/colours/column widths, cached formula
-values (Excel recalculates), anything the reader doesn't show (pictures, headers/footers, comments) -- so rewriting a Word
-file that has pictures drops them (PLAN 4.27: in-place editing is for a local session). Text that ``read_file`` cut
+values (Excel recalculates), anything the reader doesn't show (headers/footers, comments, a PDF's pictures). A Word
+file's pictures do survive: the reader shows them as ``![alt](keep:image1.png)`` and the writer copies them back from the
+file being replaced. The rest of a Word file's own formatting does not (PLAN 4.27: in-place editing). Text that ``read_file`` cut
 (``more rows not read``, a line range, ``characters omitted``) is refused, because writing it back would drop the unread part.
 
 * Word and PDF: Markdown, one paragraph per line. ``#``..``######`` headings, ``-``/``*`` bullets, ``1.`` numbered items,
@@ -197,6 +198,63 @@ def prepare_text(text: str, keep_slides: bool = False) -> tuple:
 
 # ---------------------------------------------------------------- pictures
 IMAGE_TYPES = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif"}
+_CONTENT_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg", "gif": "image/gif", "bmp": "image/bmp",
+                  "tif": "image/tiff", "tiff": "image/tiff", "emf": "image/x-emf", "wmf": "image/x-wmf", "svg": "image/svg+xml"}
+
+
+class Picture(tuple):
+    """(data, ext, content type, emu): ``emu`` is (cx, cy) for a picture kept from the file being replaced (its size
+    there), None for a new one (sized from its pixels)."""
+    def __new__(cls, data: bytes, ext: str, content_type: str, emu: Optional[tuple] = None):
+        return super().__new__(cls, (data, ext, content_type, emu))
+
+    data = property(lambda self: self[0])
+    ext = property(lambda self: self[1])
+    content_type = property(lambda self: self[2])
+    emu = property(lambda self: self[3])
+
+
+def _kept_picture(doc_path: Path, name: str) -> Picture:
+    """A ``keep:`` picture: copied out of the Word file being replaced, with the size it had there."""
+    from xml.etree import ElementTree as ET
+
+    from app.agent.tools import doc_readers as dr
+
+    shown = f"{dr.KEEP_PREFIX}{name}"
+    if doc_path.suffix.lower() != ".docx" or not doc_path.is_file():
+        what = "is a new file" if not doc_path.exists() else "is not a Word file"
+        raise BuildError(f"'{shown}' is a picture from the Word file being replaced, and '{doc_path.name}' {what}. Remove "
+                         "the keep: lines, or add pictures from image files in the workspace")
+    try:
+        with zipfile.ZipFile(doc_path) as zf:
+            parts = dr.docx_picture_parts(zf)
+            member = next((m for m in parts.values() if dr.keep_name(m) == name), None)
+            if member is None:
+                raise BuildError(f"'{doc_path.name}' has no picture '{shown}' (read it again to see its pictures)")
+            if zf.getinfo(member).file_size > dr.MAX_MEMBER_BYTES:
+                raise BuildError(f"the picture '{shown}' is too large to copy")
+            data = zf.read(member)
+            ext = member.rsplit(".", 1)[-1].lower() if "." in member.rsplit("/", 1)[-1] else "png"
+            ctype = _CONTENT_TYPES.get(ext, "application/octet-stream")
+            types = dr._xml(zf, "[Content_Types].xml", optional=True)
+            for t in (types if types is not None else []):
+                if t.get("PartName", "").lstrip("/") == member or (t.get("Extension", "").lower() == ext and "PartName" not in t.attrib):
+                    ctype = t.get("ContentType") or ctype
+                    if t.get("PartName"):
+                        break
+            emu = None
+            ids = {rid for rid, m in parts.items() if m == member}
+            for drawing in dr._xml(zf, "word/document.xml").iter(f"{dr._W}drawing"):
+                blip = next(drawing.iter(f"{dr._A}blip"), None)
+                extent = next(drawing.iter(f"{dr._WP}extent"), None)
+                if blip is not None and blip.get(f"{dr._R}embed") in ids and extent is not None:
+                    emu = (int(extent.get("cx")), int(extent.get("cy")))
+                    break
+    except BuildError:
+        raise
+    except (zipfile.BadZipFile, KeyError, ValueError, ET.ParseError, dr.DocumentError) as e:
+        raise BuildError(f"the pictures of '{doc_path.name}' could not be read ({e})")
+    return Picture(data, ext, ctype, emu)
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGES = 50
 _URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://|data:|www\.)", re.I)
@@ -211,7 +269,9 @@ def workspace_image_loader(doc_path: Path, ws_root: Path):
 
     root = ws_root.resolve()
 
-    def load(ref: str) -> tuple:
+    def load(ref: str) -> Picture:
+        if ref.lower().startswith("keep:"):
+            return _kept_picture(doc_path, ref[len("keep:"):].strip())
         if _URL.match(ref):
             raise BuildError(f"the picture '{ref}' is a web address; a picture must be an image file in the workspace "
                              "(save it there first)")
@@ -229,7 +289,7 @@ def workspace_image_loader(doc_path: Path, ws_root: Path):
         size = found.stat().st_size
         if size > MAX_IMAGE_BYTES:
             raise BuildError(f"the picture '{ref}' is {size // (1024 * 1024)} MB, over the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit")
-        return found.read_bytes(), kind
+        return Picture(found.read_bytes(), kind, _CONTENT_TYPES[kind])
 
     return load
 
@@ -258,7 +318,8 @@ def _fit(w_in: float, h_in: float, max_w: float, max_h: float) -> tuple:
 
 
 def _load_images(blocks: list, image_loader) -> dict:
-    """{path: (bytes, kind, width px, height px, dpi)} for every picture the blocks name, loaded once each."""
+    """{path: (Picture, width px, height px, dpi)} for every picture the blocks name, loaded once each (pixels and dpi are
+    None for a kept picture, which keeps its size in EMU)."""
     refs = list(dict.fromkeys(b[2] for b in blocks if b[0] == "image"))
     if not refs:
         return {}
@@ -268,8 +329,10 @@ def _load_images(blocks: list, image_loader) -> dict:
         raise BuildError(f"the document names {len(refs)} pictures, over the {MAX_IMAGES} limit")
     out = {}
     for ref in refs:
-        data, kind = image_loader(ref)
-        out[ref] = (data, kind) + _picture(data, ref)
+        pic = image_loader(ref)
+        if not isinstance(pic, Picture):  # (bytes, kind) from a simple loader
+            pic = Picture(pic[0], pic[1], _CONTENT_TYPES.get(pic[1], "image/png"))
+        out[ref] = (pic,) + ((None, None, None) if pic.emu else _picture(pic.data, ref))
     return out
 
 
@@ -345,11 +408,15 @@ _DOCX_TEXT_WIDTH_IN = (11906 - 2 * 1440) / 1440  # A4 less the two 1-inch margin
 _DOCX_MAX_PICTURE_HEIGHT_IN = 8.0
 
 
-def _w_picture(n: int, rid: str, alt: str, ref: str, w_px: int, h_px: int, dpi: float) -> str:
-    """One centred paragraph holding an inline picture, in the shape python-docx writes (which Word opens)."""
-    w_in, h_in = _fit(w_px / dpi, h_px / dpi, _DOCX_TEXT_WIDTH_IN, _DOCX_MAX_PICTURE_HEIGHT_IN)
-    cx, cy = max(1, round(w_in * _EMU_PER_INCH)), max(1, round(h_in * _EMU_PER_INCH))
-    name = _attr(Path(ref).name or f"picture{n}")
+def _w_picture(n: int, rid: str, alt: str, ref: str, w_px, h_px, dpi, emu: Optional[tuple] = None) -> str:
+    """One centred paragraph holding an inline picture, in the shape python-docx writes (which Word opens). A kept
+    picture has its size from the old file (``emu``); a new one is sized from its pixels to fit the page."""
+    if emu:
+        cx, cy = emu
+    else:
+        w_in, h_in = _fit(w_px / dpi, h_px / dpi, _DOCX_TEXT_WIDTH_IN, _DOCX_MAX_PICTURE_HEIGHT_IN)
+        cx, cy = max(1, round(w_in * _EMU_PER_INCH)), max(1, round(h_in * _EMU_PER_INCH))
+    name = _attr(Path(ref.split(":", 1)[-1]).name or f"picture{n}")
     return ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
             '<wp:inline xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
             'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
@@ -391,11 +458,11 @@ def _build_docx(text: str, image_loader=None) -> tuple:
             body.append("<w:p/>")  # Word needs a paragraph between two tables and one at the end
             n_table += 1
         elif kind == "image":
-            data, ext, w_px, h_px, dpi = pictures[b[2]]
+            pic, w_px, h_px, dpi = pictures[b[2]]
             if b[2] not in media:
-                media[b[2]] = (f"rIdImg{len(media) + 1}", f"media/image{len(media) + 1}.{ 'jpeg' if ext == 'jpeg' else ext }")
+                media[b[2]] = (f"rIdImg{len(media) + 1}", f"media/image{len(media) + 1}.{pic.ext}")
             n_pictures += 1
-            body.append(_w_picture(n_pictures, media[b[2]][0], b[1], b[2], w_px, h_px, dpi))
+            body.append(_w_picture(n_pictures, media[b[2]][0], b[1], b[2], w_px, h_px, dpi, pic.emu))
         if kind not in ("table", "image"):
             n_para += 1
         prev = kind
@@ -413,8 +480,9 @@ def _build_docx(text: str, image_loader=None) -> tuple:
                     f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="{_CT_NS}">'
                     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                     '<Default Extension="xml" ContentType="application/xml"/>'
-                    + "".join(f'<Default Extension="{e}" ContentType="image/{e}"/>'
-                              for e in sorted({part.rsplit(".", 1)[1] for _, part in media.values()}))
+                    + "".join(f'<Default Extension="{e}" ContentType="{_attr(ct)}"/>' for e, ct in sorted(
+                        {part.rsplit(".", 1)[1]: pictures[ref][0].content_type for ref, (_, part) in media.items()}.items())
+                        if e not in ("rels", "xml"))
                     + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
                     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
                     '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'
@@ -432,7 +500,7 @@ def _build_docx(text: str, image_loader=None) -> tuple:
         zf.writestr("word/styles.xml", _DOCX_STYLES)
         zf.writestr("word/numbering.xml", numbering)
         for ref, (_, part) in media.items():
-            zf.writestr(f"word/{part}", pictures[ref][0])
+            zf.writestr(f"word/{part}", pictures[ref][0].data)
     summary = f"a Word document ({n_para} paragraph{'s' if n_para != 1 else ''}"
     summary += f", {n_table} table{'s' if n_table != 1 else ''}" if n_table else ""
     summary += f", {n_pictures} picture{'s' if n_pictures != 1 else ''}" if n_pictures else ""
@@ -1074,9 +1142,9 @@ def _build_pdf(text: str, image_loader=None) -> tuple:
             story.extend([t, Spacer(1, 8)])
             n_tables += 1
         elif kind == "image":
-            data, _, w_px, h_px, dpi = pictures[b[2]]
+            pic, w_px, h_px, dpi = pictures[b[2]]
             w_pt, h_pt = _fit(w_px / dpi * 72, h_px / dpi * 72, A4[0] - 40 * mm, 200 * mm)
-            img = Image(io.BytesIO(data), width=w_pt, height=h_pt)
+            img = Image(io.BytesIO(pic.data), width=w_pt, height=h_pt)
             img.hAlign = "CENTER"
             story.extend([img, Spacer(1, 8)])
             n_pictures += 1

@@ -42,6 +42,11 @@ _P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+_VML = "{urn:schemas-microsoft-com:vml}"
+_CHART_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+_DIAGRAM_URI = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 
 
 # What the readers print around a document's text. doc_writers.prepare_text strips exactly these when a read_file result is
@@ -51,7 +56,13 @@ HEADER_RE = re.compile(
     r"|EPUB(?::.*)?, \d+ sections?|RTF document)\]\s*$")
 SCAFFOLD_RE = re.compile(
     r"^(?:--- (?:page|section|slide) \d+ ---|\(empty\)|\(no text (?:on this page|on this slide|in it)\)|\(too large to read\)"
-    r"|\(row number first, then the columns .*|\(sheet data is missing\)|\(slide data is missing\))\s*$")
+    r"|\(row number first, then the columns .*|\(sheet data is missing\)|\(slide data is missing\)"
+    r"|\(Each !\[\.\.\.\]\(keep:\.\.\.\) line is a picture in this file.*|\[(?:chart|diagram): not kept if this document is rewritten\])\s*$")
+# A Word file's pictures, as read_file shows them: "![alt](keep:image1.png)". write_file, replacing that same file, copies
+# the picture back from it (doc_writers.workspace_image_loader), so read -> change -> write keeps the pictures.
+KEEP_PREFIX = "keep:"
+KEEP_NOTE = ("(Each ![...](keep:...) line is a picture in this file. Writing the document back to this same file keeps "
+             "the picture where its line is; delete the line to remove it.)")
 CUT_RE = re.compile(r"more (?:rows|pages|sections) not read|\bcut at [\d,]+ characters|characters omitted from the middle"
                     r"|more chars not kept in history|cells past column [A-Z]+ not read")
 
@@ -266,28 +277,94 @@ def _w_table(tbl: ET.Element) -> list:
     return rows
 
 
+def keep_name(target: str) -> str:
+    """How a picture part is named in a keep: marker: 'media/image1.png' -> 'image1.png' (names in media/ are unique)."""
+    target = target.lstrip("/")
+    if target.startswith("word/"):
+        target = target[len("word/"):]
+    return target[len("media/"):] if target.startswith("media/") and "/" not in target[len("media/"):] else target
+
+
+def docx_picture_parts(zf: zipfile.ZipFile) -> dict:
+    """{relationship id: zip member} of the pictures word/document.xml embeds."""
+    out = {}
+    root = _xml(zf, "word/_rels/document.xml.rels", optional=True)
+    for r in (root.iter(f"{_REL}Relationship") if root is not None else []):
+        if (r.get("Type") or "").endswith("/image") and r.get("TargetMode") != "External" and r.get("Target"):
+            out[r.get("Id")] = _join_target("word", r.get("Target"))
+    return out
+
+
+_ALT_UNSAFE = re.compile(r"[\[\]()\s]+")
+
+
+def _walk(el: ET.Element):
+    """Document order, skipping mc:Fallback (the old-Word copy of a drawing that mc:Choice already holds)."""
+    yield el
+    for child in el:
+        if child.tag != _MC_FALLBACK:
+            yield from _walk(child)
+
+
+def _w_pictures(p: ET.Element, pictures: dict) -> tuple:
+    """(marker lines for the paragraph's pictures and charts, whether the first comes before any text)."""
+    lines, first_is_before_text, seen_text = [], False, False
+    for el in _walk(p):
+        line = None
+        if el.tag == f"{_W}t" and (el.text or "").strip():
+            seen_text = True
+        elif el.tag == f"{_W}drawing":
+            blip = next(el.iter(f"{_A}blip"), None)
+            rid = blip.get(f"{_R}embed") if blip is not None else None
+            uri = next((g.get("uri") for g in el.iter(f"{_A}graphicData")), "")
+            if rid in pictures:
+                doc_pr = next(el.iter(f"{_WP}docPr"), None)
+                alt = (doc_pr.get("descr") or doc_pr.get("title") or "") if doc_pr is not None else ""
+                alt = _ALT_UNSAFE.sub(" ", alt).strip()  # brackets would end the marker early
+                line = f"![{alt}]({KEEP_PREFIX}{keep_name(pictures[rid])})"
+            elif uri == _CHART_URI:
+                line = "[chart: not kept if this document is rewritten]"
+            elif uri == _DIAGRAM_URI:
+                line = "[diagram: not kept if this document is rewritten]"
+        elif el.tag == f"{_VML}imagedata" and el.get(f"{_R}id") in pictures:  # a picture in an older Word file
+            line = f"![]({KEEP_PREFIX}{keep_name(pictures[el.get(f'{_R}id')])})"
+        if line:
+            if not lines and not seen_text:
+                first_is_before_text = True
+            lines.append(line)
+    return lines, first_is_before_text
+
+
 def _read_docx(path: Path) -> str:
     with _open_zip(path) as zf:
         root = _xml(zf, "word/document.xml")
+        pictures = docx_picture_parts(zf)
     body = root.find(f"{_W}body")
     if body is None:
         raise DocumentError("it has no document body")
     lines = ["[Word document]"]
+    kept = False
+
+    def paragraph(p: ET.Element) -> None:
+        nonlocal kept
+        t = _w_paragraph(p)
+        marks, before = _w_pictures(p, pictures)
+        kept = kept or any(m.startswith("![") for m in marks)
+        lines.extend(x for x in ((marks + [t]) if before else ([t] + marks)) if x)
+
     for child in body:
         if child.tag == f"{_W}p":
-            t = _w_paragraph(child)
-            if t:
-                lines.append(t)
+            paragraph(child)
         elif child.tag == f"{_W}tbl":
             lines.extend(_w_table(child))
         elif child.tag == f"{_W}sdt":  # content controls wrap paragraphs
             content = child.find(f"{_W}sdtContent")
             for p in (content.iter(f"{_W}p") if content is not None else []):
-                t = _w_paragraph(p)
-                if t:
-                    lines.append(t)
+                paragraph(p)
     if len(lines) == 1:
         return "[Word document]\n(no text in it)"
+    if kept:
+        lines.insert(1, KEEP_NOTE)
     return "\n".join(lines)
 
 
