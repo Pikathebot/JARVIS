@@ -1,4 +1,6 @@
 """The fixes from the "what games do I have?" turn (PLAN 4.23c, thread 2026-10-23 18:31-18:42)."""
+import os
+
 import pytest
 
 from app.agent.orchestrator import _STUCK_REPLY, extract_tool_calls_from_text
@@ -75,6 +77,10 @@ def test_freeform_can_list_a_folder_and_the_drives():
 
     assert "list_directory" not in WORKSPACE_BOUND_TOOLS
     assert "list_directory" in [t.__name__ for t in tools_for_space("FREEFORM")]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drive letters are Windows-only")
+def test_the_drives_are_listed():
     assert list_directory("drives").startswith("Drives on this PC")
 
 

@@ -541,9 +541,8 @@ def test_execute_command_timeout_returns_the_output_so_far(tmp_path, monkeypatch
     """A command that overruns still hands back what it printed before it was stopped."""
     from app.agent.tools import sample_tools
     monkeypatch.setattr(sample_tools, "COMMAND_TIMEOUT_SECONDS", 4)
-    result = sample_tools.execute_command(
-        "Write-Output 'first line'; [Console]::Out.Flush(); Start-Sleep -Seconds 30",
-        workspace_path=str(tmp_path),
-    )
+    command = ("Write-Output 'first line'; [Console]::Out.Flush(); Start-Sleep -Seconds 30" if os.name == "nt"
+               else "echo 'first line'; sleep 30")   # PowerShell on Windows, /bin/sh elsewhere
+    result = sample_tools.execute_command(command, workspace_path=str(tmp_path))
     assert "timed out after 4s" in result
     assert "first line" in result

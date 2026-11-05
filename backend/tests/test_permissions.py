@@ -1,5 +1,6 @@
 from fake_providers import ClientBackedProvider, use_model_client
 import os
+from pathlib import Path
 import uuid
 import pytest
 import httpx
@@ -95,7 +96,9 @@ def test_safe_command_paths_must_stay_in_the_workspace(tmp_path):
     assert evaluate_command_argument_risk("git log -n 5 --oneline", workspace_root=tmp_path) == RiskTier.LOW_RISK
     outside = tmp_path.parent / "secret.txt"
     assert evaluate_command_argument_risk(f"cat {outside}", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
-    assert evaluate_command_argument_risk("type ..\\secret.txt", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
+    assert evaluate_command_argument_risk("cat ../secret.txt", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
+    if os.name == "nt":  # a backslash separates folders only on Windows (elsewhere it is part of a file name)
+        assert evaluate_command_argument_risk("type ..\\secret.txt", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
     assert evaluate_command_argument_risk("cat ~/.ssh/id_rsa", workspace_root=tmp_path) == RiskTier.CONFIRMATION_REQUIRED
     # Text commands don't take paths: echo of a path string is harmless.
     assert evaluate_command_argument_risk(r"echo C:\Windows", workspace_root=tmp_path) == RiskTier.LOW_RISK
@@ -433,8 +436,9 @@ def test_approval_token_strictly_per_action_no_bypass():
     assert dec3.allowed is False
 
     # 4. Passing filename in approved_ids does NOT bypass
-    write_args1 = {"file_path": "C:/outside/target.py", "content": "print(1)"}
-    write_args2 = {"file_path": "D:/other/target.py", "content": "print(2)"}
+    root = Path(os.path.abspath(os.sep))   # C:\ on Windows, / elsewhere: absolute on both, so outside any workspace
+    write_args1 = {"file_path": str(root / "outside" / "target.py"), "content": "print(1)"}
+    write_args2 = {"file_path": str(root / "other" / "target.py"), "content": "print(2)"}
     dec_file = evaluate_tool_permission("write_file", write_args2, approved_action_ids=["target.py"], chat_mode=ChatMode.WORKSPACE)
     assert dec_file.allowed is False
 

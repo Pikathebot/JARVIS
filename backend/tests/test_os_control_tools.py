@@ -198,6 +198,7 @@ def test_launch_app_execution():
         assert "PID: 4321" in res
 
 
+@pytest.mark.skipif(os.name != "nt", reason="window focus uses the Win32 API")
 def test_focus_app_missing():
     """focus_app returns descriptive error when target window is not open."""
     res = focus_app("NonExistentSuperFakeWindowTitle12345")
@@ -279,6 +280,7 @@ def test_list_processes_execution():
     assert "Memory (MB)" in output
 
 
+@pytest.mark.skipif(os.name != "nt", reason="toasts go through the Windows notification system")
 def test_send_toast_execution():
     """send_toast executes without error and handles urgent flag."""
     with patch("app.agent.tools.notify.HAS_WINOTIFY", False), \
@@ -301,6 +303,7 @@ def test_no_governor_scaffolding_imported():
     assert "app.governor" not in source
 
 
+@pytest.mark.skipif(os.name != "nt", reason="COM exists only on Windows")
 def test_audio_initialises_com_once_on_each_worker_thread():
     """Tools run on a thread pool; pycaw on a thread without COM failed with "CoInitialize has
     not been called" (on device, 2026-10-01, intermittently)."""

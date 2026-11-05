@@ -71,3 +71,14 @@ def no_judge_handles(monkeypatch):
 
     for name in ("codeforces_handle", "leetcode_username", "atcoder_user"):
         monkeypatch.setattr(settings, name, "")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def database_schema():
+    """The app migrates its database when it starts; tests that post to it through httpx's ASGITransport skip that startup,
+    so they only found tables if an earlier test file had started the app. Migrate once here, whichever file runs first
+    (one test file alone is how a cloud session usually runs them)."""
+    from app.main import run_db_migrations
+
+    run_db_migrations()
+    yield

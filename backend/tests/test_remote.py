@@ -146,7 +146,12 @@ def test_remote_turn_approval_token_still_works(remote_turn):
     assert evaluate_tool_permission("focus_app", {"name": "Spotify"}, approved_action_ids=[d.action_id]).allowed
 
 
-def test_remote_turn_labels_cards_that_ask_anyway(remote_turn):
+def test_remote_turn_labels_cards_that_ask_anyway(remote_turn, monkeypatch):
+    import psutil
+
+    class Proc:  # one running Notepad: closing a program that isn't running asks nothing at all (the call can only fail)
+        info = {"pid": 4321, "name": "notepad.exe"}
+    monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter([Proc()]))
     d = evaluate_tool_permission("kill_process", {"pid_or_name": "notepad.exe"})
     assert not d.allowed and d.reason.startswith("From your phone:")
 
