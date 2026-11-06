@@ -354,23 +354,6 @@ def test_confirmation_timeout_denies_by_default():
     assert settings.confirmation_timeout_action == "deny"
 
 
-def test_rate_limit_per_tool_enforced():
-    from app.agent.permissions import RATE_LIMITS, check_rate_limit
-    original_limits = dict(RATE_LIMITS)
-    try:
-        RATE_LIMITS["web_search"] = 2
-        assert check_rate_limit("web_search", 0) is True
-        assert check_rate_limit("web_search", 1) is True
-        assert check_rate_limit("web_search", 2) is False
-        assert check_rate_limit("web_search", 3) is False
-
-        # Unrestricted tools pass
-        assert check_rate_limit("fetch_url", 10) is True
-    finally:
-        RATE_LIMITS.clear()
-        RATE_LIMITS.update(original_limits)
-
-
 def test_action_token_reverified_on_each_call_in_chain():
     """Verify action token approval on one tool call does not leak to subsequent calls in chain."""
     call1 = {"name": "execute_command", "args": {"command": "git push origin main"}}

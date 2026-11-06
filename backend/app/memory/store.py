@@ -43,7 +43,7 @@ def _message_dict(row: Message, meta: bool = False) -> dict[str, Any]:
         try:
             msg["tool_calls"] = json.loads(row.tool_calls_json)
         except Exception:
-            pass
+            logger.warning("Dropping unreadable tool_calls JSON on message %s", row.id)
     if row.is_summary:
         msg["is_summary"] = bool(row.is_summary)
     return msg

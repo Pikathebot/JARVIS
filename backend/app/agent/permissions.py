@@ -13,21 +13,6 @@ import psutil
 
 CONFIRMATION_TIMEOUT_ACTION: Literal["deny", "allow"] = "deny"
 
-# Per-tool rate limits per turn (tool_name -> max invocations per turn)
-# Default unset = no per-tool limit beyond MAX_TOOL_CALLS_PER_TURN
-RATE_LIMITS: dict[str, int] = {}
-
-
-def check_rate_limit(tool_name: str, current_turn_tool_count: int) -> bool:
-    """
-    Check per-tool rate limiting independently of global turn caps.
-    Returns True if permitted, False if limit exceeded.
-    """
-    limit = RATE_LIMITS.get(tool_name)
-    if limit is not None and current_turn_tool_count >= limit:
-        return False
-    return True
-
 
 class ChatMode(str, Enum):
     WORKSPACE = "WORKSPACE"

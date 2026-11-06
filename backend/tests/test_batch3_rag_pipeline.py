@@ -184,7 +184,7 @@ async def test_orchestrator_injects_rag_context_from_active_project(batch3_env, 
     indexer.index_project("proj-b3-orchestrator")
 
     # 2. Build orchestrator sharing the same vector_store to prevent Qdrant locks
-    from app.agent.orchestrator import AgentOrchestrator, OrchestratorResult
+    from app.agent.orchestrator import AgentOrchestrator
     from app.memory.store import MemoryStore
     from app.rag.retriever import HybridRetriever
 
@@ -198,17 +198,13 @@ async def test_orchestrator_injects_rag_context_from_active_project(batch3_env, 
     captured_system_prompt = None
     captured_messages = None
 
-    async def mock_run_provider_loop(*args, **kwargs):
+    async def mock_stream_loop(*args, **kwargs):
         nonlocal captured_system_prompt, captured_messages
         captured_system_prompt = kwargs.get("system_prompt")
         captured_messages = kwargs.get("conversation_messages")
-        return OrchestratorResult(
-            response="Found secret",
-            model="test",
-            provider="test"
-        )
+        yield {"event": "done", "data": {"response": "Found secret", "model": "test", "provider": "test"}}
 
-    orch._run_provider_loop = mock_run_provider_loop
+    orch._run_provider_stream_loop = mock_stream_loop
 
     # 3. Call run in WORKSPACE mode WITHOUT passing project_id explicitly
     result = await orch.run(

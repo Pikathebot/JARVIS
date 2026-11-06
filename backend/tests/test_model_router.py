@@ -1,5 +1,7 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
+from fake_providers import use_model_client
 import httpx
 from app.main import app
 from app.agent.model_router import ModelRouter, RoutingMode, RoutingDecision, TaskType
@@ -106,9 +108,7 @@ async def test_chat_llamacpp_normal_mode_mocked():
         "raw": {}
     }
 
-    with patch.object(LlamaCppProvider, "chat", new_callable=AsyncMock) as mock_chat:
-        mock_chat.return_value = mock_llamacpp_response
-
+    with use_model_client(SimpleNamespace(chat=AsyncMock(return_value=mock_llamacpp_response))):
         payload = {
             "message": "Hello Jarvis",
             "mode": "normal"

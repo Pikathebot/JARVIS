@@ -3244,11 +3244,16 @@ scratch folder, the app was running). **Device-verified 11-01 (user):** Freeform
   GOVERNOR/STAGE specs; README updated), the empty `Jarvis.Core/Class1.cs` and a stray empty `GlassToggle.xaml.cs`.
   (3) GlassLab shader drift -- left: the lab's shaders differ on purpose; only the user can say if any lab change
   should ship.
-- **QUEUED (2): one chat loop.** `AgentOrchestrator.run()` (POST /chat, the HUD's non-thread turns) still uses a
-  second, older loop (`_run_internal` + `_run_provider_loop`, ~700 lines). Folding it into `_run_via_stream` was
-  tried 11-05 and reverted: 15 tests fail -- most mock the provider's non-streaming `chat()`, but three rules exist
-  only in the old loop: the 15-calls-per-turn cap (`MAX_TOOL_CALLS_PER_TURN`, plus `RATE_LIMITS`), the "same action
-  twice" loop breaker, and malformed-argument escalation. Decide per rule whether the streaming loop gains it, port the
-  tests, then delete the old loop; HUD turns need a device check after.
-- Small, not done: the stale comment at `confirmations.py:62-63`; a `logger.warning` where `memory/store.py:43-46`
-  drops corrupt `tool_calls` JSON.
+- **One chat loop -- BUILT 2026-11-06, uncommitted, unverified on device (HUD turns).** `AgentOrchestrator.run()`
+  (POST /chat, the HUD) now collects one `run_stream` turn; the old `_run_internal` + `_run_provider_loop` (~690
+  lines) are deleted. Per rule: the 15-calls-per-turn cap moved into the streaming loop (over the cap, none of that
+  round's calls run and the model is asked for its answer, net `call-cap`); `RATE_LIMITS`/`check_rate_limit` deleted
+  (the dict was always empty); the "same action twice" breaker already existed there (asks for the answer instead of a
+  canned stop line); malformed arguments already come back as a validation error plus a fix hint -- the old loop's
+  OpenRouter escalation is gone (cloud routing is off). The old per-turn `ContextCompactor` pass went with it (the
+  streaming path has 4.25's compaction); `self.compactor` is now set but unused. Why 15 tests failed on 11-05: the
+  test double's streaming fallback put its reply in the wrong `done` shape, so every reply read as empty; fixed in
+  `fake_providers.py`. Also found: `test_chat_llamacpp_normal_mode_mocked` and `test_chat_with_model` patched only
+  `LlamaCppProvider.chat`, so with Jarvis running they reached the live model on :8001 -- now use `use_model_client`.
+  Suite 1681 pass. Done with it: the stale comment at `confirmations.py:62-63` and a warning where
+  `memory/store.py` drops corrupt `tool_calls` JSON.

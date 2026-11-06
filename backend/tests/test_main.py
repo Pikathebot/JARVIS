@@ -1,9 +1,10 @@
 import os
 import pytest
 import httpx
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.main import app
-from fake_providers import ClientBackedProvider
+from fake_providers import ClientBackedProvider, use_model_client
 
 
 @pytest.mark.anyio
@@ -20,7 +21,6 @@ async def test_health_check():
 @pytest.mark.anyio
 async def test_chat_with_model():
     """Test /chat with mocked backend to avoid loading models in VRAM during tests."""
-    from app.agent.llamacpp_provider import LlamaCppProvider
     mock_resp = {
         "message": {
             "role": "assistant",
@@ -29,8 +29,7 @@ async def test_chat_with_model():
         },
         "raw": {}
     }
-    with patch.object(LlamaCppProvider, "chat", new_callable=AsyncMock) as mock_chat:
-        mock_chat.return_value = mock_resp
+    with use_model_client(SimpleNamespace(chat=AsyncMock(return_value=mock_resp))):
         payload = {
             "message": "Respond with 'OK' and nothing else.",
             "model": "qwen2.5:0.5b"
@@ -47,9 +46,8 @@ async def test_chat_with_model():
 @pytest.mark.anyio
 async def test_chat_nonexistent_model():
     """Test /chat error handling when provider fails."""
-    from app.agent.llamacpp_provider import LlamaCppProvider
-    with patch.object(LlamaCppProvider, "chat", new_callable=AsyncMock) as mock_chat:
-        mock_chat.side_effect = RuntimeError("model 'non_existent_model_12345:xyz' not found")
+    failing = AsyncMock(side_effect=RuntimeError("model 'non_existent_model_12345:xyz' not found"))
+    with use_model_client(SimpleNamespace(chat=failing)):
         payload = {
             "message": "Hello",
             "model": "non_existent_model_12345:xyz"

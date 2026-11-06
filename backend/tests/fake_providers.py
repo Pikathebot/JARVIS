@@ -63,7 +63,8 @@ class ClientBackedProvider(ModelProvider):
                 for tc in tcs:
                     yield {"event": "tool_call", "tool_call": tc}
             yield {"event": "text_delta", "content": content}
-            yield {"event": "done", "raw": res}
+            # The real provider's done shape (llamacpp_provider.stream_chat), not the chat() reply's.
+            yield {"event": "done", "raw": {"content": content, "tool_calls": tcs or None}}
 
     async def unload_model(self, model=None) -> bool:
         return True

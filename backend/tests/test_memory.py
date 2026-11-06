@@ -164,64 +164,6 @@ async def test_multi_turn_conversation_memory():
                 await ac.delete(f"/sessions/{session_id}")
 
 
-@pytest.mark.anyio
-async def test_compaction_triggered_and_logged():
-    """Verify that exceeding token limits triggers compaction, logs it, and surfaces in response."""
-    session_id = f"test_compaction_{uuid.uuid4().hex[:8]}"
-
-    mock_resp = {
-        "message": {
-            "role": "assistant",
-            "content": "Proceeding with next step."
-        }
-    }
-
-    class FakeOllama:
-        async def chat(self, *args, **kwargs):
-            return mock_resp
-
-    from unittest.mock import patch
-    with use_model_client(FakeOllama()):
-        try:
-            # Seed session with bulky tool messages in store
-            bulky_text = "DENSE SYSTEM LOG ENTRY DETAILS - " * 50  # ~1700 chars
-            memory_store.append_message(session_id, role="user", content="Please inspect the logs")
-            memory_store.append_message(session_id, role="tool", content=bulky_text, name="read_file")
-            memory_store.append_message(session_id, role="assistant", content="Logs inspected.")
-
-            # Set tight compaction threshold on compactor temporarily
-            orig_threshold = compactor.max_context_tokens
-            compactor.max_context_tokens = 50  # Force Stage 1 or Stage 2 compaction
-
-            payload = {
-                "message": "Continue with the next step.",
-                "session_id": session_id,
-                "model": "qwen2.5:0.5b"
-            }
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=10.0) as ac:
-                response = await ac.post("/chat", json=payload)
-            
-            assert response.status_code == 200
-            data = response.json()
-            
-            # Verify compaction was performed and surfaced
-            assert data["compaction_performed"] is not None
-            assert "strategy" in data["compaction_performed"]
-            assert data["compaction_performed"]["tokens_before"] > data["compaction_performed"]["tokens_after"]
-
-            # Verify compaction event in audit endpoint
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
-                audit_res = await ac.get(f"/sessions/{session_id}/compactions")
-            
-            assert audit_res.status_code == 200
-            events = audit_res.json()
-            assert len(events) >= 1
-
-        finally:
-            compactor.max_context_tokens = orig_threshold
-            memory_store.delete_session(session_id)
-
-
 # --- list_sessions: bounded, and the default workspace owns the unscoped sessions ---
 
 def test_list_sessions_limit_returns_most_recent(temp_store):

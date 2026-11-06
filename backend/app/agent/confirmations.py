@@ -60,7 +60,7 @@ class ConfirmationRegistry:
         self.timeout_seconds = timeout_seconds
         self._pending: "OrderedDict[str, PendingConfirmation]" = OrderedDict()
         # Tokens that lapsed, kept so a late approval can be told apart from a token
-        # this process never issued (a backend restart), which still passes through.
+        # this process never issued (e.g. after a backend restart); both are refused.
         self._expired: deque[str] = deque(maxlen=remembered_expiries)
         # Set by ask(): True when any action just asked about had previously lapsed.
         self.last_ask_was_repeat = False

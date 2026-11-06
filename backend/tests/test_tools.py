@@ -297,69 +297,13 @@ async def test_malformed_args_rejected_and_repairable(tmp_path):
     )
 
     assert result.status == "completed"
-    assert len(result.tools_used) == 1
-    assert result.tools_used[0]["tool"] == "web_search"
-
-    # Check audit log in store
-    audits = store.get_tool_call_audits()
-    assert len(audits) >= 2
-    # One invalid_repaired, one valid
-    val_results = [a["validation_result"] for a in audits]
-    assert "invalid_repaired" in val_results
-    assert "valid" in val_results
-
-
-@pytest.mark.anyio
-async def test_second_malformed_attempt_escalates_tier(tmp_path):
-    """Test 2nd consecutive validation failure on same tool call triggers Tier 3 escalation."""
-    db_path = str(tmp_path / "test_esc_mem.db")
-    store = MemoryStore(db_path=db_path)
-
-    # Iteration 1: Model emits malformed args (missing query)
-    # Iteration 2: Model emits malformed args again (still missing query)
-    mock_ollama = MockOllamaClient([
-        {
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {"function": {"name": "web_search", "arguments": {"foo": "bar"}}}
-                ]
-            }
-        },
-        {
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {"function": {"name": "web_search", "arguments": {"foo": "baz"}}}
-                ]
-            }
-        }
-    ])
-    mock_openrouter = MockOpenRouterClient("Tier 3 OpenRouter answered successfully")
-    orchestrator = AgentOrchestrator(
-        provider=ClientBackedProvider(mock_ollama),
-        openrouter_client=mock_openrouter,
-        memory_store=store,
-        compactor=ContextCompactor(max_context_tokens=8000),
-        skills_loader=SkillsLoader(),
-        mcp_manager=MCPManager()
-    )
-
-    result = await orchestrator.run(
-        user_message="Search for python",
-        session_id=f"test_esc_{uuid.uuid4().hex[:8]}"
-    )
-
-    assert result.provider == "openrouter"
-    assert "Tier 3 OpenRouter answered" in result.response
-    assert mock_openrouter.called is True
-
-    # Audit log should show invalid_escalated
-    audits = store.get_tool_call_audits()
-    val_results = [a["validation_result"] for a in audits]
-    assert "invalid_escalated" in val_results
+    # The malformed call never ran: it came back as a validation error, then the repaired one ran.
+    assert [t["tool"] for t in result.tools_used] == ["web_search", "web_search"]
+    assert [t["status"] for t in result.tools_used] == ["error", "success"]
+    assert "Validation Error" in result.tools_used[0]["result"]
+    second_request = mock_ollama.chat_calls[1]
+    assert any(m.get("role") == "tool" and "Validation Error" in m.get("content", "") for m in second_request)
+    assert result.response == "Here is the search result summary."
 
 
 @pytest.mark.anyio
@@ -402,10 +346,11 @@ async def test_duplicate_call_triggers_loop_breaker(tmp_path):
         session_id=f"test_loop_{uuid.uuid4().hex[:8]}"
     )
 
-    assert "attempted the same action twice" in result.response
-    assert "stopping to avoid a loop" in result.response
-    # Only the first call executed
+    # Only the first call executed; the repeat is answered with "use the result above" instead.
     assert len(result.tools_used) == 1
+    last_request = mock_ollama.chat_calls[-1]
+    assert "You just made that exact call" in last_request[-1]["content"]
+    assert result.response == "Default mock complete"
 
 
 @pytest.mark.anyio
@@ -445,8 +390,10 @@ async def test_turn_tool_call_cap_enforced(tmp_path, monkeypatch):
         session_id=f"test_cap_{uuid.uuid4().hex[:8]}"
     )
 
-    assert "Turn tool call limit exceeded" in result.response
+    # Over the cap: none of the round's calls run, and the model is asked for its answer.
     assert len(result.tools_used) == 0
+    assert "That's enough tool use" in mock_ollama.chat_calls[-1][-1]["content"]
+    assert result.response == "Default mock complete"
 
 
 def test_disabled_tools_unregistered():
