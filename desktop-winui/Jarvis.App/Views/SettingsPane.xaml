@@ -686,6 +686,20 @@
 
                         <!-- ========== Developer (PLAN 4.8d) ========== -->
                         <StackPanel x:Name="DeveloperPage" Spacing="16" Visibility="Collapsed">
+                            <!-- Notifications: puts a notice on the same stream as the briefing and the RAM/VRAM warnings. -->
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Notifications" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="Send test notification" Click="TestNotification_Click" />
+                                    <TextBlock x:Name="TestNotificationStatus" Grid.Column="1" Style="{StaticResource SecondaryFootnoteText}"
+                                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+
                             <!-- Logs (PLAN 4.17): the backend's, the model's and the sidecars' from /api/logs; the app's own from disk. -->
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Logs" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />

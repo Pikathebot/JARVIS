@@ -154,7 +154,8 @@ class LayaSidecar:
                     logger.info("Laya sidecar ready in %.1fs (%.0f MiB VRAM)", time.time() - started, self.vram_mb)
                     return True
                 time.sleep(0.25)
-            logger.warning("Laya sidecar not healthy after %.0fs; stopping it.", self.startup_timeout)
+            logger.warning("Laya sidecar not healthy after %.0fs; stopping it. Last output:\n%s",
+                           self.startup_timeout, "\n".join(self._recent[-8:]))
             self._stop_process()
             return False
 

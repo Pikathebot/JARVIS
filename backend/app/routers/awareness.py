@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.awareness.briefing import build_briefing, format_spoken
 from app.awareness.monitor import AwarenessMonitor
-from app.awareness.observations import Severity
+from app.awareness.observations import Observation, Severity
 from app.persona import persona_manager
 
 logger = logging.getLogger("jarvis.routers.awareness")
@@ -66,6 +66,18 @@ async def poll_now() -> dict[str, Any]:
         "observations": [_render(o, persona) for o in observations],
         "snapshot": (monitor.last_snapshot.to_dict() if monitor.last_snapshot else {}),
     }
+
+
+@router.post("/test", response_model=dict)
+async def emit_test_observation() -> dict[str, Any]:
+    """Put a harmless notice on the stream (Settings -> Developer), to see the tray and the remote push."""
+    observation = get_monitor().emit(Observation(
+        kind="test",
+        severity=Severity.NOTICE,
+        title="Test notification",
+        detail="Sent from Settings > Developer. Dismiss it with the X.",
+    ))
+    return {"id": observation.id}
 
 
 @router.get("/observations", response_model=dict)

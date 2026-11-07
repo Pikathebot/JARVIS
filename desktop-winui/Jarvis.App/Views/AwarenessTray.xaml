@@ -32,6 +32,8 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="models:Observation">
+                    <!-- The severity tint is 14% opaque, so it sits on a solid base: the card floats over chat text. -->
+                    <Border CornerRadius="{StaticResource CardCornerRadius}" Background="{ThemeResource GlassTintBrush}">
                     <Border
                         BorderThickness="1"
                         CornerRadius="{StaticResource CardCornerRadius}"
@@ -66,6 +68,7 @@
                                 <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
                             </Button>
                         </Grid>
+                    </Border>
                     </Border>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>

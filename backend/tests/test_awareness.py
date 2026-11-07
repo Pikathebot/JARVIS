@@ -430,6 +430,14 @@ def test_poll_endpoint_returns_persona_rendered_observations(client):
     assert observation["speak"] is True
 
 
+def test_test_endpoint_puts_a_notice_on_the_stream(client):
+    sent = client.post("/api/awareness/test").json()
+
+    listed = client.get("/api/awareness/observations").json()["observations"]
+    assert [o["id"] for o in listed] == [sent["id"]]
+    assert listed[0]["severity"] == "notice"
+
+
 def test_observations_are_listed_and_acknowledged(client):
     client.post("/api/awareness/poll")
 

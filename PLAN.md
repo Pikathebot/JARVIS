@@ -279,6 +279,21 @@ Done 2026-09-23 (see `docs/MILESTONES.md`). Nothing open.
   (`_NEEDS_LIVE_DATA_RE`) and the notes cues (`notes.asks_for_a_tool`): 4 misses left on purpose
   (`KNOWN_NO_TOOL_MISSES`: web or project questions with no telling word), and one chat prompt more goes to main
   ("latest features in python 3.13"). Not run through the model; the measurement is of the gates only.
+- **Awareness notifications take their own row instead of hovering (user, 2026-11-07) -- TO FIX.** The daily
+  briefing, RAM and GPU VRAM notices should float over the chat. With the chat scrolled to the end, a notice pushed
+  the last message up instead. Cause: `ReserveRoomForTray` (`MainWindow.ChatScroll.cs`, added in 4.20 so a VRAM
+  toast would not cover the last line) added the tray's height to the transcript's bottom padding. BUILT 2026-11-07:
+  the reservation, its call sites and `_chatBottomPadding` are deleted, so the tray (already a bottom-right overlay in
+  `MainWindow.xaml`) hovers. Compiles; not seen on device. Trade-off: a notice can now cover the last line of the
+  chat until it is dismissed. Device test the same day: a card over text was unreadable (its fill is the severity
+  colour at 14%, so the text showed through) -> each card now sits on a solid `GlassTintBrush` base
+  (`AwarenessTray.xaml`). Also added: Settings -> Developer -> Notifications -> "Send test notification"
+  (`POST /api/awareness/test` emits a Notice through `AwarenessMonitor.emit`, so it also reaches the speech and
+  remote-push paths; test in `test_awareness.py`). Design system updated (AwarenessToast, SettingsCard; v37). Neither
+  seen on device. Open: a test card is always Notice severity, so the Warning and Critical tints are not tried by it.
+- **Laya sidecar timed out on 2026-11-07 08:40 (90 s, "Laya DOWN"), cause unknown.** Earlier starts took 10-46 s.
+  The timeout warning did not log the sidecar's output (only the early-exit path did); it does now
+  (`laya_sidecar.py`), so the next occurrence names the cause. Not a bug until it repeats. Unverified on device.
 - **Proactive actions**: only VRAM-critical eviction and disk-space naming are wired; any new one
   goes through `AwarenessMonitor` actions.
 

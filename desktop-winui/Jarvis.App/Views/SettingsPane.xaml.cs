@@ -473,6 +473,21 @@ public sealed partial class SettingsPane : UserControl
         }
     }
 
+    // --- Developer: test notification ----------------------------------------------------------
+
+    private async void TestNotification_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _api.SendTestNotificationAsync();
+            TestNotificationStatus.Text = "Sent. It should appear at the bottom right of the chat.";
+        }
+        catch (Exception ex)
+        {
+            TestNotificationStatus.Text = $"Could not send: {ex.Message}";
+        }
+    }
+
     // --- Developer: glass tuning ---------------------------------------------------------------
 
     private bool _syncingTuning;

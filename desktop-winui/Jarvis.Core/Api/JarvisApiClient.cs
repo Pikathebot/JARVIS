@@ -548,6 +548,12 @@ public sealed class JarvisApiClient
         await EnsureSuccessAsync(response, "acknowledge observation").ConfigureAwait(false);
     }
 
+    public async Task SendTestNotificationAsync(CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync("/api/awareness/test", content: null, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "send test notification").ConfigureAwait(false);
+    }
+
     public Task<Briefing> FetchBriefingAsync(CancellationToken ct = default) =>
         GetAsync<Briefing>("/api/awareness/briefing", ct);
 
