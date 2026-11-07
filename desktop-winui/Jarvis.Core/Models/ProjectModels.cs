@@ -114,17 +114,33 @@ public sealed class Artifact
     public string UpdatedAt { get; set; } = "";
 }
 
-/// <summary>What <c>POST /api/projects/{id}/index</c> reports after a reindex.</summary>
-public sealed class ProjectIndexStats
+/// <summary>A project's index run (<c>/api/projects/{id}/index</c>): State is idle, running, done or
+/// error; files are counted as the indexer walks the folder, unchanged ones included.</summary>
+public sealed class ProjectIndexStatus
 {
-    [JsonPropertyName("scanned_files")]
-    public int ScannedFiles { get; set; }
+    public string State { get; set; } = "idle";
+
+    [JsonPropertyName("total_files")]
+    public int TotalFiles { get; set; }
+
+    [JsonPropertyName("processed_files")]
+    public int ProcessedFiles { get; set; }
 
     [JsonPropertyName("indexed_files")]
     public int IndexedFiles { get; set; }
 
     [JsonPropertyName("total_chunks")]
     public int TotalChunks { get; set; }
+
+    public string? Error { get; set; }
+
+    [JsonPropertyName("finished_at")]
+    public double? FinishedAt { get; set; }
+
+    public bool Running => State == "running";
+
+    /// <summary>0-100, or 0 until the folder has been counted.</summary>
+    public int Percent => TotalFiles > 0 ? (int)(100L * ProcessedFiles / TotalFiles) : 0;
 }
 
 /// <summary>A project's PROJECT.md (<c>/api/projects/{id}/state</c>): where it lives, its text and the size cap.</summary>

@@ -2585,9 +2585,23 @@ workspace keeps its information.** Traced in code + the live DB:
    workspace button (`Views/ProjectPage.xaml`). Slice 1 (header, editable Instructions, Reindex; Enter saves,
    Shift+Enter newline) and slice 2 (PROJECT.md view/edit with a 2,000-char counter) committed f847c7d. Slice 3
    (Memories = the project's own, removable with Undo via the bin; Files = top level of the folder; Chats +
-   New chat; the right panel's Files tab removed) built, uncommitted. **Open:** slice 4 = Context line + popover
-   (then the right panel is Artifacts only); index status needs a backend call (the page only shows the result of
-   a Reindex pressed in this session); Files has no per-file index state and no Add files; phase 5 clean-up.
+   New chat; the right panel's Files tab removed) committed 229ed7e, device-checked "looks fine". Slice 4 (Context
+   line in the toolbar row + popover; the right panel is Artifacts only, no tab bar; the inspector no longer opens
+   itself on retrieval) built; device-checked 2026-11-07 (indexing, retrieval row, no overlap all fine). **Device test of slice 4 (2026-11-07) found:**
+   (1) Reindex hit the client's 30 s limit and gave no progress; the real cause was in `rag/indexer.py`:
+   `index_file` chunked and **embedded every file before checking its hash**, so every Reindex and every
+   workspace switch re-embedded the whole project on the CPU embedder (Default Workspace: 317 files / 3.7 MB
+   pinned ~19 cores for 20+ min, governor logging "CPU 98%, throttle"). Fixed: hash checked first; Reindex is
+   now a background job (`rag/index_jobs.py`, POST starts or joins, GET reports; `ProjectPage` polls and shows
+   "Indexing 37% · 70 of 189 files"); workspace activation uses the same job, so no duplicate passes; a repeat
+   Reindex indexes 0 files. (2) The popovers overlapped the compact (floating) sidebar: opening one now closes
+   the other. (3) The user wants what was retrieved shown in the chat each turn: a "Searched project files: N
+   passages" step row at the top of the reply (live only, not stored in history). (4) **The user wants the right
+   panel's frontend and workings overhauled** (it is now Artifacts only: list + raw text view) -- not started; needs
+   a design pass first. **Open:** index status lasts only until the backend restarts (kept in memory); Files has no
+   per-file index state and no Add files; the embedder runs on all cores (`RAG_EMBEDDING_THREADS=0`), so a big
+   first index is still heavy even though repeats are quick; phase 5 clean-up.
+   **New chat is stored at once (2026-11-07, build+test verified only, not seen on device):** `POST /sessions` -> `MemoryStore.start_session` records the chat the moment New chat is pressed and reuses an existing empty one of the same space/project; empty chats are labelled "New chat" in the sidebar; ephemeral ids are refused.
 4. WinUI: Project page in the chat area, instructions editing, memories list, Files moved, right panel = Artifacts,
    Context popover.
 5. Clean-up: the test projects/folders in the live data, the Default Workspace pointing at `backend/`, the wrong

@@ -28,6 +28,11 @@ public sealed class JarvisApiClient
         }
     }
 
+    /// <summary>Stores a new chat on the backend at once. The backend hands back an existing empty
+    /// chat of the same space/project instead of adding another, so the id returned may differ.</summary>
+    public Task<Session> CreateSessionAsync(string sessionId, string chatMode, string? projectId, CancellationToken ct = default) =>
+        PostAsync<object, Session>("/sessions", new { session_id = sessionId, chat_mode = chatMode, project_id = projectId }, ct);
+
     public static string CreateNewSessionId()
     {
         var timestamp = ToBase36(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -342,8 +347,12 @@ public sealed class JarvisApiClient
         return await ReadAsync<ProjectState>(response, ct).ConfigureAwait(false);
     }
 
-    public Task<ProjectIndexStats> ReindexProjectAsync(string projectId, CancellationToken ct = default) =>
-        PostAsync<object?, ProjectIndexStats>($"/api/projects/{Uri.EscapeDataString(projectId)}/index", null, ct);
+    /// <summary>Starts a background re-index (or joins the one already running); returns at once.</summary>
+    public Task<ProjectIndexStatus> ReindexProjectAsync(string projectId, CancellationToken ct = default) =>
+        PostAsync<object?, ProjectIndexStatus>($"/api/projects/{Uri.EscapeDataString(projectId)}/index", null, ct);
+
+    public Task<ProjectIndexStatus> GetIndexStatusAsync(string projectId, CancellationToken ct = default) =>
+        GetAsync<ProjectIndexStatus>($"/api/projects/{Uri.EscapeDataString(projectId)}/index", ct);
 
     public async Task<List<ProjectFile>> FetchProjectFilesAsync(string projectId, CancellationToken ct = default)
     {

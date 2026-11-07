@@ -82,6 +82,7 @@ public sealed partial class MainWindow : Window
         // why the sheets' hand-written "2" left them unable to cover the window behind them.
         WorkspaceDropdown.Layer = Jarvis_Glass.GlassLayers.Popover;
         StatusPopover.Layer = Jarvis_Glass.GlassLayers.Popover;
+        ContextPopover.Layer = Jarvis_Glass.GlassLayers.Popover;
         // Panels hidden, startup card up, before anything publishes glass (MainWindow.Motion.cs).
         BeginStartup();
 
@@ -117,11 +118,7 @@ public sealed partial class MainWindow : Window
             }
             else if (args.PropertyName == nameof(ChatViewModel.LatestRetrieval))
             {
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    UpdateContextTab();
-                    if (ChatViewModel.LatestRetrieval?.ChunksUsed.Count > 0) AutoOpenInspector(ContextTab);
-                });
+                DispatcherQueue.TryEnqueue(UpdateContextLine);
             }
         };
 
@@ -213,13 +210,18 @@ public sealed partial class MainWindow : Window
         }
         RestoreModelChoice();
         ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() => _ = SessionsViewModel.RefreshAsync());
+        ChatViewModel.SessionStored += () => DispatcherQueue.TryEnqueue(async () =>
+        {
+            await SessionsViewModel.RefreshAsync();
+            UpdateSessionHighlight();
+        });
         // A turn that wrote an artifact brings the inspector up on it (once per chat).
         ChatViewModel.MessageCompleted += completedMessage => DispatcherQueue.TryEnqueue(() =>
         {
             if (completedMessage.ToolSteps.Any(s => s.Status == ToolStatus.Success
                     && s.Tool.Contains("artifact", StringComparison.OrdinalIgnoreCase)))
             {
-                AutoOpenInspector(ArtifactsTab);
+                AutoOpenInspector();
             }
         });
         SessionsViewModel.Sessions.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RebuildSessionGroups);
@@ -345,7 +347,7 @@ public sealed partial class MainWindow : Window
         if (RootGrid.XamlRoot is null || !AppWindowTitleBar.IsCustomizationSupported()) return;
         var scale = RootGrid.XamlRoot.RasterizationScale;
         var rects = new List<Windows.Graphics.RectInt32>();
-        foreach (var element in new FrameworkElement[] { SidebarCapsule, StatusCapsule, ToolsCapsule, ComposeButton })
+        foreach (var element in new FrameworkElement[] { SidebarCapsule, ContextLineButton, StatusCapsule, ToolsCapsule, ComposeButton })
         {
             if (element.Visibility != Visibility.Visible || element.ActualWidth <= 0) continue;
             var b = element.TransformToVisual(RootGrid).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
@@ -476,6 +478,7 @@ public sealed partial class MainWindow : Window
         var chatWidth = available - usedBySidebar - (panelDocked && panelOpen ? PanelWidth + PanelGap : 0);
         StatusVramText.Visibility = chatWidth >= 560 ? Visibility.Visible : Visibility.Collapsed;
         SetStatusPopoverOpen(false);
+        SetContextPopoverOpen(false);
         _panelFloating = panelOpen && !panelDocked;
         UpdateChatClip();
     }
@@ -514,6 +517,12 @@ public sealed partial class MainWindow : Window
         _sidebarOverlayOpen = !_sidebarOverlayOpen;
         SidebarSlab.Visibility = _sidebarOverlayOpen ? Visibility.Visible : Visibility.Collapsed;
         UpdateChatClip();
+        if (_sidebarOverlayOpen)
+        {
+            // The floating sidebar and a popover would sit on the same strip of the chat.
+            SetStatusPopoverOpen(false);
+            SetContextPopoverOpen(false);
+        }
     }
 
     /// <summary>In compact mode the floating sidebar closes once a session is picked.</summary>
@@ -677,6 +686,8 @@ public sealed partial class MainWindow : Window
         if (open)
         {
             SetWorkspaceDropdownOpen(false);
+            SetContextPopoverOpen(false);
+            CloseSidebarOverlay(); // a compact (floating) sidebar would overlap the popover
             var pill = StatusCapsule.TransformToVisual(RootGrid).TransformBounds(
                 new Windows.Foundation.Rect(0, 0, StatusCapsule.ActualWidth, StatusCapsule.ActualHeight));
             var left = Math.Max(8, pill.Right - StatusPopover.Width);
@@ -698,20 +709,17 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ inspector auto-open
 
-    private const int ArtifactsTab = 0;
-    private const int ContextTab = 1;
     private string? _inspectorAutoOpenedFor;
 
-    /// <summary>Opens the inspector on <paramref name="tab"/> the first time a chat has
-    /// something for it; after that (or once the user has closed it) it stays their call.</summary>
-    private async void AutoOpenInspector(int tab)
+    /// <summary>Opens the inspector the first time a chat has an artifact; after that (or once
+    /// the user has closed it) it stays their call.</summary>
+    private async void AutoOpenInspector()
     {
         var chat = ChatViewModel.ActiveSessionId ?? "";
         if (_inspectorAutoOpenedFor == chat) return;
         _inspectorAutoOpenedFor = chat;
-        RightPanelTabs.SelectedIndex = tab;
         if (!RightPanelViewModel.IsOpen) RightPanelViewModel.Toggle();
-        if (tab == ArtifactsTab) await RightPanelViewModel.RefreshArtifactsAsync();
+        await RightPanelViewModel.RefreshArtifactsAsync();
     }
 
     private bool _syncingGovernorToggle;
@@ -732,63 +740,6 @@ public sealed partial class MainWindow : Window
         if (GameModeToggle.IsOn == GovernorViewModel.GameMode) return;
         try { await GovernorViewModel.SetGameModeAsync(GameModeToggle.IsOn); }
         catch { /* the next poll puts the switch back to what the backend says */ }
-    }
-
-    private void RightPanelTabs_SelectionChanged(object sender, RoutedEventArgs e)
-    {
-        var pages = new[] { ArtifactsPage, ContextPage };
-        for (var i = 0; i < pages.Length; i++)
-        {
-            pages[i].Visibility = i == RightPanelTabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
-        }
-    }
-
-    private void UpdateContextTab()
-    {
-        var retrieval = ChatViewModel.LatestRetrieval;
-        if (retrieval is null)
-        {
-            ContextBudgetHeader.Text = "No turn yet";
-            RetrievedChunksList.Items.Clear();
-            return;
-        }
-
-        var budget = retrieval.BudgetReport;
-        ContextBudgetHeader.Text = $"{budget.TotalInputTokensUsed} / {budget.AvailableInputBudget} tokens";
-        Tier1Text.Text = $"Tier1 System: {budget.Tier1SystemTokens}";
-        Tier2Text.Text = $"Tier2 User+Files: {budget.Tier2UserTokens}";
-        Tier3Text.Text = $"Tier3 RAG: {budget.Tier3RagTokens}";
-        Tier4Text.Text = $"Tier4 History: {budget.Tier4HistoryTokens}";
-
-        RetrievedChunksList.Items.Clear();
-        foreach (var chunk in retrieval.ChunksUsed)
-        {
-            var panel = new StackPanel { Spacing = 2 };
-            panel.Children.Add(new TextBlock
-            {
-                Text = $"{chunk.FileName ?? chunk.FilePath} L{chunk.StartLine}-L{chunk.EndLine}",
-                Style = Themes.JarvisTheme.Style("BodyText"),
-            });
-            if (!string.IsNullOrEmpty(chunk.SymbolName))
-            {
-                panel.Children.Add(new TextBlock
-                {
-                    Text = chunk.SymbolName,
-                    Style = Themes.JarvisTheme.Style("DataText"),
-                });
-            }
-            RetrievedChunksList.Items.Add(panel);
-        }
-
-        if (retrieval.ChunksDropped.Count > 0)
-        {
-            RetrievedChunksList.Items.Add(new TextBlock
-            {
-                Text = $"{retrieval.ChunksDropped.Count} dropped (budget)",
-                Style = Themes.JarvisTheme.Style("FootnoteText"),
-                Foreground = Themes.JarvisTheme.Brush("StatusWarning"),
-            });
-        }
     }
 
     private void UpdateErrorBanner()
@@ -994,6 +945,11 @@ public sealed partial class MainWindow : Window
             && !IsInside(source, StatusPopover) && !IsInside(source, StatusCapsule))
         {
             SetStatusPopoverOpen(false);
+        }
+        if (ContextPopover.Visibility == Visibility.Visible
+            && !IsInside(source, ContextPopover) && !IsInside(source, ContextLineButton))
+        {
+            SetContextPopoverOpen(false);
         }
         if (WorkspaceDropdown.Visibility != Visibility.Visible) return;
         if (IsInside(source, WorkspaceDropdown) || IsInside(source, WorkspaceButton)) return;

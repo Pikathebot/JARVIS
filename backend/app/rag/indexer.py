@@ -200,6 +200,16 @@ class ProjectIndexer:
         mtime = datetime.utcfromtimestamp(stat.st_mtime)
         size_bytes = stat.st_size
 
+        # Unchanged since the last pass: nothing to chunk or embed. This check used to sit after the
+        # embedding, so every Reindex and every workspace switch re-embedded every file on the CPU
+        # just to throw the result away (a 317-file project pinned the CPU for 20+ minutes).
+        with self._get_session() as session:
+            known = session.exec(
+                select(Document).where(Document.project_id == project_id, Document.file_path == rel_path_str)
+            ).first()
+            if known is not None and known.file_hash == current_hash:
+                return []
+
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
@@ -354,21 +364,30 @@ class ProjectIndexer:
         )
         return indexed_records
 
-    def index_project(self, project_id: str) -> dict[str, Any]:
+    def index_project(
+        self,
+        project_id: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> dict[str, Any]:
         """
         Scan and index all files in a project workspace.
-        Returns indexing summary statistics.
+        Returns indexing summary statistics. ``progress(done, total)`` is called before the first
+        file and after each one, in files (the project page turns it into a percentage).
         """
         self.ensure_embedding_generation(project_id)
         files = self.scan_project_paths(project_id)
         indexed_count = 0
         total_chunks = 0
+        if progress:
+            progress(0, len(files))
 
-        for f in files:
+        for done, f in enumerate(files, start=1):
             chunks = self.index_file(f, project_id=project_id)
             if chunks:
                 indexed_count += 1
                 total_chunks += len(chunks)
+            if progress:
+                progress(done, len(files))
 
         # Files deleted or moved outside Jarvis since the last pass are still in the index.
         with self._get_session() as session:

@@ -120,13 +120,70 @@ def test_project_index_endpoint(batch3_env):
         session.add(proj)
         session.commit()
 
+    # POST starts a background job and answers at once; GET reports it.
     res = client.post("/api/projects/proj-b3-endpoint/index")
     assert res.status_code == 200
+    assert res.json()["project_id"] == "proj-b3-endpoint"
+    import time
     data = res.json()
-    assert data["project_id"] == "proj-b3-endpoint"
-    assert data["scanned_files"] >= 1
+    for _ in range(100):
+        if data["state"] != "running":
+            break
+        time.sleep(0.05)
+        data = client.get("/api/projects/proj-b3-endpoint/index").json()
+    assert data["state"] == "done", data
+    assert data["total_files"] >= 1
+    assert data["processed_files"] == data["total_files"]
     assert data["indexed_files"] >= 1
     assert data["total_chunks"] >= 1
+
+    # A second Reindex finds every file unchanged: nothing is re-embedded.
+    again = client.post("/api/projects/proj-b3-endpoint/index").json()
+    for _ in range(100):
+        if again["state"] != "running":
+            break
+        time.sleep(0.05)
+        again = client.get("/api/projects/proj-b3-endpoint/index").json()
+    assert again["state"] == "done", again
+    assert again["indexed_files"] == 0
+
+
+def test_index_status_is_idle_before_any_run_and_404s_for_unknown_projects(batch3_env):
+    client, _, engine = batch3_env
+    with Session(engine) as session:
+        session.add(Project(id="proj-b3-idle", name="Idle", is_active=False))
+        session.commit()
+
+    assert client.get("/api/projects/proj-b3-idle/index").json()["state"] == "idle"
+    assert client.get("/api/projects/nope/index").status_code == 404
+    assert client.post("/api/projects/nope/index").status_code == 404
+
+
+def test_a_second_start_joins_the_running_job():
+    import threading
+
+    from app.rag import index_jobs
+
+    release, started, runs = threading.Event(), threading.Event(), []
+
+    def slow(progress):
+        runs.append(1)
+        progress(1, 4)
+        started.set()
+        release.wait(5)
+        return {"indexed_files": 3, "total_chunks": 9}
+
+    first = index_jobs.start("proj-join", slow)
+    assert started.wait(2)
+    second = index_jobs.start("proj-join", slow)  # joins, does not start another run
+    assert second["state"] == "running" and (second["processed_files"], second["total_files"]) == (1, 4)
+    release.set()
+    for _ in range(100):
+        done = index_jobs.status("proj-join")
+        if done["state"] != "running":
+            break
+        threading.Event().wait(0.02)
+    assert runs == [1] and done["state"] == "done" and done["indexed_files"] == 3 and first["project_id"] == "proj-join"
 
 
 def test_upload_triggers_automatic_indexing(batch3_env):

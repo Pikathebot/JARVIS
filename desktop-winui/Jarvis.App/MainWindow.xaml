@@ -292,6 +292,21 @@
 
                     <!-- Status pill: model + VRAM; opens the status popover. Status is always an
                          icon, a word and a colour (UpdateStatusPill). -->
+                    <!-- The context line: plain text on the surface's top edge (not a capsule), left of the
+                         status pill. Shows how full the model's context is; opens the context popover. -->
+                    <Button x:Name="ContextLineButton" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            Height="28" Padding="8,0" Background="Transparent" BorderThickness="0"
+                            CornerRadius="{StaticResource RowCornerRadius}" Click="ContextLine_Click"
+                            ToolTipService.ToolTip="What the model can see in this chat">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock x:Name="ContextLineText" Text="Context · no turn yet" Style="{StaticResource SecondaryFootnoteText}" VerticalAlignment="Center" />
+                            <Grid x:Name="ContextLineTrack" Width="48" Height="4" CornerRadius="2" Background="{ThemeResource MeterTrackBrush}"
+                                  VerticalAlignment="Center" Visibility="Collapsed">
+                                <Rectangle x:Name="ContextLineFill" Fill="{ThemeResource MeterNormalBrush}" RadiusX="2" RadiusY="2" HorizontalAlignment="Left" Width="0" />
+                            </Grid>
+                        </StackPanel>
+                    </Button>
+
                     <glass:GlassSlab x:Name="StatusCapsule" Grid.Column="2" Material="Clear" VerticalAlignment="Center"
                                      SlabCornerRadius="20" Padding="4">
                         <Button x:Name="StatusPillButton" Height="32" Padding="10,0,10,0" Background="Transparent" BorderThickness="0"
@@ -490,10 +505,8 @@
                                 <FontIcon Style="{StaticResource JarvisIcon}" Glyph="&#xE711;" FontSize="12" Foreground="{ThemeResource LabelSecondaryBrush}" />
                             </Button>
                         </Grid>
-                        <Grid Grid.Row="1" Margin="12,8,12,0">
-                            <!-- Thinking and tool steps show inline in the message now (PLAN 4.23). -->
-                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Context" SelectionChanged="RightPanelTabs_SelectionChanged" />
-                        </Grid>
+                        <!-- Artifacts only: thinking and tool steps show inline in the message (PLAN 4.23),
+                             Files live on the project page and Context is the line in the toolbar (PLAN 4.18). -->
                         <Grid Grid.Row="2">
                             <Grid x:Name="ArtifactsPage" Visibility="Visible">
                             <Grid Padding="12">
@@ -531,35 +544,6 @@
                                         IsTextSelectionEnabled="True" />
                                 </ScrollViewer>
                             </Grid>
-                            </Grid>
-                            <Grid x:Name="ContextPage" Visibility="Collapsed">
-                            <ScrollViewer Padding="12">
-                                <StackPanel Spacing="10">
-                                    <TextBlock x:Name="ContextBudgetHeader" Text="No turn yet" Style="{StaticResource HeadlineText}" />
-                                    <Grid x:Name="ContextBudgetGrid" ColumnSpacing="8" RowSpacing="4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Grid.Column="0" x:Name="Tier1Text" Text="Tier1 System: —" Style="{StaticResource DataText}" />
-                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="Tier2Text" Text="Tier2 User+Files: —" Style="{StaticResource DataText}" />
-                                        <TextBlock Grid.Row="1" Grid.Column="0" x:Name="Tier3Text" Text="Tier3 RAG: —" Style="{StaticResource DataText}" />
-                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="Tier4Text" Text="Tier4 History: —" Style="{StaticResource DataText}" />
-                                    </Grid>
-                                    <TextBlock Text="Retrieved code chunks" Style="{StaticResource SectionHeaderText}" Margin="0,8,0,0" />
-                                    <ItemsControl x:Name="RetrievedChunksList">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <StackPanel Spacing="6" />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </ScrollViewer>
                             </Grid>
                         </Grid>
                     </Grid>
@@ -603,6 +587,28 @@
                 <!-- Not a row of the menu: creating is an action, not a selection the puck should land on. -->
                 <glass:GlassButton x:Name="NewWorkspaceButton" Text="New workspace" HorizontalAlignment="Stretch" Click="NewWorkspace_Click" />
             </StackPanel>
+        </glass:GlassSlab>
+
+        <!--
+            Context popover (design system: ContextLine): how full the model's context is, the four
+            tiers and the passages retrieved for the last turn. Same inline-glass treatment as the
+            status popover below; its body is built in code (MainWindow.ContextLine.cs).
+        -->
+        <glass:GlassSlab
+            x:Name="ContextPopover"
+            Grid.Row="0"
+            Grid.RowSpan="2"
+            Visibility="Collapsed"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Width="320"
+            Material="Thick"
+            SlabCornerRadius="{StaticResource RadiusPanel}"
+            Shadow="0.4"
+            ShadowRadius="24"
+            ShadowOffsetY="8"
+            Padding="16">
+            <StackPanel x:Name="ContextPopoverBody" Spacing="4" />
         </glass:GlassSlab>
 
         <!--

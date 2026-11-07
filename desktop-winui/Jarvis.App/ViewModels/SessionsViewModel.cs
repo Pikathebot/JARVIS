@@ -66,7 +66,7 @@ public partial class SessionsViewModel : ObservableObject
             ? "Default Workspace"
             : session.LastMessage is { Length: > 0 } msg
                 ? (msg.Length > 40 ? msg[..40] + "…" : msg)
-                : $"Session {session.SessionId[..Math.Min(12, session.SessionId.Length)]}…";
+                : "New chat";
 
     public static bool IsDeletable(Session session) => session.SessionId != DefaultSessionId;
 

@@ -46,6 +46,9 @@ public static partial class ToolStepText
             "web_search" => Labelled("Searched", "Searching", "query"),
             "fetch_url" => Labelled("Read", "Reading", "url"),
             "research" => Labelled("Looked up", "Looking up", "question"),
+            ViewModels.ChatViewModel.RetrievalStepTool => Arg(step, "passages") is { Length: > 0 } n
+                ? $"Searched project files: {n} {(n == "1" ? "passage" : "passages")}"
+                : "Searched project files",
             "look_at_screen" => Arg(step, "window") is { Length: > 0 } w
                 ? $"{(running ? "Looking at" : "Looked at")}: {w}"
                 : running ? "Looking at the screen" : "Looked at the screen",

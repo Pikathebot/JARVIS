@@ -1049,6 +1049,22 @@ async def list_sessions(
 
 
 
+class StartSessionRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=128, description="Id the client minted for the new chat")
+    chat_mode: Optional[str] = Field(default=None, description="WORKSPACE or FREEFORM")
+    project_id: Optional[str] = None
+
+
+@app.post("/sessions")
+async def start_session(req: StartSessionRequest):
+    """Record a new, empty chat now (the New chat button) so it is stored before the first message.
+    When an empty chat is already waiting in the same space and project, that one comes back instead
+    (its ``session_id`` may differ from the one sent); the client adopts it. Never for ephemeral chats."""
+    if req.session_id.startswith("eph-"):
+        raise HTTPException(status_code=400, detail="Ephemeral chats are never stored.")
+    return await asyncio.to_thread(memory_store.start_session, req.session_id, req.chat_mode, req.project_id)
+
+
 @app.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str):
     """Retrieve full message history for a specific session."""

@@ -163,6 +163,32 @@ def test_delete_project_cleans_workspace_directory(project_test_env):
     assert get_res.status_code == 404
 
 
+def test_new_chat_is_stored_at_once_and_an_empty_one_is_reused(project_test_env):
+    client, _, store = project_test_env
+    p1 = client.post("/api/projects", json={"name": "Project 1"}).json()
+    p2 = client.post("/api/projects", json={"name": "Project 2"}).json()
+
+    # Pressing New chat records the session before any message is sent.
+    first = client.post("/sessions", json={"session_id": "s_new_1", "chat_mode": "WORKSPACE", "project_id": p1["id"]})
+    assert first.status_code == 200 and first.json()["session_id"] == "s_new_1"
+    assert [s["session_id"] for s in client.get(f"/sessions?project_id={p1['id']}").json()] == ["s_new_1"]
+
+    # Pressing it again (or reopening the app) hands back the empty one instead of adding another.
+    again = client.post("/sessions", json={"session_id": "s_new_2", "chat_mode": "WORKSPACE", "project_id": p1["id"]})
+    assert again.json()["session_id"] == "s_new_1"
+    assert len(client.get(f"/sessions?project_id={p1['id']}").json()) == 1
+
+    # Another project has its own; once a chat has a message, the next New chat is a fresh row.
+    assert client.post("/sessions", json={"session_id": "s_p2", "chat_mode": "WORKSPACE", "project_id": p2["id"]}).json()["session_id"] == "s_p2"
+    store.append_message("s_new_1", role="user", content="hello")
+    fresh = client.post("/sessions", json={"session_id": "s_new_3", "chat_mode": "WORKSPACE", "project_id": p1["id"]})
+    assert fresh.json()["session_id"] == "s_new_3"
+
+    # Freeform chats are their own space, and ephemeral ones are never stored.
+    assert client.post("/sessions", json={"session_id": "s_free", "chat_mode": "FREEFORM"}).json()["session_id"] == "s_free"
+    assert client.post("/sessions", json={"session_id": "eph-abc", "chat_mode": "WORKSPACE"}).status_code == 400
+
+
 def test_session_filtering_by_project(project_test_env):
     client, _, store = project_test_env
 

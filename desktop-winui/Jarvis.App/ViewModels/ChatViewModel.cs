@@ -75,6 +75,9 @@ public partial class ChatViewModel : ObservableObject
 
     public event Action<ChatMessage>? MessageCompleted;
 
+    /// <summary>A new chat was recorded on the backend; the sidebar should list it.</summary>
+    public event Action? SessionStored;
+
     /// <summary>Short spoken acknowledgements for things that resolve without a model turn
     /// (a cancelled confirmation), so a voice exchange is not left hanging in silence.</summary>
     public event Action<string>? SpokenFeedback;
@@ -251,7 +254,28 @@ public partial class ChatViewModel : ObservableObject
             return;
         }
         ClearTranscript();
-        ActiveSessionId = JarvisApiClient.CreateNewSessionId();
+        var requested = JarvisApiClient.CreateNewSessionId();
+        ActiveSessionId = requested;
+        _ = StoreNewChatAsync(requested);
+    }
+
+    /// <summary>Records the new chat on the backend right away so it can't be lost before the first
+    /// message. If an empty chat already existed the backend returns that one; adopt it while the
+    /// user hasn't started typing into this one.</summary>
+    private async Task StoreNewChatAsync(string requested)
+    {
+        try
+        {
+            var stored = await _api.CreateSessionAsync(requested, ChatMode, TurnProjectId).ConfigureAwait(false);
+            if (stored.SessionId != requested && ActiveSessionId == requested && Messages.Count == 0)
+                ActiveSessionId = stored.SessionId;
+            SessionStored?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            // the first message still creates it, as before
+            App.Log($"new chat not stored: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     /// <summary>Moves to the other space. Nothing crosses over: the transcript is swapped for
@@ -556,7 +580,11 @@ public partial class ChatViewModel : ObservableObject
             OnToolStart = e => Post(() => AddToolStep(e.Tool, e.Args, ToolStatus.Running)),
             OnToolEnd = e => Post(() => CompleteToolStep(e.Tool, e.Status, e.Result)),
             OnConfirmationRequired = e => Post(() => HandleConfirmationRequired(e)),
-            OnRetrievalContext = e => Post(() => LatestRetrieval = e),
+            OnRetrievalContext = e => Post(() =>
+            {
+                LatestRetrieval = e;
+                AddRetrievalStep(e);
+            }),
             OnDone = e => Post(() => HandleDone(e)),
             OnError = e => Post(() => HandleError(e.Error)),
             OnEpisode = e => Post(() => HandleEpisode(e)),
@@ -621,6 +649,32 @@ public partial class ChatViewModel : ObservableObject
 
     private void AddToolStep(string tool, Dictionary<string, object?> args, ToolStatus status) =>
         _streamingMessage?.StartToolStep(new ToolStep { Tool = tool, Args = args, Status = status });
+
+    /// <summary>Tool name of the step that shows what the project search found for the turn.</summary>
+    public const string RetrievalStepTool = "project_files";
+
+    /// <summary>The passages the backend pulled from the project's index for this turn, as a
+    /// finished step at the top of the reply: collapsed it says how many, open it lists them.
+    /// Live only: history reloads show the answer without it.</summary>
+    private void AddRetrievalStep(SseRetrievalContextEvent e)
+    {
+        if (e.ChunksUsed.Count == 0) return;
+        var lines = e.ChunksUsed.Select(c =>
+        {
+            var file = c.FileName ?? System.IO.Path.GetFileName(c.FilePath ?? "");
+            var range = c.StartLine is int a && c.EndLine is int b ? $" L{a}-{b}" : "";
+            var symbol = string.IsNullOrEmpty(c.SymbolName) ? "" : $" · {c.SymbolName}";
+            return $"{file}{range}{symbol}";
+        }).ToList();
+        if (e.ChunksDropped.Count > 0) lines.Add($"{e.ChunksDropped.Count} more left out (over the budget)");
+        _streamingMessage?.StartToolStep(new ToolStep
+        {
+            Tool = RetrievalStepTool,
+            Args = new Dictionary<string, object?> { ["passages"] = e.ChunksUsed.Count },
+            Status = ToolStatus.Success,
+            Result = string.Join("\n", lines),
+        });
+    }
 
     private void CompleteToolStep(string tool, string status, object? result) =>
         _streamingMessage?.EndToolStep(tool, status, result);

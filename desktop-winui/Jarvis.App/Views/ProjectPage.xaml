@@ -40,6 +40,9 @@
                                VerticalAlignment="Center" TextWrapping="Wrap" />
                     <glass:GlassButton x:Name="ReindexButton" Grid.Column="1" Text="Reindex" Click="Reindex_Click" />
                 </Grid>
+                <ProgressBar x:Name="IndexBar" Minimum="0" Maximum="100" Visibility="Collapsed" />
+                <TextBlock x:Name="IndexNote" Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap"
+                           Text="Files that haven't changed are skipped, so a repeat Reindex is quick." />
             </StackPanel>
 
             <!-- Instructions -->

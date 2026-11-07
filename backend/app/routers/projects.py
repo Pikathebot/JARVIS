@@ -312,18 +312,23 @@ def activate_project(
     db.commit()
     db.refresh(target_project)
 
-    # Trigger background indexing for the activated project workspace
-    def _bg_index(pid: str):
-        try:
-            from app.rag.indexer import WorkspaceIndexer
-            WorkspaceIndexer().index_project(pid)
-        except Exception as e:
-            logger.warning("Background indexing on activation failed for %s: %s", pid, e)
-
-    background_tasks.add_task(_bg_index, project_id)
+    # Index the activated project in the background: the same single job the project page's
+    # Reindex uses, so switching to a project that is already indexing doesn't start a second pass.
+    background_tasks.add_task(_start_index_job, project_id)
 
     logger.info("Activated project '%s' (%s)", target_project.name, target_project.id)
     return format_project_response(target_project)
+
+
+def _start_index_job(project_id: str) -> dict[str, Any]:
+    """Start (or join) the project's background index run; returns its status."""
+    from app.rag import index_jobs
+
+    def run(progress):
+        from app.rag.indexer import WorkspaceIndexer
+        return WorkspaceIndexer().index_project(project_id, progress=progress)
+
+    return index_jobs.start(project_id, run)
 
 
 @router.post("/{project_id}/index")
@@ -332,20 +337,31 @@ def index_project_endpoint(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """
-    Manually trigger or re-index a project workspace, embedding all source and knowledge files.
-    Returns indexing statistics.
+    Start re-indexing a project workspace in the background (or join the run already going) and
+    return its status at once: state, total_files, processed_files, indexed_files, total_chunks.
+    Poll GET /{project_id}/index for progress. Files whose content hasn't changed are skipped.
     """
-    target_project = db.get(Project, project_id)
-    if not target_project:
+    if not db.get(Project, project_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project '{project_id}' not found.",
         )
+    return _start_index_job(project_id)
 
-    from app.rag.indexer import WorkspaceIndexer
-    indexer = WorkspaceIndexer()
-    stats = indexer.index_project(project_id)
-    return stats
+
+@router.get("/{project_id}/index")
+def index_status_endpoint(
+    project_id: str,
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """The project's latest index run since the backend started: state is idle, running, done or error."""
+    if not db.get(Project, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' not found.",
+        )
+    from app.rag import index_jobs
+    return index_jobs.status(project_id)
 
 
 # ==========================================

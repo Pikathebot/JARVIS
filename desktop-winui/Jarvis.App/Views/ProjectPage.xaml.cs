@@ -425,9 +425,9 @@ public sealed partial class ProjectPage : UserControl
         var kept = IsKeptByJarvis(project.WorkspacePath);
         FolderText.Text = kept ? "Kept by Jarvis" : project.WorkspacePath;
         OpenFolderLink.Visibility = kept || string.IsNullOrWhiteSpace(project.WorkspacePath) ? Visibility.Collapsed : Visibility.Visible;
-        IndexText.Text = "Press Reindex after files change outside Jarvis.";
-        ReindexButton.IsEnabled = true;
+        ShowIndexStatus(new ProjectIndexStatus());
         ShowInstructions();
+        _ = ResumeIndexStatusAsync(project);
         _ = LoadStateAsync(project);
         _ = LoadMemoriesAsync(project);
         _ = LoadFilesAsync(project);
@@ -497,29 +497,89 @@ public sealed partial class ProjectPage : UserControl
         }
     }
 
+    private string? _pollingIndexFor;
+
     private async void Reindex_Click(object sender, RoutedEventArgs e)
     {
         if (_api is null || _project is null) return;
         ReindexButton.IsEnabled = false;
-        IndexText.Text = "Indexing…";
         try
         {
-            var stats = await _api.ReindexProjectAsync(_project.Id);
-            // The backend skips files whose hash is unchanged, so "indexed" counts only the ones re-read.
-            var files = stats.ScannedFiles == 1 ? "1 file" : $"{stats.ScannedFiles} files";
-            IndexText.Text = stats.IndexedFiles == 0
-                ? $"Up to date · {files} checked · {DateTime.Now:HH:mm}"
-                : $"{stats.IndexedFiles} updated · {files} checked · {DateTime.Now:HH:mm}";
+            ShowIndexStatus(await _api.ReindexProjectAsync(_project.Id));
+            await PollIndexAsync(_project);
         }
         catch (Exception ex)
         {
             App.Log($"reindex failed: {ex.GetType().Name}: {ex.Message}");
             IndexText.Text = $"Index failed: {ex.Message}";
+            IndexBar.Visibility = Visibility.Collapsed;
+            ReindexButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>On opening the page: pick up a run already going (a workspace switch starts one) or
+    /// show how the last one ended.</summary>
+    private async Task ResumeIndexStatusAsync(Project project)
+    {
+        try
+        {
+            ShowIndexStatus(await _api!.GetIndexStatusAsync(project.Id));
+            await PollIndexAsync(project);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"reading index status failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Polls once a second while the project's run is going. One loop per project.</summary>
+    private async Task PollIndexAsync(Project project)
+    {
+        if (_pollingIndexFor == project.Id) return;
+        _pollingIndexFor = project.Id;
+        try
+        {
+            while (_project?.Id == project.Id)
+            {
+                var status = await _api!.GetIndexStatusAsync(project.Id);
+                if (_project?.Id != project.Id) return;
+                ShowIndexStatus(status);
+                if (!status.Running) return;
+                await Task.Delay(1000);
+            }
         }
         finally
         {
-            ReindexButton.IsEnabled = true;
+            if (_pollingIndexFor == project.Id) _pollingIndexFor = null;
         }
+    }
+
+    private void ShowIndexStatus(ProjectIndexStatus status)
+    {
+        var running = status.Running;
+        IndexBar.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+        ReindexButton.IsEnabled = !running;
+        IndexNote.Visibility = running ? Visibility.Collapsed : Visibility.Visible;
+        if (running)
+        {
+            IndexBar.Value = status.Percent;
+            IndexText.Text = status.TotalFiles == 0
+                ? "Indexing… counting files"
+                : $"Indexing {status.Percent}% · {status.ProcessedFiles} of {status.TotalFiles} files";
+            return;
+        }
+        var time = status.FinishedAt is double at
+            ? DateTimeOffset.FromUnixTimeSeconds((long)at).LocalDateTime.ToString("HH:mm")
+            : "";
+        var files = status.TotalFiles == 1 ? "1 file" : $"{status.TotalFiles} files";
+        IndexText.Text = status.State switch
+        {
+            "error" => $"Index failed: {status.Error}",
+            // The backend skips files whose content is unchanged, so "updated" counts only re-read ones.
+            "done" when status.IndexedFiles == 0 => $"Up to date · {files} checked · {time}",
+            "done" => $"{status.IndexedFiles} updated · {files} checked · {time}",
+            _ => "Press Reindex after files change outside Jarvis.",
+        };
     }
 
     private async void OpenFolder_Click(object sender, RoutedEventArgs e)

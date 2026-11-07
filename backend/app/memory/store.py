@@ -156,6 +156,39 @@ class MemoryStore:
                 session.rollback()
                 raise
 
+    def start_session(
+        self,
+        session_id: str,
+        chat_mode: Optional[str] = "WORKSPACE",
+        project_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Record a new, empty conversation at once (the New chat button), so it exists on the
+        backend before the first message instead of only in the window. If an empty one is already
+        waiting in this space (and project), that one is handed back instead, so pressing the
+        button again, or opening the app again, doesn't pile up blank rows."""
+        mode_val = (chat_mode or "WORKSPACE").upper()
+        with self._get_session() as session:
+            statement = select(DBSession).where(DBSession.chat_mode == mode_val)
+            if mode_val == FREEFORM_CHAT_MODE:
+                statement = statement.where(DBSession.session_id != THREAD_SESSION_ID)
+            elif project_id is not None:
+                statement = statement.where(DBSession.project_id == project_id)
+            statement = statement.order_by(col(DBSession.updated_at).desc()).limit(20)
+            for waiting in session.exec(statement).all():
+                stored = session.exec(
+                    select(func.count()).select_from(Message).where(Message.session_id == waiting.session_id)
+                ).one()
+                if stored == 0:
+                    return {
+                        "session_id": waiting.session_id,
+                        "project_id": waiting.project_id,
+                        "title": waiting.title,
+                        "chat_mode": waiting.chat_mode,
+                        "created_at": waiting.created_at,
+                        "updated_at": waiting.updated_at,
+                    }
+        return self.get_or_create_session(session_id, title="New chat", chat_mode=mode_val, project_id=project_id)
+
     def set_session_chat_mode(self, session_id: str, chat_mode: str) -> None:
         mode_val = (chat_mode or "WORKSPACE").upper()
         now = time.time()
