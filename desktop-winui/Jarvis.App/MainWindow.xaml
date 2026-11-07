@@ -492,7 +492,7 @@
                         </Grid>
                         <Grid Grid.Row="1" Margin="12,8,12,0">
                             <!-- Thinking and tool steps show inline in the message now (PLAN 4.23). -->
-                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Files|Context" SelectionChanged="RightPanelTabs_SelectionChanged" />
+                            <glass:GlassSegmented x:Name="RightPanelTabs" Items="Artifacts|Context" SelectionChanged="RightPanelTabs_SelectionChanged" />
                         </Grid>
                         <Grid Grid.Row="2">
                             <Grid x:Name="ArtifactsPage" Visibility="Visible">
@@ -530,26 +530,6 @@
                                         TextWrapping="Wrap"
                                         IsTextSelectionEnabled="True" />
                                 </ScrollViewer>
-                            </Grid>
-                            </Grid>
-                            <Grid x:Name="FilesPage" Visibility="Collapsed">
-                            <Grid Padding="12">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Button Content="Refresh" HorizontalAlignment="Stretch" Click="RefreshFiles_Click" />
-                                <ListView
-                                    Grid.Row="1"
-                                    Margin="0,8,0,0"
-                                    ItemsSource="{x:Bind RightPanelViewModel.Files}"
-                                    SelectionMode="None">
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="models:ProjectFile">
-                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyText}" Padding="8,4" />
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
                             </Grid>
                             </Grid>
                             <Grid x:Name="ContextPage" Visibility="Collapsed">

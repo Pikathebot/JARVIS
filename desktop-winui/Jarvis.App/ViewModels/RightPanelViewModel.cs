@@ -10,7 +10,7 @@ namespace Jarvis_App.ViewModels;
 /// <summary>
 /// Port of the Artifacts + Files tabs from RightPanel.tsx (579 ln in the original — Context and
 /// Activity tabs are not ported yet, see winui_migration_status memory). Artifacts: list, select,
-/// version picker, view content. Files: flat project file listing with refresh.
+/// version picker, view content. (Files moved to the project page, PLAN 4.18.)
 /// </summary>
 public partial class RightPanelViewModel : ObservableObject
 {
@@ -18,7 +18,6 @@ public partial class RightPanelViewModel : ObservableObject
     private readonly DispatcherQueue _dispatcher;
 
     public ObservableCollection<Artifact> Artifacts { get; } = new();
-    public ObservableCollection<ProjectFile> Files { get; } = new();
     public ObservableCollection<ArtifactVersion> Versions { get; } = new();
 
     [ObservableProperty]
@@ -55,25 +54,6 @@ public partial class RightPanelViewModel : ObservableObject
             {
                 Artifacts.Clear();
                 foreach (var artifact in artifacts) Artifacts.Add(artifact);
-            });
-        }
-        catch
-        {
-            // best-effort
-        }
-    }
-
-    [RelayCommand]
-    public async Task RefreshFilesAsync()
-    {
-        if (string.IsNullOrEmpty(ProjectId)) return;
-        try
-        {
-            var files = await _api.FetchProjectFilesAsync(ProjectId).ConfigureAwait(false);
-            _dispatcher.TryEnqueue(() =>
-            {
-                Files.Clear();
-                foreach (var file in files) Files.Add(file);
             });
         }
         catch

@@ -2581,6 +2581,13 @@ workspace keeps its information.** Traced in code + the live DB:
    Add files only for Jarvis-kept projects; the Context line sits under the chat title, popover = the four tiers
    (renamed) + retrieved passages, compaction note at 80%. Phase 2 (keeper) skipped for now: 4.26's
    `project_capture.py` covers it; build it only if PROJECT.md goes stale in real use.
+   **Phase 4 in slices (2026-11-07; none seen on device yet):** page opens from a "Project page" row under the
+   workspace button (`Views/ProjectPage.xaml`). Slice 1 (header, editable Instructions, Reindex; Enter saves,
+   Shift+Enter newline) and slice 2 (PROJECT.md view/edit with a 2,000-char counter) committed f847c7d. Slice 3
+   (Memories = the project's own, removable with Undo via the bin; Files = top level of the folder; Chats +
+   New chat; the right panel's Files tab removed) built, uncommitted. **Open:** slice 4 = Context line + popover
+   (then the right panel is Artifacts only); index status needs a backend call (the page only shows the result of
+   a Reindex pressed in this session); Files has no per-file index state and no Add files; phase 5 clean-up.
 4. WinUI: Project page in the chat area, instructions editing, memories list, Files moved, right panel = Artifacts,
    Context popover.
 5. Clean-up: the test projects/folders in the live data, the Default Workspace pointing at `backend/`, the wrong

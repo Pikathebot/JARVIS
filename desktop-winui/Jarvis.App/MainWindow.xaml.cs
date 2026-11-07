@@ -172,6 +172,12 @@ public sealed partial class MainWindow : Window
         };
 
         ProjectPageView.Initialize(_api);
+        ProjectPageView.OpenSession = session => SessionsViewModel.SelectAsync(session);
+        ProjectPageView.NewChat = () =>
+        {
+            SetProjectPageOpen(false);
+            ChatViewModel.NewChat();
+        };
         SessionsViewModel.SessionSelected += async sessionId =>
         {
             CloseSidebarOverlay();
@@ -693,7 +699,7 @@ public sealed partial class MainWindow : Window
     // ------------------------------------------------------------------ inspector auto-open
 
     private const int ArtifactsTab = 0;
-    private const int ContextTab = 2;
+    private const int ContextTab = 1;
     private string? _inspectorAutoOpenedFor;
 
     /// <summary>Opens the inspector on <paramref name="tab"/> the first time a chat has
@@ -730,7 +736,7 @@ public sealed partial class MainWindow : Window
 
     private void RightPanelTabs_SelectionChanged(object sender, RoutedEventArgs e)
     {
-        var pages = new[] { ArtifactsPage, FilesPage, ContextPage };
+        var pages = new[] { ArtifactsPage, ContextPage };
         for (var i = 0; i < pages.Length; i++)
         {
             pages[i].Visibility = i == RightPanelTabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
@@ -1361,7 +1367,6 @@ public sealed partial class MainWindow : Window
 
     private async void RefreshArtifacts_Click(object sender, RoutedEventArgs e) => await RightPanelViewModel.RefreshArtifactsAsync();
 
-    private async void RefreshFiles_Click(object sender, RoutedEventArgs e) => await RightPanelViewModel.RefreshFilesAsync();
 
     private async void ArtifactItem_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {

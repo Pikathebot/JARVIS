@@ -94,6 +94,37 @@
                            Text="Jarvis keeps this current as work lands. You can edit it here or in any editor. A change reaches Jarvis from your next chat." />
             </StackPanel>
 
+            <!-- Memories: this project's own (general ones are not listed) -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Memories" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource PageCard}" Padding="0">
+                    <StackPanel x:Name="MemoriesList" />
+                </Border>
+                <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0,0,0"
+                           Text="What Jarvis remembers across chats in this project. Removed ones are kept in the bin for 30 days." />
+            </StackPanel>
+
+            <!-- Files: the top level of the project's folder -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Files" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource PageCard}" Padding="0">
+                    <StackPanel x:Name="FilesList" />
+                </Border>
+                <TextBlock Style="{StaticResource SecondaryFootnoteText}" TextWrapping="Wrap" Margin="4,0,0,0"
+                           Text="The top level of the project's folder. Nothing here changes your files." />
+            </StackPanel>
+
+            <!-- Chats -->
+            <StackPanel Spacing="6">
+                <Grid>
+                    <TextBlock Text="Chats" Style="{StaticResource SectionHeaderText}" Margin="4,0,0,0" />
+                    <HyperlinkButton Content="New chat" Padding="4,0" HorizontalAlignment="Right" Click="NewChat_Click" />
+                </Grid>
+                <Border Style="{StaticResource PageCard}" Padding="0">
+                    <StackPanel x:Name="ChatsList" />
+                </Border>
+            </StackPanel>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>
