@@ -1403,7 +1403,18 @@ carry planted facts, so only a real search + read passes the current-events task
      smoke test: Qwen3.5 (hybrid DeltaNet + vision) support, 20 steps on 100 rows, merge, export, re-quantise
      to IQ3_XXS with the imatrix, load in llama-server.
    - Gate: replaces the main model only if it beats the live 9B on the sealed set (#2) and wins the blind votes (#8).
-   **Data export BUILT 2026-11-03 (cloud session), tests pass on Linux, not yet run on the real data.**
+   **First run on the real data 2026-11-07:** 238 DPO pairs (237 review-page, 1 in-app without context), 18 multi-turn
+   and 9 empty votes dropped, review.jsonl 4 rows (1 net, 3 flags), 0 redactions (no `--names` given). The pairs are
+   answer-style preferences; they do not teach tool follow-through, so the smoke test checks the pipeline, not the
+   gain. `review.jsonl` holds personal details (exam dates): read it before anything leaves the PC.
+   **PARKED 2026-11-07 (user, after an advisor review).** Why: the 237 pairs are single-turn final-text answers from the
+   10-16 votes (chosen: Ornith 113, Defiant 82, Qwen 42; rejected mostly Defiant) -- mostly what Ornith already does,
+   none with tool results; the eval's remaining misses are ~8 of 36 on cases 19-30 plus 2/3 flakes, within run-to-run
+   noise; and the safety nets took most of the gain (18 -> 28/36, 32 -> 41/42). Training would be on Kaggle's free T4
+   (decided 2026-10-25), with `--names` and a read of `review.jsonl` before any upload. Revisit when the training log
+   holds dozens of net/"got it wrong" rows (it has 4), or if the self-distillation data step above is chosen. The
+   export script and `data/finetune/` stay.
+   **Data export BUILT 2026-11-03 (cloud session), tests pass on Linux.**
    `scripts/export_finetune_data.py` reads `data/preference_votes.jsonl` and `data/training_log.jsonl` and writes `data/finetune/`:
    `dpo.jsonl` (conversational `{prompt, chosen, rejected}` pairs; ties, empty/identical sides and votes whose chosen answer failed
    the eval's check while the rejected passed are dropped, a re-vote replaces the earlier one), `review.jsonl` (each net-fired turn
@@ -2563,7 +2574,13 @@ workspace keeps its information.** Traced in code + the live DB:
    `GET/PUT /api/projects/{id}/state`; one-time move of `decision`/`task_context` project memories into the file.
 2. Backend: the keeper -- after a project chat goes quiet, the fast model reads it and proposes section edits
    (same edit ops, so hand edits survive); log every write.
-3. Design System: Project page + chat-header Context line specs; republish.
+3. Design System: Project page + chat-header Context line specs; republish. **DONE 2026-11-07** (artifact v38:
+   `ProjectPage` + `ContextLine` components, AppLayout inspector = Artifacts only once built). Spec choices beyond
+   decision 6: page replaces the transcript and hides the composer; Memories list excludes decisions/tasks (they
+   live in Project state); the state editor shows "n / 2,000 characters" and refuses a save over the cap; Files has
+   Add files only for Jarvis-kept projects; the Context line sits under the chat title, popover = the four tiers
+   (renamed) + retrieved passages, compaction note at 80%. Phase 2 (keeper) skipped for now: 4.26's
+   `project_capture.py` covers it; build it only if PROJECT.md goes stale in real use.
 4. WinUI: Project page in the chat area, instructions editing, memories list, Files moved, right panel = Artifacts,
    Context popover.
 5. Clean-up: the test projects/folders in the live data, the Default Workspace pointing at `backend/`, the wrong
