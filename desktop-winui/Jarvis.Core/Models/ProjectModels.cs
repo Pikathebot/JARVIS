@@ -114,6 +114,29 @@ public sealed class Artifact
     public string UpdatedAt { get; set; } = "";
 }
 
+/// <summary>What <c>POST /api/projects/{id}/index</c> reports after a reindex.</summary>
+public sealed class ProjectIndexStats
+{
+    [JsonPropertyName("scanned_files")]
+    public int ScannedFiles { get; set; }
+
+    [JsonPropertyName("indexed_files")]
+    public int IndexedFiles { get; set; }
+
+    [JsonPropertyName("total_chunks")]
+    public int TotalChunks { get; set; }
+}
+
+/// <summary>A project's PROJECT.md (<c>/api/projects/{id}/state</c>): where it lives, its text and the size cap.</summary>
+public sealed class ProjectState
+{
+    public string Path { get; set; } = "";
+    public string Content { get; set; } = "";
+
+    [JsonPropertyName("max_chars")]
+    public int MaxChars { get; set; }
+}
+
 public sealed class ProjectFile
 {
     public string Name { get; set; } = "";

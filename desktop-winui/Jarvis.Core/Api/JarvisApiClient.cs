@@ -332,6 +332,19 @@ public sealed class JarvisApiClient
     public Task<Project> ActivateProjectAsync(string projectId, CancellationToken ct = default) =>
         PostAsync<object?, Project>($"/api/projects/{Uri.EscapeDataString(projectId)}/activate", null, ct);
 
+    public Task<ProjectState> GetProjectStateAsync(string projectId, CancellationToken ct = default) =>
+        GetAsync<ProjectState>($"/api/projects/{Uri.EscapeDataString(projectId)}/state", ct);
+
+    public async Task<ProjectState> PutProjectStateAsync(string projectId, string content, CancellationToken ct = default)
+    {
+        var response = await _http.PutAsJsonAsync($"/api/projects/{Uri.EscapeDataString(projectId)}/state", new { content }, JarvisJson.Options, ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "save project state").ConfigureAwait(false);
+        return await ReadAsync<ProjectState>(response, ct).ConfigureAwait(false);
+    }
+
+    public Task<ProjectIndexStats> ReindexProjectAsync(string projectId, CancellationToken ct = default) =>
+        PostAsync<object?, ProjectIndexStats>($"/api/projects/{Uri.EscapeDataString(projectId)}/index", null, ct);
+
     public async Task<List<ProjectFile>> FetchProjectFilesAsync(string projectId, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/api/projects/{Uri.EscapeDataString(projectId)}/files", ct).ConfigureAwait(false);

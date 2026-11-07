@@ -171,9 +171,11 @@ public sealed partial class MainWindow : Window
             }
         };
 
+        ProjectPageView.Initialize(_api);
         SessionsViewModel.SessionSelected += async sessionId =>
         {
             CloseSidebarOverlay();
+            SetProjectPageOpen(false);
             ShowPagesIfIdle();
             await ChatViewModel.LoadSessionAsync(sessionId);
         };
@@ -184,6 +186,8 @@ public sealed partial class MainWindow : Window
             UpdateSpaceChrome();
             UpdateWorkspaceHighlight();
             _sessionsRefresh = SessionsViewModel.RefreshAsync();
+            // An open page follows the workspace the user just switched to.
+            if (ProjectPageView.Visibility == Visibility.Visible && project is not null) ProjectPageView.Show(project);
         };
         // Space and ephemeral state can change from inside the view model too (opening a stored
         // session leaves ephemeral mode), so the chrome follows the properties, not the clicks.
@@ -789,7 +793,11 @@ public sealed partial class MainWindow : Window
         ErrorBanner.Title = "Something went wrong";
     }
 
-    private void NewChat_Click(object sender, RoutedEventArgs e) => ChatViewModel.NewChat();
+    private void NewChat_Click(object sender, RoutedEventArgs e)
+    {
+        SetProjectPageOpen(false);
+        ChatViewModel.NewChat();
+    }
 
     // ---- Spaces and ephemeral mode ---------------------------------------------------------
 
@@ -901,7 +909,12 @@ public sealed partial class MainWindow : Window
             _syncingSpaceChrome = false;
         }
         WorkspaceButton.Visibility = freeform ? Visibility.Collapsed : Visibility.Visible;
-        if (freeform) SetWorkspaceDropdownOpen(false);
+        ProjectPageRow.Visibility = WorkspaceButton.Visibility;
+        if (freeform)
+        {
+            SetWorkspaceDropdownOpen(false);
+            SetProjectPageOpen(false);
+        }
         // Ephemeral: the toolbar's eye lights up, and the line under the composer says so.
         EphemeralIcon.Foreground = ChatViewModel.IsEphemeral
             ? Themes.JarvisTheme.Brush("Accent")
@@ -943,6 +956,27 @@ public sealed partial class MainWindow : Window
         SessionsList.Visibility = listVisibility;
         SessionSearch.Opacity = open ? 0 : 1; // opacity, so the list doesn't jump under the card
         SessionSearchIcon.Opacity = open ? 0 : 1;
+        // Same reason: the row's plain-XAML text would show through the floating card.
+        ProjectPageRow.Opacity = open ? 0 : 1;
+        ProjectPageRow.IsHitTestVisible = !open;
+    }
+
+    private void ProjectPageRow_Click(object sender, RoutedEventArgs e)
+    {
+        var open = ProjectPageView.Visibility != Visibility.Visible;
+        SetProjectPageOpen(open);
+        if (open) CloseSidebarOverlay();
+    }
+
+    /// <summary>The active workspace's page replaces the transcript and the composer while open.</summary>
+    private void SetProjectPageOpen(bool open)
+    {
+        var project = ProjectsViewModel.ActiveProject;
+        if (open && project is null) return;
+        if (open) ProjectPageView.Show(project!);
+        ProjectPageView.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        MessageScroll.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
+        ComposerArea.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Light dismiss: any press outside the card (or its button) closes it. Registered
